@@ -4,6 +4,15 @@
 
 Use focused branches and conventional commit prefixes such as `feat`, `fix`, `refactor`, `test`, `docs`, and `chore`.
 
+## Read first
+
+Before making non-trivial changes, read:
+
+- `AGENTS.md`
+- `AI_PROJECT_GUIDE.md`
+- `docs/ai-guide/02-architecture-boundaries.md`
+- `docs/ai-guide/05-development-validation.md`
+
 ## Before opening a pull request
 
 ```bash

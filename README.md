@@ -119,6 +119,19 @@ The admin is created from `ADMIN_EMAIL` and `ADMIN_PASSWORD`. Change the passwor
 
 Read `docs/product-blueprint.md` for the ordered architecture deliverable and `AGENTS.md` before changing architecture or adding an AI/media feature. The Node/Python and media-transfer boundaries are mandatory.
 
+## AI onboarding
+
+For future AI-assisted development, start with `AI_PROJECT_GUIDE.md`.
+
+Focused onboarding notes live in:
+
+- `docs/ai-guide/01-overview.md`
+- `docs/ai-guide/02-architecture-boundaries.md`
+- `docs/ai-guide/03-code-map.md`
+- `docs/ai-guide/04-runtime-flows.md`
+- `docs/ai-guide/05-development-validation.md`
+- `docs/ai-guide/06-extension-checklists.md`
+
 ## Validation
 
 See `VALIDATION.md` for the commands and limitations validated before packaging.
