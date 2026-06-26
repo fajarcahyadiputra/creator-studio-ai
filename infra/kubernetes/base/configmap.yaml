@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: creator-studio-config
+  namespace: creator-studio
+data:
+  NODE_ENV: production
+  APP_HOST: 0.0.0.0
+  APP_PORT: "3000"
+  COOKIE_SECURE: "true"
+  TRUST_PROXY: "true"
+  S3_REGION: us-east-1
+  S3_BUCKET_MEDIA: creator-media
+  S3_FORCE_PATH_STYLE: "false"
+  SIGNED_URL_TTL_SECONDS: "600"
+  TEMPORAL_NAMESPACE: creator-studio
+  TEMPORAL_AUTO_CLIP_TASK_QUEUE: auto-clipping
+  LOG_LEVEL: info

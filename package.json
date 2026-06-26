@@ -1,0 +1,32 @@
+{
+  "name": "creator-studio-ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/web-node",
+    "apps/media-ingestion-node",
+    "packages/contracts"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev:web": "npm run dev --workspace @creator-studio/web-node",
+    "dev:ingestion": "npm run dev --workspace @creator-studio/media-ingestion-node",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "format": "npm run format --workspaces --if-present",
+    "prisma:generate": "npm run prisma:generate --workspace @creator-studio/web-node",
+    "prisma:migrate": "npm run prisma:migrate --workspace @creator-studio/web-node",
+    "prisma:seed": "npm run prisma:seed --workspace @creator-studio/web-node",
+    "migration:generate": "node infra/scripts/generate-baseline-migration.mjs",
+    "migration:validate": "node infra/scripts/validate-migration.mjs"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "devDependencies": {
+    "@mrleebo/prisma-ast": "^0.16.0",
+    "pg-query-emscripten": "^5.1.0"
+  }
+}

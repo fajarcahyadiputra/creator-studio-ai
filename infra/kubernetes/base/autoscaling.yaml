@@ -1,0 +1,37 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-node
+  namespace: creator-studio
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: web-node }
+  minReplicas: 3
+  maxReplicas: 20
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 65 }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web-node
+  namespace: creator-studio
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: { app: web-node }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ai-media-worker-cpu
+  namespace: creator-studio
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: ai-media-worker-cpu }

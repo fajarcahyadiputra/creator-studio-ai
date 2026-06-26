@@ -1,0 +1,9 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<div class="app-shell"><%- include('../partials/sidebar') %><main class="content-area">
+  <header class="page-header"><div><span class="eyebrow">Operations</span><h1>Jobs</h1><p>Every retry creates an explicit attempt; completed jobs are never silently restarted.</p></div></header>
+  <section class="panel"><div class="table-responsive"><table class="table align-middle"><thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Current stage</th><th>Progress</th><th>Workflow</th><th>Created</th></tr></thead><tbody>
+    <% if (!jobs.length) { %><tr><td colspan="7" class="empty-cell">No jobs found.</td></tr><% } %>
+    <% jobs.forEach(job => { %><tr data-job-id="<%= job.id %>"><td><code><%= job.id.slice(0,8) %></code></td><td><%= job.type %></td><td><span class="status status-<%= job.status.toLowerCase() %>"><%= job.status %></span></td><td><%= job.currentStage ?? '—' %></td><td><%= job.progressPercent %>%</td><td><small><%= job.workflowId ?? '—' %></small></td><td><%= job.createdAt.toLocaleString() %></td></tr><% }) %>
+  </tbody></table></div></section>
+</main></div>
+<%- include('../partials/footer') %>

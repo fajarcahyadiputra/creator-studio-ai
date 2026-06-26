@@ -1,0 +1,11 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<div class="app-shell"><%- include('../partials/sidebar') %><main class="content-area">
+  <header class="page-header"><div><span class="eyebrow">Platform operations</span><h1>Administration</h1><p>System-wide view without losing the actor identity during view-as-user.</p></div><a class="btn btn-outline-primary" href="/app/dashboard">Open User Workspace</a></header>
+  <section class="stat-grid"><article class="stat-card"><span>Total users</span><strong><%= users %></strong></article><article class="stat-card"><span>Running jobs</span><strong><%= jobCounts.RUNNING ?? 0 %></strong></article><article class="stat-card"><span>Queued jobs</span><strong><%= jobCounts.QUEUED ?? 0 %></strong></article><article class="stat-card"><span>Failed jobs</span><strong><%= jobCounts.FAILED ?? 0 %></strong></article></section>
+  <section class="panel mt-4"><div class="panel-heading"><div><h2>Recent users</h2><p>View-as-user requires a reason and rotates the session.</p></div></div>
+    <div class="table-responsive"><table class="table align-middle"><thead><tr><th>User</th><th>Status</th><th>Joined</th><th>Audited action</th></tr></thead><tbody>
+      <% recentUsers.forEach(user => { %><tr><td><strong><%= user.displayName %></strong><br><small><%= user.email %></small></td><td><%= user.status %></td><td><%= user.createdAt.toLocaleString() %></td><td><form class="d-flex gap-2" data-api-form action="/api/v1/admin/impersonation/start" method="post" data-success-redirect><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="target_user_id" value="<%= user.id %>"><input class="form-control form-control-sm" name="reason" minlength="10" placeholder="Reason for access" required><button class="btn btn-sm btn-outline-primary">View</button></form></td></tr><% }) %>
+    </tbody></table></div>
+  </section>
+</main></div>
+<%- include('../partials/footer') %>

@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-node
+  namespace: creator-studio
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app: web-node }
+  template:
+    metadata:
+      labels: { app: web-node }
+    spec:
+      serviceAccountName: creator-studio
+      containers:
+        - name: web
+          image: registry.example.com/creator-studio/web-node:0.1.0
+          ports: [{ name: http, containerPort: 3000 }]
+          envFrom:
+            - configMapRef: { name: creator-studio-config }
+            - secretRef: { name: creator-studio-secrets }
+          resources:
+            requests: { cpu: 250m, memory: 384Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          startupProbe:
+            httpGet: { path: /health/live, port: http }
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-node
+  namespace: creator-studio
+spec:
+  selector: { app: web-node }
+  ports:
+    - { name: http, port: 80, targetPort: http }

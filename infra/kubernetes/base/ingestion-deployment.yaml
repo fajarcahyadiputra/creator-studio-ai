@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: media-ingestion-node
+  namespace: creator-studio
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: media-ingestion-node }
+  template:
+    metadata:
+      labels: { app: media-ingestion-node }
+    spec:
+      serviceAccountName: creator-studio
+      containers:
+        - name: ingestion
+          image: registry.example.com/creator-studio/media-ingestion-node:0.1.0
+          ports: [{ name: http, containerPort: 3100 }]
+          envFrom:
+            - configMapRef: { name: creator-studio-config }
+            - secretRef: { name: creator-studio-secrets }
+          resources:
+            requests: { cpu: 250m, memory: 256Mi, ephemeral-storage: 1Gi }
+            limits: { cpu: "2", memory: 2Gi, ephemeral-storage: 8Gi }
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 8Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: media-ingestion-node
+  namespace: creator-studio
+spec:
+  selector: { app: media-ingestion-node }
+  ports:
+    - { name: http, port: 3100, targetPort: http }

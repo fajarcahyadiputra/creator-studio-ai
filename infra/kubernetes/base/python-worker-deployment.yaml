@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-media-worker-cpu
+  namespace: creator-studio
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: ai-media-worker-cpu }
+  template:
+    metadata:
+      labels: { app: ai-media-worker-cpu }
+    spec:
+      serviceAccountName: creator-studio
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: registry.example.com/creator-studio/ai-media-python:0.1.0
+          envFrom:
+            - configMapRef: { name: creator-studio-config }
+            - secretRef: { name: creator-studio-secrets }
+          resources:
+            requests: { cpu: "1", memory: 2Gi, ephemeral-storage: 4Gi }
+            limits: { cpu: "4", memory: 8Gi, ephemeral-storage: 16Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: work, mountPath: /tmp/creator-studio }
+      volumes:
+        - name: work
+          emptyDir: { sizeLimit: 16Gi }

@@ -1,0 +1,21 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: creator-studio-migrate
+  namespace: creator-studio
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: creator-studio
+      containers:
+        - name: migrate
+          image: registry.example.com/creator-studio/web-node:0.1.0
+          command: ["npx", "prisma", "migrate", "deploy"]
+          envFrom:
+            - configMapRef: { name: creator-studio-config }
+            - secretRef: { name: creator-studio-secrets }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }

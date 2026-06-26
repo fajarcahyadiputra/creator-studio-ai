@@ -1,0 +1,20 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<main class="auth-shell">
+  <section class="auth-card">
+    <div class="brand justify-content-center mb-4"><span class="brand-mark">C</span><span><%= appName %></span></div>
+    <h1 class="h3">Welcome back</h1>
+    <p class="text-secondary">Manage creator workflows without losing long-running progress.</p>
+    <div class="form-message"></div>
+    <form data-api-form action="/api/v1/auth/login" method="post" data-success-redirect>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="form-label">Email</label>
+      <input class="form-control mb-3" type="email" name="email" autocomplete="email" required>
+      <label class="form-label">Password</label>
+      <input class="form-control mb-3" type="password" name="password" autocomplete="current-password" required>
+      <button class="btn btn-primary w-100" type="submit">Login</button>
+    </form>
+    <a class="btn btn-outline-secondary w-100 mt-3" href="/api/v1/auth/google">Continue with Google</a>
+    <div class="d-flex justify-content-between mt-4 small"><a href="/register">Create account</a><a href="/forgot-password">Forgot password?</a></div>
+  </section>
+</main>
+<%- include('../partials/footer') %>

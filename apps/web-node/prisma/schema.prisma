@@ -1,0 +1,1149 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum JobStatus {
+  DRAFT
+  UPLOADING
+  QUEUED
+  RUNNING
+  PAUSE_REQUESTED
+  PAUSED
+  CANCEL_REQUESTED
+  CANCELED
+  FAILED
+  COMPLETED
+  PARTIALLY_COMPLETED
+  NEEDS_REVIEW
+}
+
+enum JobType {
+  AUTO_CLIPPING
+  TEXT_TO_SPEECH
+  TRANSCRIPTION
+  MEDIA_INGESTION
+  PUBLISHING
+}
+
+enum JobStageStatus {
+  PENDING
+  QUEUED
+  RUNNING
+  PAUSED
+  CANCELED
+  FAILED
+  COMPLETED
+  SKIPPED
+}
+
+enum JobAttemptStatus {
+  CREATED
+  RUNNING
+  FAILED
+  COMPLETED
+  CANCELED
+}
+
+enum ErrorCategory {
+  USER_INPUT
+  VALIDATION
+  PROVIDER_TEMPORARY
+  PROVIDER_PERMANENT
+  INFRASTRUCTURE_TEMPORARY
+  MEDIA_PERMANENT
+  INTERNAL_BUG
+  CANCELED
+}
+
+enum CredentialScope {
+  PLATFORM
+  USER
+}
+
+enum CredentialStatus {
+  ACTIVE
+  DEGRADED
+  REVOKED
+  EXPIRED
+}
+
+enum CredentialMode {
+  PLATFORM
+  USER_OWNED
+}
+
+enum AiCapability {
+  CHAT
+  STRUCTURED_OUTPUT
+  TTS
+  STT
+  VISION
+  EMBEDDING
+  IMAGE_GENERATION
+}
+
+enum ProjectStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum MediaAssetType {
+  VIDEO
+  AUDIO
+  IMAGE
+  TRANSCRIPT
+  SUBTITLE
+  THUMBNAIL
+  DOCUMENT
+  OTHER
+}
+
+enum MediaAssetStatus {
+  UPLOADING
+  VALIDATING
+  READY
+  QUARANTINED
+  FAILED
+  DELETED
+}
+
+enum UploadStatus {
+  CREATED
+  UPLOADING
+  COMPLETING
+  COMPLETED
+  ABORTED
+  EXPIRED
+  FAILED
+}
+
+enum ClipQualityStatus {
+  PENDING
+  PASSED
+  NEEDS_REVIEW
+  FAILED
+}
+
+enum PublishStatus {
+  DRAFT
+  QUEUED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  CANCELED
+}
+
+enum SocialPlatform {
+  FACEBOOK
+  INSTAGRAM
+  TIKTOK
+  YOUTUBE
+  CUSTOM
+}
+
+enum NotificationType {
+  JOB_COMPLETED
+  JOB_FAILED
+  PUBLISH_COMPLETED
+  PUBLISH_FAILED
+  QUOTA_WARNING
+  SECURITY
+  SYSTEM
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  WEBHOOK
+}
+
+enum UsageMetric {
+  AI_INPUT_TOKENS
+  AI_OUTPUT_TOKENS
+  TRANSCRIPTION_SECONDS
+  RENDER_SECONDS
+  TTS_CHARACTERS
+  TTS_SECONDS
+  STORAGE_BYTES
+  CLIPS_GENERATED
+  SOURCE_SECONDS
+}
+
+enum PresetType {
+  CLIPPING
+  SUBTITLE
+  TTS
+  BRAND
+  PUBLISHING
+}
+
+enum TranscriptStatus {
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum TtsOutputStatus {
+  PROCESSING
+  READY
+  FAILED
+}
+
+model User {
+  id                      String                   @id @default(uuid()) @db.Uuid
+  email                   String                   @unique @db.VarChar(320)
+  passwordHash            String?
+  displayName             String                   @db.VarChar(160)
+  avatarObjectKey         String?
+  status                  UserStatus               @default(PENDING_VERIFICATION)
+  emailVerifiedAt         DateTime?
+  locale                  String                   @default("id") @db.VarChar(10)
+  timezone                String                   @default("Asia/Jakarta") @db.VarChar(64)
+  planId                  String?                  @db.Uuid
+  failedLoginCount        Int                      @default(0)
+  lockedUntil             DateTime?
+  lastLoginAt             DateTime?
+  version                 Int                      @default(1)
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  deletedAt               DateTime?
+  plan                    Plan?                    @relation(fields: [planId], references: [id])
+  roles                   UserRole[]
+  sessions                Session[]
+  oauthAccounts           OAuthAccount[]
+  passwordResetTokens     PasswordResetToken[]
+  emailVerificationTokens EmailVerificationToken[]
+  setting                 UserSetting?
+  credentials             EncryptedCredential[]    @relation("UserCredentials")
+  aiPreferences           UserAiPreference[]
+  projects                Project[]
+  mediaAssets             MediaAsset[]
+  uploadSessions          UploadSession[]
+  jobs                    Job[]
+  socialConnections       SocialConnection[]
+  presets                 Preset[]
+  brandKits               BrandKit[]
+  usageRecords            UsageRecord[]
+  quotas                  Quota[]
+  notifications           Notification[]
+  webhookEndpoints        WebhookEndpoint[]
+  auditLogsAsActor        AuditLog[]               @relation("AuditActor")
+  auditLogsAsTarget       AuditLog[]               @relation("AuditTarget")
+
+  @@index([status, createdAt])
+  @@index([planId])
+  @@index([deletedAt])
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  code        String           @unique @db.VarChar(80)
+  name        String           @db.VarChar(120)
+  description String?
+  isSystem    Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  users       UserRole[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  code        String           @unique @db.VarChar(120)
+  description String?
+  createdAt   DateTime         @default(now())
+  roles       RolePermission[]
+}
+
+model UserRole {
+  userId     String   @db.Uuid
+  roleId     String   @db.Uuid
+  assignedBy String?  @db.Uuid
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  createdAt    DateTime   @default(now())
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+model Session {
+  id                  String    @id @default(uuid()) @db.Uuid
+  userId              String    @db.Uuid
+  sessionId           String    @unique @db.VarChar(160)
+  ipAddress           String?   @db.VarChar(64)
+  userAgent           String?
+  deviceName          String?   @db.VarChar(160)
+  impersonatedUserId  String?   @db.Uuid
+  impersonationReason String?
+  lastSeenAt          DateTime  @default(now())
+  expiresAt           DateTime
+  revokedAt           DateTime?
+  createdAt           DateTime  @default(now())
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+model OAuthAccount {
+  id                 String    @id @default(uuid()) @db.Uuid
+  userId             String    @db.Uuid
+  provider           String    @db.VarChar(50)
+  providerAccountId  String    @db.VarChar(255)
+  email              String?   @db.VarChar(320)
+  accessTokenCipher  String?
+  refreshTokenCipher String?
+  tokenExpiresAt     DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique @db.Char(64)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique @db.Char(64)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model UserSetting {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @unique @db.Uuid
+  defaultContentNiche  String?  @db.VarChar(120)
+  defaultAudience      String?  @db.VarChar(255)
+  notificationSettings Json     @default("{}")
+  preferences          Json     @default("{}")
+  version              Int      @default(1)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AiProvider {
+  id              String                @id @default(uuid()) @db.Uuid
+  code            String                @unique @db.VarChar(80)
+  displayName     String                @db.VarChar(120)
+  adapterType     String                @db.VarChar(100)
+  baseUrl         String?
+  enabled         Boolean               @default(true)
+  healthStatus    String                @default("UNKNOWN") @db.VarChar(40)
+  timeoutMs       Int                   @default(60000)
+  retryPolicy     Json                  @default("{}")
+  rateLimitConfig Json                  @default("{}")
+  metadata        Json                  @default("{}")
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  models          AiModel[]
+  credentials     EncryptedCredential[]
+  userPreferences UserAiPreference[]
+
+  @@index([enabled, healthStatus])
+}
+
+model AiModel {
+  id                    String              @id @default(uuid()) @db.Uuid
+  providerId            String              @db.Uuid
+  identifier            String              @db.VarChar(200)
+  displayName           String              @db.VarChar(160)
+  enabled               Boolean             @default(true)
+  contextLimit          Int?
+  inputPricePerMillion  Decimal?            @db.Decimal(14, 6)
+  outputPricePerMillion Decimal?            @db.Decimal(14, 6)
+  metadata              Json                @default("{}")
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  provider              AiProvider          @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  capabilities          AiModelCapability[]
+  analysisPreferences   UserAiPreference[]  @relation("AnalysisModel")
+  textPreferences       UserAiPreference[]  @relation("TextModel")
+  ttsPreferences        UserAiPreference[]  @relation("TtsModel")
+
+  @@unique([providerId, identifier])
+  @@index([providerId, enabled])
+}
+
+model AiModelCapability {
+  id         String       @id @default(uuid()) @db.Uuid
+  modelId    String       @db.Uuid
+  capability AiCapability
+  enabled    Boolean      @default(true)
+  config     Json         @default("{}")
+  model      AiModel      @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@unique([modelId, capability])
+  @@index([capability, enabled])
+}
+
+model EncryptedCredential {
+  id                   String             @id @default(uuid()) @db.Uuid
+  providerId           String             @db.Uuid
+  ownerUserId          String?            @db.Uuid
+  scope                CredentialScope
+  label                String             @db.VarChar(120)
+  encryptedPayload     String
+  encryptedDataKey     String
+  keyVersion           String             @db.VarChar(80)
+  maskedHint           String?            @db.VarChar(40)
+  status               CredentialStatus   @default(ACTIVE)
+  allowedTools         Json               @default("[]")
+  allowedModelIds      Json               @default("[]")
+  usageLimitConfig     Json               @default("{}")
+  lastTestedAt         DateTime?
+  lastConnectionStatus String?            @db.VarChar(40)
+  expiresAt            DateTime?
+  version              Int                @default(1)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  provider             AiProvider         @relation(fields: [providerId], references: [id])
+  ownerUser            User?              @relation("UserCredentials", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  preferences          UserAiPreference[]
+
+  @@index([providerId, scope, status])
+  @@index([ownerUserId, status])
+}
+
+model UserAiPreference {
+  id              String               @id @default(uuid()) @db.Uuid
+  userId          String               @db.Uuid
+  toolType        JobType
+  credentialMode  CredentialMode       @default(PLATFORM)
+  providerId      String?              @db.Uuid
+  credentialId    String?              @db.Uuid
+  analysisModelId String?              @db.Uuid
+  textModelId     String?              @db.Uuid
+  ttsModelId      String?              @db.Uuid
+  baseUrlOverride String?
+  organizationId  String?              @db.VarChar(160)
+  projectId       String?              @db.VarChar(160)
+  settings        Json                 @default("{}")
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  user            User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider        AiProvider?          @relation(fields: [providerId], references: [id])
+  credential      EncryptedCredential? @relation(fields: [credentialId], references: [id])
+  analysisModel   AiModel?             @relation("AnalysisModel", fields: [analysisModelId], references: [id])
+  textModel       AiModel?             @relation("TextModel", fields: [textModelId], references: [id])
+  ttsModel        AiModel?             @relation("TtsModel", fields: [ttsModelId], references: [id])
+
+  @@unique([userId, toolType])
+  @@index([providerId])
+  @@index([credentialId])
+}
+
+model Project {
+  id          String        @id @default(uuid()) @db.Uuid
+  userId      String        @db.Uuid
+  name        String        @db.VarChar(200)
+  description String?
+  status      ProjectStatus @default(ACTIVE)
+  version     Int           @default(1)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  archivedAt  DateTime?
+  deletedAt   DateTime?
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mediaAssets MediaAsset[]
+  jobs        Job[]
+  presets     Preset[]
+
+  @@index([userId, status, createdAt])
+  @@index([deletedAt])
+}
+
+model MediaAsset {
+  id                 String           @id @default(uuid()) @db.Uuid
+  userId             String           @db.Uuid
+  projectId          String?          @db.Uuid
+  type               MediaAssetType
+  status             MediaAssetStatus @default(UPLOADING)
+  displayName        String           @db.VarChar(255)
+  originalFileName   String?          @db.VarChar(255)
+  objectKey          String           @unique
+  mimeType           String?          @db.VarChar(160)
+  extension          String?          @db.VarChar(20)
+  sizeBytes          BigInt?
+  checksumSha256     String?          @db.Char(64)
+  durationMs         BigInt?
+  width              Int?
+  height             Int?
+  frameRate          Decimal?         @db.Decimal(10, 4)
+  audioSampleRate    Int?
+  metadata           Json             @default("{}")
+  retentionExpiresAt DateTime?
+  version            Int              @default(1)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  deletedAt          DateTime?
+  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project            Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  uploadSession      UploadSession?
+  sourceJobs         Job[]            @relation("JobSourceMedia")
+  transcripts        Transcript[]
+  subtitleAssets     SubtitleAsset[]
+  ttsOutputs         TtsOutput[]
+  clipOutputs        ClipOutput[]
+
+  @@index([userId, status, createdAt])
+  @@index([projectId, type])
+  @@index([retentionExpiresAt])
+  @@index([deletedAt])
+}
+
+model UploadSession {
+  id                String       @id @default(uuid()) @db.Uuid
+  userId            String       @db.Uuid
+  mediaAssetId      String       @unique @db.Uuid
+  objectKey         String       @unique
+  multipartUploadId String       @unique
+  status            UploadStatus @default(CREATED)
+  expectedSizeBytes BigInt
+  partSizeBytes     Int
+  contentType       String       @db.VarChar(160)
+  checksumAlgorithm String       @default("SHA256") @db.VarChar(20)
+  completedParts    Json         @default("[]")
+  expiresAt         DateTime
+  completedAt       DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mediaAsset        MediaAsset   @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, createdAt])
+  @@index([expiresAt, status])
+}
+
+model Job {
+  id                   String                @id @default(uuid()) @db.Uuid
+  userId               String                @db.Uuid
+  projectId            String?               @db.Uuid
+  sourceMediaAssetId   String?               @db.Uuid
+  type                 JobType
+  status               JobStatus             @default(DRAFT)
+  currentStage         String?               @db.VarChar(100)
+  progressPercent      Int                   @default(0)
+  eventSequence        BigInt                @default(0)
+  idempotencyKey       String                @db.VarChar(160)
+  operationKey         String                @db.VarChar(100)
+  workflowId           String?
+  workflowRunId        String?
+  inputSnapshot        Json
+  outputSummary        Json?
+  priority             Int                   @default(0)
+  cancelRequestedAt    DateTime?
+  pauseRequestedAt     DateTime?
+  pausedAt             DateTime?
+  startedAt            DateTime?
+  completedAt          DateTime?
+  retentionExpiresAt   DateTime?
+  version              Int                   @default(1)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  deletedAt            DateTime?
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project              Project?              @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sourceMediaAsset     MediaAsset?           @relation("JobSourceMedia", fields: [sourceMediaAssetId], references: [id], onDelete: SetNull)
+  stages               JobStage[]
+  events               JobEvent[]
+  attempts             JobAttempt[]
+  errors               JobError[]
+  autoClipRequest      AutoClipRequest?
+  ttsRequest           TtsRequest?
+  transcriptionRequest TranscriptionRequest?
+  clipCandidates       ClipCandidate[]
+  clipOutputs          ClipOutput[]
+  transcripts          Transcript[]
+  usageRecords         UsageRecord[]
+  publishJobs          PublishJob[]
+
+  @@unique([userId, operationKey, idempotencyKey])
+  @@unique([workflowId])
+  @@index([userId, status, createdAt])
+  @@index([type, status, createdAt])
+  @@index([projectId])
+  @@index([sourceMediaAssetId])
+  @@index([retentionExpiresAt])
+}
+
+model JobStage {
+  id                  String         @id @default(uuid()) @db.Uuid
+  jobId               String         @db.Uuid
+  name                String         @db.VarChar(100)
+  status              JobStageStatus @default(PENDING)
+  stageVersion        Int            @default(1)
+  progressPercent     Int            @default(0)
+  progressWeight      Decimal        @db.Decimal(5, 2)
+  activityId          String?        @db.VarChar(255)
+  attemptCount        Int            @default(0)
+  checkpointObjectKey String?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  job                 Job            @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, name, stageVersion])
+  @@index([jobId, status])
+}
+
+model JobEvent {
+  id              String   @id @default(uuid()) @db.Uuid
+  jobId           String   @db.Uuid
+  sequence        BigInt
+  stage           String?  @db.VarChar(100)
+  stageProgress   Int?
+  overallProgress Int?
+  eventType       String   @db.VarChar(100)
+  message         String
+  userMessage     String?
+  metadata        Json     @default("{}")
+  occurredAt      DateTime @default(now())
+  job             Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, sequence])
+  @@index([jobId, occurredAt])
+}
+
+model JobAttempt {
+  id             String           @id @default(uuid()) @db.Uuid
+  jobId          String           @db.Uuid
+  attemptNumber  Int
+  status         JobAttemptStatus @default(CREATED)
+  requestedStage String?          @db.VarChar(100)
+  reason         String?
+  workflowId     String?          @unique
+  workflowRunId  String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime         @default(now())
+  job            Job              @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, attemptNumber])
+  @@index([jobId, status])
+}
+
+model JobError {
+  id               String        @id @default(uuid()) @db.Uuid
+  jobId            String        @db.Uuid
+  jobStageId       String?       @db.Uuid
+  technicalErrorId String        @unique @db.VarChar(100)
+  code             String        @db.VarChar(120)
+  category         ErrorCategory
+  retryable        Boolean       @default(false)
+  message          String
+  userMessage      String
+  details          Json          @default("{}")
+  stackObjectKey   String?
+  occurredAt       DateTime      @default(now())
+  resolvedAt       DateTime?
+  job              Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, occurredAt])
+  @@index([category, retryable])
+}
+
+model AutoClipRequest {
+  id                     String   @id @default(uuid()) @db.Uuid
+  jobId                  String   @unique @db.Uuid
+  sourceMediaAssetId     String?  @db.Uuid
+  sourceType             String   @db.VarChar(40)
+  sourceUrl              String?
+  sourceLanguage         String?  @db.VarChar(20)
+  speakerCount           Int?
+  contentTitle           String?  @db.VarChar(255)
+  contentContext         String?
+  topic                  String?  @db.VarChar(255)
+  customVocabulary       Json     @default("[]")
+  rightsConfirmedAt      DateTime
+  strategyConfig         Json
+  visualConfig           Json
+  subtitleConfig         Json
+  providerConfigSnapshot Json
+  promptVersion          String?  @db.VarChar(80)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  job                    Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([sourceMediaAssetId])
+}
+
+model ClipCandidate {
+  id                  String       @id @default(uuid()) @db.Uuid
+  jobId               String       @db.Uuid
+  transcriptId        String?      @db.Uuid
+  candidateExternalId String       @db.VarChar(160)
+  startMs             BigInt
+  endMs               BigInt
+  durationMs          BigInt
+  title               String       @db.VarChar(255)
+  hookText            String
+  endingText          String
+  summary             String
+  whyItWorks          Json
+  contentCategory     String       @db.VarChar(40)
+  scoreBreakdown      Json
+  baseViralScore      Decimal      @db.Decimal(4, 2)
+  finalViralScore     Decimal      @db.Decimal(4, 2)
+  contextComplete     Boolean
+  safetyNotes         Json         @default("[]")
+  metadataSuggestions Json         @default("{}")
+  speakerIds          Json         @default("[]")
+  sceneIds            Json         @default("[]")
+  analyzerMetadata    Json         @default("{}")
+  selected            Boolean      @default(false)
+  rank                Int?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  job                 Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  transcript          Transcript?  @relation(fields: [transcriptId], references: [id], onDelete: SetNull)
+  outputs             ClipOutput[]
+
+  @@unique([jobId, candidateExternalId])
+  @@index([jobId, selected, rank])
+  @@index([jobId, finalViralScore])
+}
+
+model ClipOutput {
+  id                 String            @id @default(uuid()) @db.Uuid
+  jobId              String            @db.Uuid
+  candidateId        String            @db.Uuid
+  mediaAssetId       String?           @db.Uuid
+  version            Int               @default(1)
+  qualityStatus      ClipQualityStatus @default(PENDING)
+  previewObjectKey   String?
+  finalObjectKey     String?
+  metadataObjectKey  String?
+  thumbnailObjectKey String?
+  renderSettings     Json
+  qualityReport      Json              @default("{}")
+  durationMs         BigInt?
+  width              Int?
+  height             Int?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  archivedAt         DateTime?
+  deletedAt          DateTime?
+  job                Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  candidate          ClipCandidate     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  mediaAsset         MediaAsset?       @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+  subtitles          SubtitleAsset[]
+  publishJobs        PublishJob[]
+
+  @@unique([candidateId, version])
+  @@index([jobId, qualityStatus])
+  @@index([mediaAssetId])
+  @@index([deletedAt])
+}
+
+model Transcript {
+  id                  String              @id @default(uuid()) @db.Uuid
+  mediaAssetId        String              @db.Uuid
+  jobId               String?             @db.Uuid
+  status              TranscriptStatus    @default(PROCESSING)
+  detectedLanguage    String?             @db.VarChar(20)
+  languageConfidence  Decimal?            @db.Decimal(6, 5)
+  modelIdentifier     String?             @db.VarChar(200)
+  wordTimestamps      Boolean             @default(false)
+  diarizationEnabled  Boolean             @default(false)
+  rawObjectKey        String?
+  normalizedObjectKey String?
+  metadata            Json                @default("{}")
+  version             Int                 @default(1)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  mediaAsset          MediaAsset          @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+  job                 Job?                @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  segments            TranscriptSegment[]
+  clipCandidates      ClipCandidate[]
+
+  @@unique([mediaAssetId, version])
+  @@index([jobId, status])
+}
+
+model TranscriptSegment {
+  id             String     @id @default(uuid()) @db.Uuid
+  transcriptId   String     @db.Uuid
+  sequence       Int
+  startMs        BigInt
+  endMs          BigInt
+  speakerLabel   String?    @db.VarChar(80)
+  rawText        String
+  normalizedText String
+  confidence     Decimal?   @db.Decimal(6, 5)
+  words          Json       @default("[]")
+  metadata       Json       @default("{}")
+  transcript     Transcript @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+
+  @@unique([transcriptId, sequence])
+  @@index([transcriptId, startMs])
+}
+
+model SubtitleAsset {
+  id            String      @id @default(uuid()) @db.Uuid
+  mediaAssetId  String      @db.Uuid
+  clipOutputId  String?     @db.Uuid
+  format        String      @db.VarChar(20)
+  language      String      @db.VarChar(20)
+  objectKey     String      @unique
+  isBurnedIn    Boolean     @default(false)
+  styleSnapshot Json        @default("{}")
+  createdAt     DateTime    @default(now())
+  mediaAsset    MediaAsset  @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+  clipOutput    ClipOutput? @relation(fields: [clipOutputId], references: [id], onDelete: Cascade)
+
+  @@index([clipOutputId, format])
+}
+
+model TtsRequest {
+  id                      String      @id @default(uuid()) @db.Uuid
+  jobId                   String      @unique @db.Uuid
+  script                  String
+  language                String      @db.VarChar(20)
+  providerId              String?     @db.Uuid
+  modelId                 String?     @db.Uuid
+  voiceIdentifier         String?     @db.VarChar(200)
+  speakingStyle           String?     @db.VarChar(80)
+  emotion                 String?     @db.VarChar(80)
+  speakingSpeed           Decimal?    @db.Decimal(5, 2)
+  pitch                   Decimal?    @db.Decimal(5, 2)
+  pauseIntensity          Decimal?    @db.Decimal(5, 2)
+  targetDurationMs        BigInt?
+  pronunciationDictionary Json        @default("{}")
+  outputConfig            Json
+  customVoiceConsentId    String?     @db.Uuid
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
+  job                     Job         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  outputs                 TtsOutput[]
+}
+
+model TtsOutput {
+  id               String          @id @default(uuid()) @db.Uuid
+  ttsRequestId     String          @db.Uuid
+  mediaAssetId     String          @db.Uuid
+  version          Int             @default(1)
+  status           TtsOutputStatus @default(PROCESSING)
+  durationMs       BigInt?
+  providerMetadata Json            @default("{}")
+  createdAt        DateTime        @default(now())
+  ttsRequest       TtsRequest      @relation(fields: [ttsRequestId], references: [id], onDelete: Cascade)
+  mediaAsset       MediaAsset      @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+
+  @@unique([ttsRequestId, version])
+  @@index([mediaAssetId])
+}
+
+model TranscriptionRequest {
+  id                 String   @id @default(uuid()) @db.Uuid
+  jobId              String   @unique @db.Uuid
+  sourceMediaAssetId String   @db.Uuid
+  language           String?  @db.VarChar(20)
+  modelPreset        String?  @db.VarChar(100)
+  wordTimestamps     Boolean  @default(true)
+  diarization        Boolean  @default(false)
+  expectedSpeakers   Int?
+  customVocabulary   Json     @default("[]")
+  removeFillerWords  Boolean  @default(false)
+  profanityHandling  String?  @db.VarChar(40)
+  subtitleConfig     Json     @default("{}")
+  translationConfig  Json     @default("{}")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  job                Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([sourceMediaAssetId])
+}
+
+model SocialConnection {
+  id                    String               @id @default(uuid()) @db.Uuid
+  userId                String               @db.Uuid
+  platform              SocialPlatform
+  externalAccountId     String               @db.VarChar(255)
+  displayName           String?              @db.VarChar(255)
+  encryptedAccessToken  String
+  encryptedRefreshToken String?
+  encryptedDataKey      String
+  keyVersion            String               @db.VarChar(80)
+  tokenExpiresAt        DateTime?
+  scopes                Json                 @default("[]")
+  status                String               @default("ACTIVE") @db.VarChar(40)
+  metadata              Json                 @default("{}")
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  revokedAt             DateTime?
+  user                  User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  destinations          PublishDestination[]
+  publishJobs           PublishJob[]
+
+  @@unique([platform, externalAccountId, userId])
+  @@index([userId, platform, status])
+}
+
+model PublishDestination {
+  id                 String           @id @default(uuid()) @db.Uuid
+  socialConnectionId String           @db.Uuid
+  externalId         String           @db.VarChar(255)
+  displayName        String           @db.VarChar(255)
+  destinationType    String           @db.VarChar(80)
+  capabilities       Json             @default("{}")
+  enabled            Boolean          @default(true)
+  metadata           Json             @default("{}")
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  socialConnection   SocialConnection @relation(fields: [socialConnectionId], references: [id], onDelete: Cascade)
+  publishJobs        PublishJob[]
+
+  @@unique([socialConnectionId, externalId])
+  @@index([socialConnectionId, enabled])
+}
+
+model PublishJob {
+  id                 String             @id @default(uuid()) @db.Uuid
+  jobId              String?            @db.Uuid
+  clipOutputId       String             @db.Uuid
+  socialConnectionId String             @db.Uuid
+  destinationId      String             @db.Uuid
+  status             PublishStatus      @default(DRAFT)
+  caption            String?
+  hashtags           Json               @default("[]")
+  thumbnailObjectKey String?
+  scheduledAt        DateTime?
+  externalPublishId  String?            @db.VarChar(255)
+  responseMetadata   Json               @default("{}")
+  attemptCount       Int                @default(0)
+  publishedAt        DateTime?
+  failedAt           DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  job                Job?               @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  clipOutput         ClipOutput         @relation(fields: [clipOutputId], references: [id], onDelete: Cascade)
+  socialConnection   SocialConnection   @relation(fields: [socialConnectionId], references: [id])
+  destination        PublishDestination @relation(fields: [destinationId], references: [id])
+
+  @@index([status, scheduledAt])
+  @@index([clipOutputId])
+  @@index([socialConnectionId])
+}
+
+model Preset {
+  id          String     @id @default(uuid()) @db.Uuid
+  userId      String?    @db.Uuid
+  projectId   String?    @db.Uuid
+  type        PresetType
+  name        String     @db.VarChar(160)
+  description String?
+  config      Json
+  isSystem    Boolean    @default(false)
+  isDefault   Boolean    @default(false)
+  version     Int        @default(1)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  deletedAt   DateTime?
+  user        User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project     Project?   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type, deletedAt])
+  @@index([isSystem, type])
+}
+
+model BrandKit {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  name             String    @db.VarChar(160)
+  logoObjectKey    String?
+  introObjectKey   String?
+  outroObjectKey   String?
+  fontConfig       Json      @default("{}")
+  colorConfig      Json      @default("{}")
+  safeMarginConfig Json      @default("{}")
+  subtitlePreset   Json      @default("{}")
+  isDefault        Boolean   @default(false)
+  version          Int       @default(1)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, deletedAt])
+}
+
+model Plan {
+  id           String   @id @default(uuid()) @db.Uuid
+  code         String   @unique @db.VarChar(80)
+  name         String   @db.VarChar(120)
+  description  String?
+  enabled      Boolean  @default(true)
+  priceMonthly Decimal? @db.Decimal(14, 2)
+  currency     String   @default("IDR") @db.Char(3)
+  limits       Json
+  features     Json     @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  users        User[]
+  quotas       Quota[]
+}
+
+model Quota {
+  id            String      @id @default(uuid()) @db.Uuid
+  userId        String?     @db.Uuid
+  planId        String?     @db.Uuid
+  metric        UsageMetric
+  limitValue    Decimal     @db.Decimal(20, 4)
+  usedValue     Decimal     @default(0) @db.Decimal(20, 4)
+  reservedValue Decimal     @default(0) @db.Decimal(20, 4)
+  periodStart   DateTime
+  periodEnd     DateTime
+  version       Int         @default(1)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  user          User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan          Plan?       @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([userId, metric, periodStart, periodEnd])
+  @@index([planId, metric])
+}
+
+model UsageRecord {
+  id            String      @id @default(uuid()) @db.Uuid
+  userId        String      @db.Uuid
+  jobId         String?     @db.Uuid
+  metric        UsageMetric
+  quantity      Decimal     @db.Decimal(20, 4)
+  unit          String      @db.VarChar(40)
+  providerId    String?     @db.Uuid
+  modelId       String?     @db.Uuid
+  estimatedCost Decimal?    @db.Decimal(18, 6)
+  currency      String?     @db.Char(3)
+  metadata      Json        @default("{}")
+  occurredAt    DateTime    @default(now())
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job           Job?        @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([userId, metric, occurredAt])
+  @@index([jobId])
+  @@index([providerId, modelId, occurredAt])
+}
+
+model Notification {
+  id          String                @id @default(uuid()) @db.Uuid
+  userId      String                @db.Uuid
+  type        NotificationType
+  channels    NotificationChannel[]
+  title       String                @db.VarChar(200)
+  message     String
+  data        Json                  @default("{}")
+  readAt      DateTime?
+  deliveredAt DateTime?
+  createdAt   DateTime              @default(now())
+  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@index([type, createdAt])
+}
+
+model WebhookEndpoint {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  url              String
+  encryptedSecret  String
+  encryptedDataKey String
+  keyVersion       String    @db.VarChar(80)
+  eventTypes       Json
+  enabled          Boolean   @default(true)
+  failureCount     Int       @default(0)
+  lastDeliveredAt  DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, enabled])
+}
+
+model AuditLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  actorUserId  String?  @db.Uuid
+  targetUserId String?  @db.Uuid
+  action       String   @db.VarChar(120)
+  resourceType String?  @db.VarChar(100)
+  resourceId   String?  @db.VarChar(160)
+  reason       String?
+  requestId    String?  @db.VarChar(100)
+  ipAddress    String?  @db.VarChar(64)
+  userAgent    String?
+  beforeData   Json?
+  afterData    Json?
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+  actorUser    User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  targetUser   User?    @relation("AuditTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  @@index([actorUserId, createdAt])
+  @@index([targetUserId, createdAt])
+  @@index([resourceType, resourceId, createdAt])
+  @@index([action, createdAt])
+}
+
+model FeatureFlag {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique @db.VarChar(120)
+  description String?
+  enabled     Boolean  @default(false)
+  rules       Json     @default("{}")
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model SystemSetting {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique @db.VarChar(160)
+  value       Json
+  isSecret    Boolean  @default(false)
+  description String?
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

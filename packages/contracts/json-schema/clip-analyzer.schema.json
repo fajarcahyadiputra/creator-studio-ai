@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://creator-studio.local/schemas/clip-analyzer.schema.json",
+  "title": "ClipAnalyzerResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["analysis_version", "source_summary", "candidates"],
+  "properties": {
+    "analysis_version": { "type": "string", "const": "1.0" },
+    "source_summary": { "type": "string" },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidate_id", "start_seconds", "end_seconds", "duration_seconds",
+          "title", "hook_text", "ending_text", "summary", "why_it_works",
+          "content_category", "scores", "context_complete", "safety_notes",
+          "suggested_caption", "suggested_cta", "suggested_hashtags",
+          "thumbnail_text", "speaker_ids", "scene_ids"
+        ],
+        "properties": {
+          "candidate_id": { "type": "string", "minLength": 1 },
+          "start_seconds": { "type": "number", "minimum": 0 },
+          "end_seconds": { "type": "number", "exclusiveMinimum": 0 },
+          "duration_seconds": { "type": "number", "exclusiveMinimum": 0 },
+          "title": { "type": "string" },
+          "hook_text": { "type": "string" },
+          "ending_text": { "type": "string" },
+          "summary": { "type": "string" },
+          "why_it_works": { "type": "array", "items": { "type": "string" } },
+          "content_category": {
+            "enum": ["debate", "insight", "story", "reaction", "humor", "other"]
+          },
+          "scores": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "hook", "conflict", "emotion", "novelty", "comment_potential",
+              "base_viral_score", "penalties", "final_viral_score"
+            ],
+            "properties": {
+              "hook": { "$ref": "#/$defs/score" },
+              "conflict": { "$ref": "#/$defs/score" },
+              "emotion": { "$ref": "#/$defs/score" },
+              "novelty": { "$ref": "#/$defs/score" },
+              "comment_potential": { "$ref": "#/$defs/score" },
+              "base_viral_score": { "$ref": "#/$defs/score" },
+              "final_viral_score": { "$ref": "#/$defs/score" },
+              "penalties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["context", "weak_ending", "slow_start", "duplicate", "unsafe_or_misleading", "cut_quality"],
+                "properties": {
+                  "context": { "type": "number", "minimum": 0, "maximum": 2 },
+                  "weak_ending": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "slow_start": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "duplicate": { "type": "number", "minimum": 0, "maximum": 1.5 },
+                  "unsafe_or_misleading": { "type": "number", "minimum": 0, "maximum": 3 },
+                  "cut_quality": { "type": "number", "minimum": 0, "maximum": 1 }
+                }
+              }
+            }
+          },
+          "context_complete": { "type": "boolean" },
+          "safety_notes": { "type": "array", "items": { "type": "string" } },
+          "suggested_caption": { "type": "string" },
+          "suggested_cta": { "type": "string" },
+          "suggested_hashtags": { "type": "array", "items": { "type": "string" } },
+          "thumbnail_text": { "type": "string" },
+          "speaker_ids": { "type": "array", "items": { "type": "string" } },
+          "scene_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "score": { "type": "number", "minimum": 0, "maximum": 10 }
+  }
+}

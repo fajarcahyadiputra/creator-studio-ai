@@ -1,0 +1,267 @@
+name: creator-studio-ai
+
+services:
+  postgres:
+    image: postgres:17.5-bookworm
+    environment:
+      POSTGRES_USER: creator
+      POSTGRES_PASSWORD: creator_dev_password
+      POSTGRES_DB: creator_studio
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U creator -d creator_studio"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [internal]
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7.4.5-bookworm
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [internal]
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [public, internal]
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 minioadmin minioadmin123 &&
+        mc mb --ignore-existing local/creator-media &&
+        mc anonymous set none local/creator-media &&
+        mc ilm rule add --expire-days 2 --prefix 'users/' local/creator-media || true
+    networks: [internal]
+    restart: "no"
+
+  temporal:
+    image: temporalio/auto-setup:1.29.7
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: creator
+      POSTGRES_PWD: creator_dev_password
+      POSTGRES_SEEDS: postgres
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+      ENABLE_ES: "false"
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "localhost:7233"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [internal]
+    ports:
+      - "7233:7233"
+
+  temporal-ui:
+    image: temporalio/ui:2.42.1
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000
+    networks: [public, internal]
+    ports:
+      - "8080:8080"
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/web-node/Dockerfile
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["npx", "prisma", "migrate", "deploy"]
+    networks: [internal]
+    restart: "no"
+
+  seed:
+    build:
+      context: .
+      dockerfile: apps/web-node/Dockerfile
+    env_file: .env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["npx", "prisma", "db", "seed"]
+    networks: [internal]
+    restart: "no"
+
+  web-node:
+    build:
+      context: .
+      dockerfile: apps/web-node/Dockerfile
+    env_file: .env
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health/ready').then(r=>{if(!r.ok)process.exit(1)})"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [public, internal]
+    ports:
+      - "3000:3000"
+
+  web-email-worker:
+    build:
+      context: .
+      dockerfile: apps/web-node/Dockerfile
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    command: ["node", "dist/workers/email-worker.js"]
+    networks: [internal]
+
+  media-ingestion-node:
+    build:
+      context: .
+      dockerfile: apps/media-ingestion-node/Dockerfile
+    env_file: .env
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+      web-node:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3100/health/ready').then(r=>{if(!r.ok)process.exit(1)})"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [internal]
+
+  ai-media-python:
+    build:
+      context: .
+      dockerfile: apps/ai-media-python/Dockerfile
+    env_file: .env
+    depends_on:
+      temporal:
+        condition: service_healthy
+      web-node:
+        condition: service_healthy
+    command: ["python", "-m", "app.worker"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket;s=socket.create_connection(('temporal',7233),5);s.close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+    networks: [internal]
+
+  ai-media-python-api:
+    build:
+      context: .
+      dockerfile: apps/ai-media-python/Dockerfile
+    env_file: .env
+    command: ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [internal]
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    networks: [public, internal]
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks: [public, internal]
+    ports:
+      - "9090:9090"
+
+  loki:
+    image: grafana/loki:3.5.1
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ./infra/monitoring/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    networks: [internal]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.130.1
+    command: ["--config=/etc/otelcol/config.yml"]
+    volumes:
+      - ./infra/monitoring/otel-collector.yml:/etc/otelcol/config.yml:ro
+    networks: [internal]
+
+  grafana:
+    image: grafana/grafana:12.0.2
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on: [prometheus, loki]
+    networks: [public, internal]
+    ports:
+      - "3001:3000"
+
+networks:
+  public:
+  internal:
+    internal: true
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:

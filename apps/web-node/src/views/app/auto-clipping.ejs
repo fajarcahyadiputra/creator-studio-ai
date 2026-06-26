@@ -1,0 +1,29 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<div class="app-shell"><%- include('../partials/sidebar') %><main class="content-area">
+  <header class="page-header"><div><span class="eyebrow">Tools</span><h1>Auto Clipping</h1><p>Phase 1 demonstrates secure submission and durable orchestration. Media rendering is enabled in Phase 2.</p></div></header>
+  <div class="alert alert-info">This foundation workflow ends as <strong>NEEDS_REVIEW</strong> and does not fabricate rendered clips.</div>
+  <div class="form-message"></div>
+  <form id="auto-clip-form" class="wizard-panel">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <section class="wizard-step"><div class="step-number">1</div><div class="step-body"><h2>Source</h2>
+      <label class="form-label">External source URL</label><input class="form-control" type="url" name="source_url" placeholder="https://www.youtube.com/watch?v=..." required>
+      <div class="form-text">The ingestion service validates allowed domains and rejects private/reserved network destinations.</div>
+      <label class="form-check mt-3"><input class="form-check-input" type="checkbox" name="rights_confirmed" required><span class="form-check-label">I own or have permission to process this content.</span></label>
+    </div></section>
+    <section class="wizard-step"><div class="step-number">2</div><div class="step-body"><h2>Content strategy</h2><div class="row g-3">
+      <div class="col-md-6"><label class="form-label">Title</label><input class="form-control" name="title" maxlength="255"></div>
+      <div class="col-md-3"><label class="form-label">Platform</label><select class="form-select" name="platform"><option>YOUTUBE_SHORTS</option><option>TIKTOK</option><option>INSTAGRAM_REELS</option><option>FACEBOOK_REELS</option></select></div>
+      <div class="col-md-3"><label class="form-label">Objective</label><select class="form-select" name="objective"><option>EDUCATION</option><option>ENGAGEMENT</option><option>STORYTELLING</option><option>CONTROVERSY</option></select></div>
+      <div class="col-md-4"><label class="form-label">Number of clips</label><input class="form-control" name="clip_count" type="number" min="1" max="30" value="5"></div>
+      <div class="col-md-4"><label class="form-label">Minimum duration</label><input class="form-control" name="min_duration" type="number" min="10" max="180" value="30"></div>
+      <div class="col-md-4"><label class="form-label">Maximum duration</label><input class="form-control" name="max_duration" type="number" min="15" max="180" value="60"></div>
+    </div></div></section>
+    <section class="wizard-step"><div class="step-number">3</div><div class="step-body"><h2>Visual and subtitle</h2><div class="row g-3">
+      <div class="col-md-4"><label class="form-label">Aspect ratio</label><select class="form-select" name="aspect_ratio"><option>9:16</option><option>1:1</option><option>4:5</option><option>16:9</option></select></div>
+      <div class="col-md-4"><label class="form-label">Crop strategy</label><select class="form-select" name="crop_strategy"><option>AUTO_REFRAME</option><option>CENTER</option><option>ACTIVE_SPEAKER</option><option>FACE_TRACKING</option></select></div>
+      <div class="col-md-4"><label class="form-label">Subtitle language</label><input class="form-control" name="subtitle_language" value="id"></div>
+    </div></div></section>
+    <section class="wizard-step"><div class="step-number">4</div><div class="step-body"><h2>Review and submit</h2><p class="text-secondary">Submission uses an idempotency key so retries from the browser cannot create duplicate jobs.</p><button class="btn btn-primary" type="submit">Create durable job</button></div></section>
+  </form>
+</main></div>
+<%- include('../partials/footer') %>

@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: creator-studio
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-web-ingress
+  namespace: creator-studio
+spec:
+  podSelector:
+    matchLabels: { app: web-node }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - { protocol: TCP, port: 3000 }
+# Production overlays must add explicit egress rules for PostgreSQL, Redis,
+# Temporal, object storage, DNS, email, and approved provider endpoints.

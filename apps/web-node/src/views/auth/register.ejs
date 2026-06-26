@@ -1,0 +1,16 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<main class="auth-shell"><section class="auth-card">
+  <h1 class="h3">Create your workspace</h1>
+  <p class="text-secondary">Start with secure, durable creator jobs.</p>
+  <div class="form-message"></div>
+  <form data-api-form action="/api/v1/auth/register" method="post" data-success-redirect>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="form-label">Name</label><input class="form-control mb-3" name="display_name" required minlength="2">
+    <label class="form-label">Email</label><input class="form-control mb-3" type="email" name="email" required>
+    <label class="form-label">Password</label><input class="form-control mb-3" type="password" name="password" minlength="12" required>
+    <div class="form-text mb-3">At least 12 characters with uppercase, lowercase, and a number.</div>
+    <button class="btn btn-primary w-100" type="submit">Register</button>
+  </form>
+  <a class="d-block mt-4 text-center" href="/login">Already registered?</a>
+</section></main>
+<%- include('../partials/footer') %>
