@@ -652,6 +652,8 @@ model JobAttempt {
   jobId          String           @db.Uuid
   attemptNumber  Int
   status         JobAttemptStatus @default(CREATED)
+  operationKey   String           @db.VarChar(100)
+  idempotencyKey String           @db.VarChar(160)
   requestedStage String?          @db.VarChar(100)
   reason         String?
   workflowId     String?          @unique
@@ -662,6 +664,7 @@ model JobAttempt {
   job            Job              @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@unique([jobId, attemptNumber])
+  @@unique([jobId, operationKey, idempotencyKey])
   @@index([jobId, status])
 }
 

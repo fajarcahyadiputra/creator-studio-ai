@@ -100,6 +100,7 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
       const job = await jobService.retry({
         userId: request.identity!.effectiveUserId,
         jobId: routeParam(request.params.jobId, "jobId"),
+        idempotencyKey: assertIdempotencyKey(request.get("idempotency-key")),
         reason: body.reason,
         stage: body.stage
       });

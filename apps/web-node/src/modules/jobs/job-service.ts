@@ -4,7 +4,9 @@ import { prisma } from "../../infrastructure/database/prisma.js";
 import { temporalClient } from "../../infrastructure/temporal/client.js";
 import { env } from "../../config/env.js";
 import { AppError, ConflictError, NotFoundError } from "../../shared/errors/app-error.js";
-import { writeAudit } from "../audit/audit-service.js";
+
+const CREATE_AUTO_CLIP_ATTEMPT_OPERATION_KEY = "CREATE_AUTO_CLIP_JOB_ATTEMPT";
+const RETRY_JOB_ATTEMPT_OPERATION_KEY = "RETRY_JOB_ATTEMPT";
 
 interface CreateAutoClipInput {
   project_id?: string;
@@ -71,6 +73,8 @@ export class JobService {
             create: {
               attemptNumber: 1,
               status: "CREATED",
+              operationKey: CREATE_AUTO_CLIP_ATTEMPT_OPERATION_KEY,
+              idempotencyKey: params.idempotencyKey,
               workflowId
             }
           },
@@ -163,12 +167,32 @@ export class JobService {
     await client.workflow.getHandle(job.workflowId).cancel();
   }
 
-  public async retry(params: { userId: string; jobId: string; reason: string; stage?: string }) {
+  public async retry(params: {
+    userId: string;
+    jobId: string;
+    reason: string;
+    stage?: string;
+    idempotencyKey: string;
+  }) {
     const job = await prisma.job.findFirst({
       where: { id: params.jobId, userId: params.userId, deletedAt: null },
       include: { attempts: { orderBy: { attemptNumber: "desc" }, take: 1 } }
     });
     if (!job) throw new NotFoundError("Job");
+
+    const existingAttempt = await prisma.jobAttempt.findUnique({
+      where: {
+        jobId_operationKey_idempotencyKey: {
+          jobId: job.id,
+          operationKey: RETRY_JOB_ATTEMPT_OPERATION_KEY,
+          idempotencyKey: params.idempotencyKey
+        }
+      }
+    });
+    if (existingAttempt) {
+      return prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+    }
+
     if (job.status !== "FAILED") {
       throw new ConflictError("JOB_NOT_RETRYABLE", "Only failed jobs can be retried.");
     }
@@ -193,6 +217,8 @@ export class JobService {
           jobId: job.id,
           attemptNumber,
           status: "CREATED",
+          operationKey: RETRY_JOB_ATTEMPT_OPERATION_KEY,
+          idempotencyKey: params.idempotencyKey,
           requestedStage: params.stage,
           reason: params.reason,
           workflowId
@@ -200,30 +226,60 @@ export class JobService {
       })
     ]);
 
-    const client = await temporalClient();
-    const handle = await client.workflow.start("FoundationAutoClippingWorkflow", {
-      taskQueue: env.TEMPORAL_AUTO_CLIP_TASK_QUEUE,
-      workflowId,
-      args: [
-        {
-          job_id: job.id,
-          user_id: params.userId,
-          job_type: job.type,
-          input_snapshot: job.inputSnapshot,
-          callback_base_url: env.WEB_INTERNAL_BASE_URL,
-          attempt_number: attemptNumber,
-          resume_from_stage: params.stage
-        }
-      ]
-    });
-    await prisma.$transaction([
-      prisma.job.update({ where: { id: job.id }, data: { workflowRunId: handle.firstExecutionRunId } }),
-      prisma.jobAttempt.update({
-        where: { jobId_attemptNumber: { jobId: job.id, attemptNumber } },
-        data: { status: "RUNNING", workflowRunId: handle.firstExecutionRunId, startedAt: new Date() }
-      })
-    ]);
-    return prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+    try {
+      const client = await temporalClient();
+      const handle = await client.workflow.start("FoundationAutoClippingWorkflow", {
+        taskQueue: env.TEMPORAL_AUTO_CLIP_TASK_QUEUE,
+        workflowId,
+        args: [
+          {
+            job_id: job.id,
+            user_id: params.userId,
+            job_type: job.type,
+            input_snapshot: job.inputSnapshot,
+            callback_base_url: env.WEB_INTERNAL_BASE_URL,
+            attempt_number: attemptNumber,
+            resume_from_stage: params.stage
+          }
+        ]
+      });
+      await prisma.$transaction([
+        prisma.job.update({ where: { id: job.id }, data: { workflowRunId: handle.firstExecutionRunId } }),
+        prisma.jobAttempt.update({
+          where: { jobId_attemptNumber: { jobId: job.id, attemptNumber } },
+          data: { status: "RUNNING", workflowRunId: handle.firstExecutionRunId, startedAt: new Date() }
+        })
+      ]);
+      return prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+    } catch (error) {
+      const technicalErrorId = randomUUID();
+      await prisma.$transaction([
+        prisma.job.update({ where: { id: job.id }, data: { status: "FAILED" } }),
+        prisma.jobAttempt.update({
+          where: { jobId_attemptNumber: { jobId: job.id, attemptNumber } },
+          data: { status: "FAILED", completedAt: new Date() }
+        }),
+        prisma.jobError.create({
+          data: {
+            jobId: job.id,
+            technicalErrorId,
+            code: "TEMPORAL_RETRY_START_FAILED",
+            category: "INFRASTRUCTURE_TEMPORARY",
+            retryable: true,
+            message: error instanceof Error ? error.message : String(error),
+            userMessage: "The retry workflow could not be started. Retry the job again when Temporal is available."
+          }
+        })
+      ]);
+      throw new AppError({
+        code: "TEMPORAL_RETRY_START_FAILED",
+        message: "The retry workflow could not be started.",
+        statusCode: 503,
+        retryable: true,
+        details: { technical_error_id: technicalErrorId },
+        cause: error
+      });
+    }
   }
 
   public async duplicate(userId: string, jobId: string, idempotencyKey: string) {
