@@ -4,9 +4,128 @@ import { asyncHandler } from "../../shared/http/async-handler.js";
 import { validateBody } from "../../shared/http/validate.js";
 import { routeParam } from "../../shared/http/route-param.js";
 import { requireAuth } from "../auth/identity-middleware.js";
-import { autoClipJobSchema, retryJobSchema } from "./schemas.js";
+import { writeAudit } from "../audit/audit-service.js";
+import { autoClipJobSchema, clipCandidateSelectionSchema, retryJobSchema } from "./schemas.js";
 import { assertIdempotencyKey, JobService, serializeJob } from "./job-service.js";
 import type { JobEventBus } from "./job-event-bus.js";
+
+function serializeClipOutput(output: {
+  id: string;
+  candidateId: string;
+  mediaAssetId: string | null;
+  version: number;
+  qualityStatus: string;
+  previewObjectKey: string | null;
+  finalObjectKey: string | null;
+  metadataObjectKey: string | null;
+  thumbnailObjectKey: string | null;
+  renderSettings: unknown;
+  qualityReport: unknown;
+  durationMs: bigint | null;
+  width: number | null;
+  height: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return {
+    id: output.id,
+    candidate_id: output.candidateId,
+    media_asset_id: output.mediaAssetId,
+    version: output.version,
+    quality_status: output.qualityStatus,
+    preview_object_key: output.previewObjectKey,
+    final_object_key: output.finalObjectKey,
+    metadata_object_key: output.metadataObjectKey,
+    thumbnail_object_key: output.thumbnailObjectKey,
+    render_settings: output.renderSettings,
+    quality_report: output.qualityReport,
+    duration_ms: output.durationMs?.toString() ?? null,
+    width: output.width,
+    height: output.height,
+    created_at: output.createdAt.toISOString(),
+    updated_at: output.updatedAt.toISOString()
+  };
+}
+
+function serializeClipCandidate(candidate: {
+  id: string;
+  candidateExternalId: string;
+  startMs: bigint;
+  endMs: bigint;
+  durationMs: bigint;
+  title: string;
+  hookText: string;
+  endingText: string;
+  summary: string;
+  whyItWorks: unknown;
+  contentCategory: string;
+  scoreBreakdown: unknown;
+  baseViralScore: unknown;
+  finalViralScore: unknown;
+  contextComplete: boolean;
+  safetyNotes: unknown;
+  metadataSuggestions: unknown;
+  speakerIds: unknown;
+  sceneIds: unknown;
+  analyzerMetadata: unknown;
+  selected: boolean;
+  rank: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return {
+    id: candidate.id,
+    candidate_id: candidate.candidateExternalId,
+    start_ms: candidate.startMs.toString(),
+    end_ms: candidate.endMs.toString(),
+    duration_ms: candidate.durationMs.toString(),
+    title: candidate.title,
+    hook_text: candidate.hookText,
+    ending_text: candidate.endingText,
+    summary: candidate.summary,
+    why_it_works: candidate.whyItWorks,
+    content_category: candidate.contentCategory,
+    score_breakdown: candidate.scoreBreakdown,
+    base_viral_score: candidate.baseViralScore,
+    final_viral_score: candidate.finalViralScore,
+    context_complete: candidate.contextComplete,
+    safety_notes: candidate.safetyNotes,
+    metadata_suggestions: candidate.metadataSuggestions,
+    speaker_ids: candidate.speakerIds,
+    scene_ids: candidate.sceneIds,
+    analyzer_metadata: candidate.analyzerMetadata,
+    selected: candidate.selected,
+    rank: candidate.rank,
+    created_at: candidate.createdAt.toISOString(),
+    updated_at: candidate.updatedAt.toISOString()
+  };
+}
+
+function serializeJobOutputs(job: Awaited<ReturnType<JobService["get"]>>) {
+  const outputSummary =
+    job.outputSummary && typeof job.outputSummary === "object" && !Array.isArray(job.outputSummary)
+      ? (job.outputSummary as Record<string, unknown>)
+      : null;
+
+  const candidateCount =
+    outputSummary &&
+    "candidate_count" in outputSummary &&
+    typeof outputSummary.candidate_count === "number" &&
+    Number.isFinite(outputSummary.candidate_count)
+      ? outputSummary.candidate_count
+      : Array.isArray(job.clipOutputs)
+        ? job.clipOutputs.length
+        : 0;
+
+  return {
+    job_id: job.id,
+    status: job.status,
+    candidate_count: candidateCount,
+    clip_candidates: job.clipCandidates.map(serializeClipCandidate),
+    output_summary: outputSummary,
+    clip_outputs: job.clipOutputs.map(serializeClipOutput)
+  };
+}
 
 function serializeEvent(event: {
   id: string;
@@ -42,10 +161,20 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     requireAuth,
     validateBody(autoClipJobSchema),
     asyncHandler(async (request, response) => {
+      const idempotencyKey = assertIdempotencyKey(request.get("idempotency-key"));
       const job = await jobService.createAutoClippingJob({
         userId: request.identity!.effectiveUserId,
-        idempotencyKey: assertIdempotencyKey(request.get("idempotency-key")),
+        idempotencyKey,
         input: request.validatedBody as never
+      });
+      await writeAudit({
+        actorUserId: request.identity!.actorUserId,
+        targetUserId: request.identity!.effectiveUserId,
+        action: "AUTO_CLIP_JOB_CREATED",
+        resourceType: "Job",
+        resourceId: job.id,
+        metadata: { idempotency_key: idempotencyKey, job_type: "AUTO_CLIPPING" },
+        request
       });
       response.status(202).json({ data: serializeJob(job) });
     })
@@ -55,11 +184,22 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     "/api/v1/auto-clipping/jobs/:jobId/duplicate",
     requireAuth,
     asyncHandler(async (request, response) => {
+      const sourceJobId = routeParam(request.params.jobId, "jobId");
+      const idempotencyKey = assertIdempotencyKey(request.get("idempotency-key"));
       const job = await jobService.duplicate(
         request.identity!.effectiveUserId,
-        routeParam(request.params.jobId, "jobId"),
-        assertIdempotencyKey(request.get("idempotency-key"))
+        sourceJobId,
+        idempotencyKey
       );
+      await writeAudit({
+        actorUserId: request.identity!.actorUserId,
+        targetUserId: request.identity!.effectiveUserId,
+        action: "AUTO_CLIP_JOB_DUPLICATED",
+        resourceType: "Job",
+        resourceId: job.id,
+        metadata: { source_job_id: sourceJobId, idempotency_key: idempotencyKey },
+        request
+      });
       response.status(202).json({ data: serializeJob(job) });
     })
   );
@@ -82,11 +222,30 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     })
   );
 
+  router.get(
+    "/api/v1/jobs/:jobId/outputs",
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      const job = await jobService.get(request.identity!.effectiveUserId, routeParam(request.params.jobId, "jobId"));
+      response.json({ data: serializeJobOutputs(job) });
+    })
+  );
+
   router.post(
     "/api/v1/jobs/:jobId/cancel",
     requireAuth,
     asyncHandler(async (request, response) => {
-      await jobService.cancel(request.identity!.effectiveUserId, routeParam(request.params.jobId, "jobId"));
+      const jobId = routeParam(request.params.jobId, "jobId");
+      await jobService.cancel(request.identity!.effectiveUserId, jobId);
+      await writeAudit({
+        actorUserId: request.identity!.actorUserId,
+        targetUserId: request.identity!.effectiveUserId,
+        action: "JOB_CANCEL_REQUESTED",
+        resourceType: "Job",
+        resourceId: jobId,
+        metadata: { requested_status: "CANCEL_REQUESTED" },
+        request
+      });
       response.status(202).json({ data: { status: "CANCEL_REQUESTED" } });
     })
   );
@@ -97,14 +256,106 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     validateBody(retryJobSchema),
     asyncHandler(async (request, response) => {
       const body = request.validatedBody as { stage?: string; reason: string };
+      const jobId = routeParam(request.params.jobId, "jobId");
+      const idempotencyKey = assertIdempotencyKey(request.get("idempotency-key"));
       const job = await jobService.retry({
         userId: request.identity!.effectiveUserId,
-        jobId: routeParam(request.params.jobId, "jobId"),
-        idempotencyKey: assertIdempotencyKey(request.get("idempotency-key")),
+        jobId,
+        idempotencyKey,
         reason: body.reason,
         stage: body.stage
       });
+      await writeAudit({
+        actorUserId: request.identity!.actorUserId,
+        targetUserId: request.identity!.effectiveUserId,
+        action: "JOB_RETRY_REQUESTED",
+        resourceType: "Job",
+        resourceId: jobId,
+        reason: body.reason,
+        metadata: {
+          requested_stage: body.stage,
+          idempotency_key: idempotencyKey,
+          attempt_workflow_id: job.workflowId
+        },
+        request
+      });
       response.status(202).json({ data: serializeJob(job) });
+    })
+  );
+
+  router.post(
+    "/api/v1/jobs/:jobId/candidates/:candidateId/selection",
+    requireAuth,
+    validateBody(clipCandidateSelectionSchema),
+    asyncHandler(async (request, response) => {
+      const body = request.validatedBody as { selected: boolean };
+      const jobId = routeParam(request.params.jobId, "jobId");
+      const candidateId = routeParam(request.params.candidateId, "candidateId");
+      const candidate = await jobService.updateClipCandidateSelection({
+        userId: request.identity!.effectiveUserId,
+        jobId,
+        candidateId,
+        selected: body.selected
+      });
+      await writeAudit({
+        actorUserId: request.identity!.actorUserId,
+        targetUserId: request.identity!.effectiveUserId,
+        action: body.selected ? "CLIP_CANDIDATE_SELECTED" : "CLIP_CANDIDATE_DESELECTED",
+        resourceType: "ClipCandidate",
+        resourceId: candidate.id,
+        metadata: {
+          job_id: jobId,
+          candidate_external_id: candidate.candidateExternalId,
+          selected: candidate.selected,
+          rank: candidate.rank
+        },
+        request
+      });
+      response.json({
+        data: {
+          id: candidate.id,
+          selected: candidate.selected,
+          rank: candidate.rank,
+          message: candidate.selected ? "Candidate selected for downstream review." : "Candidate removed from the selected set."
+        }
+      });
+    })
+  );
+
+  router.post(
+    "/api/v1/jobs/:jobId/render-queue",
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      const jobId = routeParam(request.params.jobId, "jobId");
+      const result = await jobService.queueSelectedClipOutputs({
+        userId: request.identity!.effectiveUserId,
+        jobId
+      });
+      await writeAudit({
+        actorUserId: request.identity!.actorUserId,
+        targetUserId: request.identity!.effectiveUserId,
+        action: "JOB_RENDER_QUEUE_REQUESTED",
+        resourceType: "Job",
+        resourceId: jobId,
+        metadata: {
+          selected_candidate_count: result.selectedCount,
+          created_clip_output_count: result.createdCount,
+          existing_clip_output_count: result.existingCount
+        },
+        request
+      });
+      response.json({
+        data: {
+          job_id: result.jobId,
+          selected_candidate_count: result.selectedCount,
+          created_clip_output_count: result.createdCount,
+          existing_clip_output_count: result.existingCount,
+          message:
+            result.createdCount > 0
+              ? `Queued ${result.createdCount} selected candidate(s) for render preparation.`
+              : "All selected candidates already have pending clip outputs."
+        }
+      });
     })
   );
 

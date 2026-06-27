@@ -2,7 +2,15 @@ const csrf = document.querySelector('meta[name="csrf-token"]')?.content ?? "";
 
 function objectFromForm(form) {
   const data = new FormData(form);
-  return Object.fromEntries([...data.entries()].filter(([key]) => key !== "_csrf"));
+  return Object.fromEntries(
+    [...data.entries()]
+      .filter(([key]) => key !== "_csrf")
+      .map(([key, value]) => {
+        if (value === "true") return [key, true];
+        if (value === "false") return [key, false];
+        return [key, value];
+      })
+  );
 }
 
 function showMessage(container, message, type = "danger") {

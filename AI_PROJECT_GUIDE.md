@@ -8,7 +8,7 @@ Always read `AGENTS.md` before changing architecture, workflow behavior, databas
 
 Creator Studio AI is currently a Phase 1 production-oriented foundation for a multi-tenant creator workspace. It includes authentication, RBAC, sessions, upload orchestration, durable job records, Temporal workflow startup, progress projection, SSE job events, secure media-ingestion boundaries, and a Python worker skeleton.
 
-Phase 2 media processing is intentionally not implemented yet. The included auto-clipping workflow validates input and ends as `NEEDS_REVIEW`; it must not fake rendered clip outputs.
+Phase 2 media processing is partially implemented. The repository now includes structured `analysis_inputs`, OpenAI-first candidate analysis with heuristic fallback, persisted `ClipCandidate` review rows, and job-output APIs/UI. Final media rendering, subtitle burn-in, and full clip-export execution are still incomplete and must not be faked.
 
 ## Read By Task
 
@@ -29,6 +29,7 @@ Phase 2 media processing is intentionally not implemented yet. The included auto
 - Validate untrusted input with Zod in TypeScript and Pydantic in Python.
 - Mutating workflow commands require idempotency keys.
 - Never log secrets, auth headers, cookies, OAuth tokens, signed URLs, reset tokens, or encrypted credential payloads.
+- The Phase 2 analyzer currently defaults to OpenAI at runtime through `OPENAI_API_KEY`, but the provider boundary must remain adapter-based so it can be swapped later.
 
 ## First Files To Read
 

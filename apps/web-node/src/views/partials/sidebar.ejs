@@ -3,10 +3,10 @@
   <nav class="nav flex-column gap-1 mt-4">
     <a class="nav-link <%= path === '/app/dashboard' ? 'active' : '' %>" href="/app/dashboard">Dashboard</a>
     <a class="nav-link <%= path.includes('/app/tools') ? 'active' : '' %>" href="/app/tools/auto-clipping">Auto Clipping</a>
-    <a class="nav-link <%= path === '/app/jobs' ? 'active' : '' %>" href="/app/jobs">Jobs</a>
-    <span class="nav-link disabled">Media Library · Phase 1.1</span>
-    <span class="nav-link disabled">Text to Speech · Phase 4</span>
-    <span class="nav-link disabled">Transcription · Phase 4</span>
+    <a class="nav-link <%= path.startsWith('/app/jobs') ? 'active' : '' %>" href="/app/jobs">Jobs</a>
+    <span class="nav-link disabled">Media Library - Phase 1.1</span>
+    <span class="nav-link disabled">Text to Speech - Phase 4</span>
+    <span class="nav-link disabled">Transcription - Phase 4</span>
     <% if (identity?.permissions?.has('admin.dashboard.view')) { %>
       <a class="nav-link mt-3" href="/admin/dashboard">Administration</a>
     <% } %>

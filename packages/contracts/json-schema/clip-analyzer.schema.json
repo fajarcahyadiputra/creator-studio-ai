@@ -4,10 +4,15 @@
   "title": "ClipAnalyzerResult",
   "type": "object",
   "additionalProperties": false,
-  "required": ["analysis_version", "source_summary", "candidates"],
+  "required": ["analysis_version", "source_summary", "candidate_count", "candidates"],
   "properties": {
-    "analysis_version": { "type": "string", "const": "1.0" },
+    "analysis_version": { "type": "string", "minLength": 1 },
     "source_summary": { "type": "string" },
+    "candidate_count": { "type": "integer", "minimum": 0, "maximum": 30 },
+    "analyzer": {
+      "type": "object",
+      "additionalProperties": true
+    },
     "candidates": {
       "type": "array",
       "items": {

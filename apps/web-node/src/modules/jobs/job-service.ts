@@ -26,6 +26,32 @@ interface CreateAutoClipInput {
   ai: Record<string, unknown>;
 }
 
+interface UpdateClipCandidateSelectionInput {
+  userId: string;
+  jobId: string;
+  candidateId: string;
+  selected: boolean;
+}
+
+interface QueueSelectedClipOutputsInput {
+  userId: string;
+  jobId: string;
+}
+
+interface RenderSettingsSource {
+  inputSnapshot: unknown;
+  candidate: {
+    id: string;
+    candidateExternalId: string;
+    startMs: bigint;
+    endMs: bigint;
+    durationMs: bigint;
+    contentCategory: string;
+    metadataSuggestions: unknown;
+    analyzerMetadata: unknown;
+  };
+}
+
 export class JobService {
   public async createAutoClippingJob(params: {
     userId: string;
@@ -308,11 +334,118 @@ export class JobService {
         stages: { orderBy: { createdAt: "asc" } },
         attempts: { orderBy: { attemptNumber: "desc" } },
         errors: { orderBy: { occurredAt: "desc" } },
+        clipCandidates: { orderBy: { rank: "asc" } },
         clipOutputs: true
       }
     });
     if (!job) throw new NotFoundError("Job");
     return job;
+  }
+
+  public async updateClipCandidateSelection(params: UpdateClipCandidateSelectionInput) {
+    return prisma.$transaction(async (tx) => {
+      const candidate = await tx.clipCandidate.findFirst({
+        where: {
+          id: params.candidateId,
+          jobId: params.jobId,
+          job: {
+            userId: params.userId,
+            deletedAt: null
+          }
+        }
+      });
+      if (!candidate) throw new NotFoundError("Clip candidate");
+
+      if (params.selected) {
+        if (candidate.selected) return candidate;
+
+        const highestSelected = await tx.clipCandidate.findFirst({
+          where: { jobId: params.jobId, selected: true },
+          orderBy: { rank: "desc" }
+        });
+        return tx.clipCandidate.update({
+          where: { id: candidate.id },
+          data: {
+            selected: true,
+            rank: (highestSelected?.rank ?? 0) + 1
+          }
+        });
+      }
+
+      if (!candidate.selected) {
+        return tx.clipCandidate.update({
+          where: { id: candidate.id },
+          data: { rank: null }
+        });
+      }
+
+      await tx.clipCandidate.updateMany({
+        where: {
+          jobId: params.jobId,
+          selected: true,
+          rank: { gt: candidate.rank ?? 0 }
+        },
+        data: {
+          rank: { decrement: 1 }
+        }
+      });
+
+      return tx.clipCandidate.update({
+        where: { id: candidate.id },
+        data: {
+          selected: false,
+          rank: null
+        }
+      });
+    });
+  }
+
+  public async queueSelectedClipOutputs(params: QueueSelectedClipOutputsInput) {
+    return prisma.$transaction(async (tx) => {
+      const job = await tx.job.findFirst({
+        where: { id: params.jobId, userId: params.userId, deletedAt: null },
+        include: {
+          clipCandidates: {
+            where: { selected: true },
+            orderBy: [{ rank: "asc" }, { createdAt: "asc" }]
+          },
+          clipOutputs: {
+            where: { deletedAt: null },
+            orderBy: { createdAt: "asc" }
+          }
+        }
+      });
+      if (!job) throw new NotFoundError("Job");
+
+      const existingCandidateIds = new Set(job.clipOutputs.map((output) => output.candidateId));
+
+      let createdCount = 0;
+      for (const candidate of job.clipCandidates) {
+        if (existingCandidateIds.has(candidate.id)) {
+          continue;
+        }
+        await tx.clipOutput.create({
+          data: {
+            jobId: job.id,
+            candidateId: candidate.id,
+            version: 1,
+            renderSettings: buildRenderSettings({
+              inputSnapshot: job.inputSnapshot,
+              candidate
+            }) as never
+          }
+        });
+        createdCount += 1;
+      }
+
+      const selectedCount = job.clipCandidates.length;
+      return {
+        jobId: job.id,
+        selectedCount,
+        createdCount,
+        existingCount: selectedCount - createdCount
+      };
+    });
   }
 }
 
@@ -329,4 +462,68 @@ export function assertIdempotencyKey(value: string | undefined): string {
 
 export function serializeJob<T extends { eventSequence?: bigint }>(job: T): Record<string, unknown> {
   return { ...job, eventSequence: job.eventSequence?.toString() };
+}
+
+export function buildRenderSettings(source: RenderSettingsSource): Record<string, unknown> {
+  const snapshot =
+    source.inputSnapshot && typeof source.inputSnapshot === "object" && !Array.isArray(source.inputSnapshot)
+      ? (source.inputSnapshot as Record<string, unknown>)
+      : {};
+  const visual =
+    snapshot.visual && typeof snapshot.visual === "object" && !Array.isArray(snapshot.visual)
+      ? (snapshot.visual as Record<string, unknown>)
+      : {};
+  const subtitle =
+    snapshot.subtitle && typeof snapshot.subtitle === "object" && !Array.isArray(snapshot.subtitle)
+      ? (snapshot.subtitle as Record<string, unknown>)
+      : {};
+  const strategy =
+    snapshot.strategy && typeof snapshot.strategy === "object" && !Array.isArray(snapshot.strategy)
+      ? (snapshot.strategy as Record<string, unknown>)
+      : {};
+  const metadataSuggestions =
+    source.candidate.metadataSuggestions &&
+    typeof source.candidate.metadataSuggestions === "object" &&
+    !Array.isArray(source.candidate.metadataSuggestions)
+      ? (source.candidate.metadataSuggestions as Record<string, unknown>)
+      : {};
+  const analyzerMetadata =
+    source.candidate.analyzerMetadata &&
+    typeof source.candidate.analyzerMetadata === "object" &&
+    !Array.isArray(source.candidate.analyzerMetadata)
+      ? (source.candidate.analyzerMetadata as Record<string, unknown>)
+      : {};
+
+  return {
+    visual,
+    subtitle,
+    strategy: {
+      target_platform: strategy.target_platform ?? null,
+      objective: strategy.objective ?? null
+    },
+    candidate: {
+      candidate_id: source.candidate.candidateExternalId,
+      clip_candidate_id: source.candidate.id,
+      start_ms: source.candidate.startMs.toString(),
+      end_ms: source.candidate.endMs.toString(),
+      duration_ms: source.candidate.durationMs.toString(),
+      content_category: source.candidate.contentCategory
+    },
+    metadata: {
+      suggested_caption:
+        typeof metadataSuggestions.suggested_caption === "string" ? metadataSuggestions.suggested_caption : null,
+      suggested_cta: typeof metadataSuggestions.suggested_cta === "string" ? metadataSuggestions.suggested_cta : null,
+      suggested_hashtags: Array.isArray(metadataSuggestions.suggested_hashtags)
+        ? metadataSuggestions.suggested_hashtags.filter((value): value is string => typeof value === "string")
+        : [],
+      thumbnail_text: typeof metadataSuggestions.thumbnail_text === "string" ? metadataSuggestions.thumbnail_text : null
+    },
+    analyzer: {
+      analysis_version: typeof analyzerMetadata.analysis_version === "string" ? analyzerMetadata.analysis_version : null,
+      analysis_mode: typeof analyzerMetadata.analysis_mode === "string" ? analyzerMetadata.analysis_mode : null,
+      prompt_version: typeof analyzerMetadata.prompt_version === "string" ? analyzerMetadata.prompt_version : null,
+      provider: typeof analyzerMetadata.provider === "string" ? analyzerMetadata.provider : null,
+      model: typeof analyzerMetadata.model === "string" ? analyzerMetadata.model : null
+    }
+  };
 }

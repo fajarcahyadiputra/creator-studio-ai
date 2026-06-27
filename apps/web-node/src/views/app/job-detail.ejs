@@ -1,0 +1,199 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<div class="app-shell">
+  <%- include('../partials/sidebar') %>
+  <main class="content-area">
+    <% if (!job) { %>
+      <header class="page-header">
+        <div><span class="eyebrow">Jobs</span><h1>Job not found</h1><p>The requested job is unavailable in this workspace.</p></div>
+        <a class="btn btn-outline-primary" href="/app/jobs">Back to jobs</a>
+      </header>
+    <% } else { %>
+      <header class="page-header">
+        <div>
+          <span class="eyebrow">Jobs</span>
+          <h1><code><%= job.id.slice(0, 8) %></code></h1>
+          <p>Current stage: <strong><%= job.currentStage ?? 'Unknown' %></strong></p>
+        </div>
+        <a class="btn btn-outline-primary" href="/app/jobs">Back to jobs</a>
+      </header>
+
+      <section class="stat-grid detail-stats">
+        <article class="stat-card"><span>Status</span><strong class="stat-small"><%= job.status %></strong></article>
+        <article class="stat-card"><span>Progress</span><strong class="stat-small"><%= job.progressPercent %>%</strong></article>
+        <article class="stat-card"><span>Attempts</span><strong class="stat-small"><%= job.attempts.length %></strong></article>
+        <article class="stat-card"><span>Candidates</span><strong class="stat-small"><%= outputSummary.candidateCount %></strong></article>
+        <article class="stat-card"><span>Created</span><strong class="stat-small"><%= job.createdAt.toLocaleString() %></strong></article>
+      </section>
+
+      <section class="panel mt-4">
+        <div class="panel-heading">
+          <div><h2>Analyzer run</h2><p>Structured analysis metadata captured from the Phase 2 candidate analyzer.</p></div>
+        </div>
+        <div class="analyzer-grid">
+          <article class="analyzer-card">
+            <span>Analysis version</span>
+            <strong><%= outputSummary.analysisVersion ?? '-' %></strong>
+          </article>
+          <article class="analyzer-card">
+            <span>Mode</span>
+            <strong><%= outputSummary.analyzer?.analysisMode ?? '-' %></strong>
+          </article>
+          <article class="analyzer-card">
+            <span>Provider</span>
+            <strong><%= outputSummary.analyzer?.provider ?? '-' %></strong>
+          </article>
+          <article class="analyzer-card">
+            <span>Model</span>
+            <strong><%= outputSummary.analyzer?.model ?? '-' %></strong>
+          </article>
+          <article class="analyzer-card">
+            <span>Prompt version</span>
+            <strong><%= outputSummary.analyzer?.promptVersion ?? '-' %></strong>
+          </article>
+          <article class="analyzer-card">
+            <span>Latency</span>
+            <strong><%= outputSummary.analyzer?.latencyMs ? `${outputSummary.analyzer.latencyMs} ms` : '-' %></strong>
+          </article>
+        </div>
+        <% if (outputSummary.sourceSummary) { %>
+          <div class="analyzer-summary">
+            <h3>Source summary</h3>
+            <p><%= outputSummary.sourceSummary %></p>
+          </div>
+        <% } %>
+        <% if (outputSummary.analyzer?.fallbackReason || outputSummary.analyzer?.providerRequestId || outputSummary.analyzer?.requestId) { %>
+          <dl class="analyzer-meta">
+            <% if (outputSummary.analyzer?.fallbackReason) { %>
+              <div><dt>Fallback</dt><dd><%= outputSummary.analyzer.fallbackReason %></dd></div>
+            <% } %>
+            <% if (outputSummary.analyzer?.providerRequestId) { %>
+              <div><dt>Provider request</dt><dd><code><%= outputSummary.analyzer.providerRequestId %></code></dd></div>
+            <% } %>
+            <% if (outputSummary.analyzer?.requestId) { %>
+              <div><dt>Internal request</dt><dd><code><%= outputSummary.analyzer.requestId %></code></dd></div>
+            <% } %>
+          </dl>
+        <% } %>
+      </section>
+
+      <section class="panel mt-4">
+        <div class="panel-heading">
+          <div><h2>Candidate review</h2><p>Persisted Phase 2 candidate rows ready for downstream review and rendering.</p></div>
+          <form data-api-form action="/api/v1/jobs/<%= job.id %>/render-queue" method="post">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="btn btn-primary" type="submit">Queue selected for render</button>
+          </form>
+        </div>
+        <div class="form-message"></div>
+        <% if (!candidates.length) { %>
+          <div class="empty-cell">No persisted clip candidates are available for this job yet.</div>
+        <% } else { %>
+          <div class="candidate-grid">
+            <% candidates.forEach((candidate) => { %>
+              <article class="candidate-card">
+                <div class="candidate-topline">
+                  <span class="status status-<%= candidate.selected ? 'running' : 'paused' %>"><%= candidate.contentCategory ?? 'candidate' %></span>
+                  <strong><%= Number(candidate.finalViralScore ?? 0).toFixed(2) %></strong>
+                </div>
+                <h3><%= candidate.title ?? 'Untitled candidate' %></h3>
+                <p class="candidate-hook"><%= candidate.hookText ?? 'No hook text available.' %></p>
+                <dl class="candidate-meta">
+                  <div><dt>Rank</dt><dd><%= candidate.rank ?? '-' %></dd></div>
+                  <div><dt>Window</dt><dd><%= candidate.startSeconds ?? 0 %>s - <%= candidate.endSeconds ?? 0 %>s</dd></div>
+                  <div><dt>Duration</dt><dd><%= candidate.durationSeconds ?? 0 %>s</dd></div>
+                </dl>
+                <p class="candidate-summary"><%= candidate.summary ?? '' %></p>
+                <% if (candidate.suggestedCaption) { %>
+                  <p class="candidate-summary"><strong>Caption:</strong> <%= candidate.suggestedCaption %></p>
+                <% } %>
+                <% if (Array.isArray(candidate.hashtags) && candidate.hashtags.length) { %>
+                  <div class="candidate-tags">
+                    <% candidate.hashtags.forEach((tag) => { %>
+                      <span><%= tag %></span>
+                    <% }) %>
+                  </div>
+                <% } %>
+                <form class="mt-3 d-flex" data-api-form action="/api/v1/jobs/<%= job.id %>/candidates/<%= candidate.id %>/selection" method="post">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <input type="hidden" name="selected" value="<%= candidate.selected ? 'false' : 'true' %>">
+                  <button class="btn <%= candidate.selected ? 'btn-outline-primary' : 'btn-primary' %>" type="submit">
+                    <%= candidate.selected ? 'Remove from selected' : 'Select candidate' %>
+                  </button>
+                </form>
+              </article>
+            <% }) %>
+          </div>
+        <% } %>
+      </section>
+
+      <section class="panel mt-4">
+        <div class="panel-heading">
+          <div><h2>Clip outputs</h2><p>Rendered artifacts attached to selected candidates.</p></div>
+        </div>
+        <div class="table-responsive">
+          <table class="table align-middle">
+            <thead><tr><th>Output</th><th>Candidate</th><th>Quality</th><th>Duration</th></tr></thead>
+            <tbody>
+              <% if (!clipOutputs.length) { %>
+                <tr><td colspan="4" class="empty-cell">No rendered clip outputs have been stored yet.</td></tr>
+              <% } %>
+              <% clipOutputs.forEach((output) => { %>
+                <tr>
+                  <td><strong><%= output.id.slice(0, 8) %></strong></td>
+                  <td><code><%= output.candidateId.slice(0, 8) %></code></td>
+                  <td><span class="status status-<%= String(output.qualityStatus).toLowerCase() %>"><%= output.qualityStatus %></span></td>
+                  <td><%= output.durationMs ? `${Number(output.durationMs) / 1000}s` : '-' %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel mt-4">
+        <div class="panel-heading">
+          <div><h2>Stages</h2><p>Authoritative stage projection from PostgreSQL.</p></div>
+        </div>
+        <div class="table-responsive">
+          <table class="table align-middle">
+            <thead><tr><th>Stage</th><th>Status</th><th>Progress</th><th>Weight</th></tr></thead>
+            <tbody>
+              <% if (!job.stages.length) { %>
+                <tr><td colspan="4" class="empty-cell">No stage projection yet.</td></tr>
+              <% } %>
+              <% job.stages.forEach((stage) => { %>
+                <tr>
+                  <td><strong><%= stage.name %></strong></td>
+                  <td><span class="status status-<%= stage.status.toLowerCase() %>"><%= stage.status %></span></td>
+                  <td><%= stage.progressPercent %>%</td>
+                  <td><%= Number(stage.progressWeight).toString() %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel mt-4">
+        <div class="panel-heading">
+          <div><h2>Recent events</h2><p>Latest user-facing progress events.</p></div>
+        </div>
+        <div class="event-list">
+          <% if (!events.length) { %>
+            <div class="empty-cell">No events recorded yet.</div>
+          <% } %>
+          <% events.forEach((event) => { %>
+            <article class="event-item">
+              <div class="event-line">
+                <strong><%= event.stage ?? event.eventType %></strong>
+                <span><%= event.occurredAt.toLocaleString() %></span>
+              </div>
+              <p><%= event.userMessage ?? event.message %></p>
+            </article>
+          <% }) %>
+        </div>
+      </section>
+    <% } %>
+  </main>
+</div>
+<%- include('../partials/footer') %>

@@ -14,7 +14,7 @@
       <div class="panel-heading"><div><h2>Recent jobs</h2><p>Progress is stored as an event timeline.</p></div><a href="/app/jobs">View all</a></div>
       <div class="table-responsive"><table class="table align-middle"><thead><tr><th>Job</th><th>Tool</th><th>Status</th><th>Stage</th><th>Progress</th><th>Created</th></tr></thead><tbody>
         <% if (!recent.length) { %><tr><td colspan="6" class="empty-cell">No jobs yet. Create an auto-clipping foundation job.</td></tr><% } %>
-        <% recent.forEach(job => { %><tr><td><code><%= job.id.slice(0,8) %></code></td><td><%= job.type %></td><td><span class="status status-<%= job.status.toLowerCase() %>"><%= job.status %></span></td><td><%= job.currentStage ?? '—' %></td><td><div class="progress"><div class="progress-bar" style="width:<%= job.progressPercent %>%"></div></div><small><%= job.progressPercent %>%</small></td><td><%= job.createdAt.toLocaleString() %></td></tr><% }) %>
+        <% recent.forEach(job => { %><tr><td><a href="/app/jobs/<%= job.id %>"><code><%= job.id.slice(0,8) %></code></a></td><td><%= job.type %></td><td><span class="status status-<%= job.status.toLowerCase() %>"><%= job.status %></span></td><td><%= job.currentStage ?? '-' %></td><td><div class="progress"><div class="progress-bar" style="width:<%= job.progressPercent %>%"></div></div><small><%= job.progressPercent %>%</small></td><td><%= job.createdAt.toLocaleString() %></td></tr><% }) %>
       </tbody></table></div>
     </section>
   </main>

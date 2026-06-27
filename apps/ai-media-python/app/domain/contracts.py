@@ -71,3 +71,161 @@ class MediaBoundary(BaseModel):
         if self.end_seconds <= self.start_seconds:
             raise ValueError("end_seconds must be greater than start_seconds")
         return self
+
+
+class TranscriptWord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+    text: str = Field(min_length=1, max_length=120)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_order(self) -> "TranscriptWord":
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("word end_seconds must be greater than start_seconds")
+        return self
+
+
+class TranscriptSegment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    segment_id: str = Field(min_length=1, max_length=100)
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+    text: str = Field(min_length=1, max_length=5000)
+    speaker_label: str | None = Field(default=None, max_length=80)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    words: list[TranscriptWord] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_order(self) -> "TranscriptSegment":
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("segment end_seconds must be greater than start_seconds")
+        return self
+
+
+class TranscriptDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    language: str = Field(min_length=2, max_length=20)
+    duration_seconds: float = Field(gt=0)
+    segments: list[TranscriptSegment] = Field(min_length=1, max_length=5000)
+
+
+class SceneBoundary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scene_id: str = Field(min_length=1, max_length=100)
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_order(self) -> "SceneBoundary":
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("scene end_seconds must be greater than start_seconds")
+        return self
+
+
+class SilenceBoundary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    silence_id: str = Field(min_length=1, max_length=100)
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_order(self) -> "SilenceBoundary":
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("silence end_seconds must be greater than start_seconds")
+        return self
+
+
+class AnalysisInputs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transcript: TranscriptDocument
+    scenes: list[SceneBoundary] = Field(default_factory=list, max_length=5000)
+    silences: list[SilenceBoundary] = Field(default_factory=list, max_length=5000)
+
+
+class CandidateAnalysis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str = Field(min_length=1, max_length=100)
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+    duration_seconds: float = Field(gt=0)
+    title: str = Field(min_length=1, max_length=255)
+    hook_text: str = Field(min_length=1, max_length=500)
+    ending_text: str = Field(min_length=1, max_length=500)
+    summary: str = Field(min_length=1, max_length=2000)
+    why_it_works: list[str] = Field(min_length=1, max_length=10)
+    content_category: Literal["debate", "insight", "story", "reaction", "humor", "other"]
+    context_complete: bool
+    safety_notes: list[str] = Field(default_factory=list, max_length=10)
+    suggested_caption: str = Field(min_length=1, max_length=1000)
+    suggested_cta: str = Field(min_length=1, max_length=255)
+    suggested_hashtags: list[str] = Field(default_factory=list, max_length=10)
+    thumbnail_text: str = Field(min_length=1, max_length=120)
+    speaker_ids: list[str] = Field(default_factory=list, max_length=10)
+    scene_ids: list[str] = Field(default_factory=list, max_length=20)
+    scores: dict[str, Any]
+
+    @model_validator(mode="after")
+    def validate_order(self) -> "CandidateAnalysis":
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("candidate end_seconds must be greater than start_seconds")
+        return self
+
+
+ClipQualityStatus = Literal["PENDING", "PASSED", "NEEDS_REVIEW", "FAILED"]
+
+
+class ClipRenderCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str = Field(min_length=1, max_length=160)
+    title: str = Field(min_length=1, max_length=255)
+    summary: str = Field(min_length=1, max_length=2000)
+    hook_text: str = Field(min_length=1, max_length=500)
+    start_ms: str = Field(pattern=r"^\d+$")
+    end_ms: str = Field(pattern=r"^\d+$")
+    duration_ms: str = Field(pattern=r"^\d+$")
+
+
+class ClipOutputTargets(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preview_object_key: str | None = None
+    final_object_key: str | None = None
+    metadata_object_key: str | None = None
+    thumbnail_object_key: str | None = None
+
+
+class ClipRenderContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    clip_output_id: str = Field(min_length=1, max_length=64)
+    job_id: str = Field(min_length=1, max_length=64)
+    candidate_id: str = Field(min_length=1, max_length=64)
+    version: int = Field(ge=1)
+    quality_status: ClipQualityStatus
+    render_settings: dict[str, Any] = Field(default_factory=dict)
+    candidate: ClipRenderCandidate
+    output_targets: ClipOutputTargets
+
+
+class ClipOutputResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    quality_status: ClipQualityStatus
+    preview_object_key: str | None = Field(default=None, max_length=1000)
+    final_object_key: str | None = Field(default=None, max_length=1000)
+    metadata_object_key: str | None = Field(default=None, max_length=1000)
+    thumbnail_object_key: str | None = Field(default=None, max_length=1000)
+    quality_report: dict[str, Any] = Field(default_factory=dict)
+    duration_ms: str | None = Field(default=None, pattern=r"^\d+$")
+    width: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=1)

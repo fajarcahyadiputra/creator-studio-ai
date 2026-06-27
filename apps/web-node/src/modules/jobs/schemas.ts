@@ -1,5 +1,34 @@
 import { z } from "zod";
 
+const transcriptWordSchema = z.object({
+  start_seconds: z.number().min(0),
+  end_seconds: z.number().gt(0),
+  text: z.string().trim().min(1).max(120),
+  confidence: z.number().min(0).max(1).optional()
+}).refine((value) => value.end_seconds > value.start_seconds, "Word end must be greater than start.");
+
+const transcriptSegmentSchema = z.object({
+  segment_id: z.string().trim().min(1).max(100),
+  start_seconds: z.number().min(0),
+  end_seconds: z.number().gt(0),
+  text: z.string().trim().min(1).max(5000),
+  speaker_label: z.string().trim().max(80).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  words: z.array(transcriptWordSchema).max(5000).default([])
+}).refine((value) => value.end_seconds > value.start_seconds, "Segment end must be greater than start.");
+
+const sceneSchema = z.object({
+  scene_id: z.string().trim().min(1).max(100),
+  start_seconds: z.number().min(0),
+  end_seconds: z.number().gt(0)
+}).refine((value) => value.end_seconds > value.start_seconds, "Scene end must be greater than start.");
+
+const silenceSchema = z.object({
+  silence_id: z.string().trim().min(1).max(100),
+  start_seconds: z.number().min(0),
+  end_seconds: z.number().gt(0)
+}).refine((value) => value.end_seconds > value.start_seconds, "Silence end must be greater than start.");
+
 export const autoClipJobSchema = z.object({
   project_id: z.uuid().optional(),
   source: z.object({
@@ -50,10 +79,23 @@ export const autoClipJobSchema = z.object({
     credential_mode: z.enum(["PLATFORM", "USER_OWNED"]),
     provider_id: z.uuid().optional(),
     analysis_model_id: z.uuid().optional()
-  }).default({ credential_mode: "PLATFORM" })
+  }).default({ credential_mode: "PLATFORM" }),
+  analysis_inputs: z.object({
+    transcript: z.object({
+      language: z.string().trim().min(2).max(20),
+      duration_seconds: z.number().gt(0),
+      segments: z.array(transcriptSegmentSchema).min(1).max(5000)
+    }),
+    scenes: z.array(sceneSchema).max(5000).default([]),
+    silences: z.array(silenceSchema).max(5000).default([])
+  }).optional()
 });
 
 export const retryJobSchema = z.object({
   stage: z.string().trim().min(1).max(100).optional(),
   reason: z.string().trim().min(5).max(500)
+});
+
+export const clipCandidateSelectionSchema = z.object({
+  selected: z.boolean()
 });

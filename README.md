@@ -16,7 +16,7 @@ This repository implements **Phase 1 — Foundation**:
 - Docker Compose development stack and Kubernetes production baseline.
 - Architecture, security, operations, troubleshooting, API, workflow, and AI-maintenance documentation.
 
-The actual FFmpeg, faster-whisper, scene detection, reframing, subtitle rendering, and LLM clip analyzer are intentionally scheduled for Phase 2. The Phase 1 workflow finishes as `NEEDS_REVIEW` rather than pretending that clips were rendered.
+The full FFmpeg, faster-whisper, scene detection, reframing, subtitle rendering, and final clip-render pipeline remain Phase 2 work. The repository now includes a Phase 2 analyzer slice: structured transcript/scene/silence inputs, weighted candidate analysis, OpenAI-first structured output with heuristic fallback, persisted clip candidates, and review APIs/UI. It still does not pretend that final clips were rendered when the downstream media adapters are unavailable.
 
 ## Technology baseline
 
@@ -47,6 +47,7 @@ CSRF_SECRET
 INTERNAL_SERVICE_TOKEN
 CREDENTIAL_MASTER_KEY_BASE64
 ADMIN_PASSWORD
+OPENAI_API_KEY
 ```
 
 Generate a 32-byte base64 encryption key:
@@ -97,6 +98,19 @@ python -m venv .venv
 pip install -e '.[dev]'
 python -m app.worker
 ```
+
+For the Phase 2 analyzer path, set these Python-worker variables in `.env`:
+
+```text
+AUTO_CLIP_ANALYZER_MODE=openai
+AUTO_CLIP_ANALYZER_PROVIDER=openai
+AUTO_CLIP_ANALYZER_MODEL=gpt-5.5
+OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_TIMEOUT_SECONDS=45
+```
+
+`docker compose` already passes `.env` into `ai-media-python` and `ai-media-python-api`, so no extra Compose wiring is required after the key is present.
 
 ## Main commands
 

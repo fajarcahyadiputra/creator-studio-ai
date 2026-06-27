@@ -28,3 +28,35 @@ def test_foundation_input_rejects_missing_rights() -> None:
     invalid["input_snapshot"] = {"source": {}, "content": {"rights_confirmed": False}}
     with pytest.raises(ApplicationError):
         validate_foundation_input(invalid)
+
+
+def test_foundation_input_accepts_phase2_analysis_inputs() -> None:
+    valid = payload()
+    valid["input_snapshot"] = {
+        "source": {"type": "EXTERNAL_URL", "url": "https://example.com/video"},
+        "content": {"rights_confirmed": True},
+        "strategy": {
+            "desired_clip_count": 2,
+            "minimum_duration_seconds": 15,
+            "maximum_duration_seconds": 45,
+            "minimum_viral_score": 6.5,
+        },
+        "analysis_inputs": {
+            "transcript": {
+                "language": "id",
+                "duration_seconds": 20,
+                "segments": [
+                    {
+                        "segment_id": "seg-1",
+                        "start_seconds": 0,
+                        "end_seconds": 20,
+                        "text": "Kebanyakan orang salah memahami pembuka video.",
+                    }
+                ],
+            },
+            "scenes": [],
+            "silences": [],
+        },
+    }
+    result = validate_foundation_input(valid)
+    assert result.input_snapshot["analysis_inputs"]["transcript"]["language"] == "id"

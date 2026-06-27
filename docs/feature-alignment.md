@@ -11,6 +11,15 @@ One concrete foundation gap was corrected during this review:
 - Job retry commands now require `Idempotency-Key`.
 - Retry attempts now persist idempotency metadata at the attempt level.
 - Retry workflow start now records a structured failure when Temporal startup fails.
+- Create, duplicate, cancel, and retry job commands now write audit entries from the HTTP layer.
+
+This review also added a Phase 2 backbone slice:
+
+- Python workflow can now execute a weighted analysis pipeline when structured `analysis_inputs` are supplied.
+- The pipeline builds ranked clip candidates, normalizes boundaries, and produces job `outputSummary`.
+- Node job projection now recalculates weighted progress server-side, persists terminal `output_summary`, and upserts `ClipCandidate` rows from structured Phase 2 output.
+- Public API consumers can now fetch attached analysis artifacts via `GET /api/v1/jobs/:jobId/outputs`.
+- Selected candidates can now be promoted into pending `ClipOutput` rows from the review UI/API as groundwork for the later render pipeline.
 
 ## Already Aligned In Phase 1
 
@@ -46,8 +55,7 @@ These are present in the prompt but are not yet implemented in code because the 
 
 These items still appear in the prompt or product docs but are not fully implemented in the current codebase:
 
-- Audit logging for job cancel/retry actions is not yet consistently wired through the job service.
-- Stage-weighted overall progress is not yet implemented; current projection stores the reported overall progress directly.
+- Audit logging now covers core job commands, but deeper per-stage workflow/operator actions are still incomplete.
 - Full session-management UI, media-library UI, and broader admin CRUD pages remain ahead of the current shipped surface.
 - ZIP packaging/export workflows mentioned in the prompt are not implemented.
 
