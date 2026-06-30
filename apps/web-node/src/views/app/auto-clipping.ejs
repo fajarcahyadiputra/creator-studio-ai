@@ -1,29 +1,141 @@
 <%- include('../partials/head', { title, csrfToken }) %>
-<div class="app-shell"><%- include('../partials/sidebar') %><main class="content-area">
-  <header class="page-header"><div><span class="eyebrow">Tools</span><h1>Auto Clipping</h1><p>Phase 1 demonstrates secure submission and durable orchestration. Media rendering is enabled in Phase 2.</p></div></header>
+<div class="workspace-shell"><%- include('../partials/user-topbar') %><main class="workspace-main content-area">
+  <header class="page-header"><div><span class="eyebrow">Tools</span><h1>Auto Clipping</h1><p>Submit from an uploaded media asset or an allowed external URL. Durable rendering still belongs to the later Phase 2 media pipeline.</p></div></header>
   <div class="alert alert-info">This foundation workflow ends as <strong>NEEDS_REVIEW</strong> and does not fabricate rendered clips.</div>
   <div class="form-message"></div>
   <form id="auto-clip-form" class="wizard-panel">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <script type="application/json" id="auto-clip-presets-json"><%- JSON.stringify(clippingPresets) %></script>
+    <script type="application/json" id="auto-clip-brand-kits-json"><%- JSON.stringify(brandKits) %></script>
+    <div class="d-flex justify-content-between align-items-center mb-4 gap-3">
+      <div>
+        <span class="eyebrow">Mode</span>
+        <p class="mb-0 text-secondary">Quick Mode keeps only the core inputs. Advanced Mode exposes extra Phase 2 planning fields.</p>
+      </div>
+      <label class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" name="advanced_mode">
+        <span class="form-check-label">Advanced Mode</span>
+      </label>
+    </div>
+    <section class="wizard-step"><div class="step-number">0</div><div class="step-body"><h2>Preset and brand kit</h2><div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">Clipping preset</label>
+        <select class="form-select" name="clipping_preset_id" data-auto-clip-preset-selector>
+          <option value="">Manual defaults</option>
+          <% clippingPresets.forEach((preset) => { %>
+            <option value="<%= preset.id %>" <%= selectedPresetId === preset.id ? 'selected' : '' %>><%= preset.name %><%= preset.isDefault ? ' (default)' : '' %></option>
+          <% }) %>
+        </select>
+        <div class="form-text">Preset akan mengisi platform, durasi, hook style, CTA, dan setting subtitle dasar.</div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Brand kit</label>
+        <select class="form-select" name="brand_kit_id" data-auto-clip-brand-kit-selector>
+          <option value="">No brand kit</option>
+          <% brandKits.forEach((brandKit) => { %>
+            <option value="<%= brandKit.id %>" <%= selectedBrandKitId === brandKit.id ? 'selected' : '' %>><%= brandKit.name %><%= brandKit.isDefault ? ' (default)' : '' %></option>
+          <% }) %>
+        </select>
+        <div class="form-text">Brand kit akan mengisi font subtitle, posisi, jumlah baris, dan safe margin.</div>
+      </div>
+      <div class="col-12">
+        <div class="auto-clip-preset-preview-grid">
+          <article class="auto-clip-preview-card">
+            <span class="eyebrow">Preset aktif</span>
+            <h3 data-auto-clip-preset-name>Manual defaults</h3>
+            <p data-auto-clip-preset-description>Gunakan default bawaan untuk mulai cepat, atau pilih preset agar strategi clipping langsung terisi.</p>
+            <div class="auto-clip-preview-tags" data-auto-clip-preset-tags>
+              <span>Platform flexible</span>
+              <span>Durasi manual</span>
+              <span>Hook auto</span>
+            </div>
+          </article>
+          <article class="auto-clip-preview-card auto-clip-preview-card--brand">
+            <span class="eyebrow">Brand kit aktif</span>
+            <h3 data-auto-clip-brand-name>No brand kit</h3>
+            <p data-auto-clip-brand-description>Pilih brand kit untuk subtitle style yang konsisten saat render pipeline final sudah aktif.</p>
+            <div class="auto-clip-preview-tags" data-auto-clip-brand-tags>
+              <span>Font default</span>
+              <span>Position manual</span>
+              <span>Safe margin default</span>
+            </div>
+          </article>
+        </div>
+      </div>
+    </div></div></section>
     <section class="wizard-step"><div class="step-number">1</div><div class="step-body"><h2>Source</h2>
-      <label class="form-label">External source URL</label><input class="form-control" type="url" name="source_url" placeholder="https://www.youtube.com/watch?v=..." required>
-      <div class="form-text">The ingestion service validates allowed domains and rejects private/reserved network destinations.</div>
+      <label class="form-label">Source mode</label>
+      <select class="form-select" name="source_mode">
+        <option value="MEDIA_ASSET" <%= assets.length ? '' : 'disabled' %>>Uploaded media asset</option>
+        <option value="EXTERNAL_URL" <%= assets.length ? '' : 'selected' %>>External source URL</option>
+      </select>
+      <div class="form-text">Uploaded assets are the fastest path. External URLs are checked by the ingestion boundary before the job is created.</div>
+
+      <div class="mt-3" data-source-panel="MEDIA_ASSET" <%= assets.length ? '' : 'hidden' %>>
+        <label class="form-label">Ready video asset</label>
+        <select class="form-select" name="media_asset_id">
+          <% if (!assets.length) { %>
+            <option value="">No ready assets available</option>
+          <% } %>
+          <% assets.forEach((asset) => { %>
+            <option value="<%= asset.id %>"><%= asset.displayName %> - <%= asset.createdAt.toLocaleString() %></option>
+          <% }) %>
+        </select>
+        <div class="form-text">This uses a validated asset already stored in your workspace.</div>
+      </div>
+
+      <div class="mt-3" data-source-panel="EXTERNAL_URL" <%= assets.length ? 'hidden' : '' %>>
+        <label class="form-label">External source URL</label><input class="form-control" type="url" name="source_url" placeholder="https://www.youtube.com/watch?v=..." <%= assets.length ? '' : 'required' %>>
+        <div class="form-text">The ingestion service validates allowed domains and rejects private/reserved network destinations.</div>
+      </div>
+
+      <% if (!assets.length) { %>
+        <div class="alert alert-warning mt-3">No ready uploaded video assets were found in this workspace yet, so external URL mode is selected by default.</div>
+      <% } %>
+
+      <div class="row g-3 mt-1">
+        <div class="col-md-4"><label class="form-label">Source language</label><input class="form-control" name="source_language" value="<%= formDefaults.sourceLanguage %>"></div>
+        <div class="col-md-4"><label class="form-label">Speaker count</label><input class="form-control" name="speaker_count" type="number" min="1" max="20" value="<%= formDefaults.speakerCount %>"></div>
+        <div class="col-md-4"><label class="form-label">Custom vocabulary</label><input class="form-control" name="custom_vocabulary" value="<%= formDefaults.customVocabulary %>" placeholder="Brand, product, keyword"></div>
+      </div>
       <label class="form-check mt-3"><input class="form-check-input" type="checkbox" name="rights_confirmed" required><span class="form-check-label">I own or have permission to process this content.</span></label>
     </div></section>
     <section class="wizard-step"><div class="step-number">2</div><div class="step-body"><h2>Content strategy</h2><div class="row g-3">
       <div class="col-md-6"><label class="form-label">Title</label><input class="form-control" name="title" maxlength="255"></div>
-      <div class="col-md-3"><label class="form-label">Platform</label><select class="form-select" name="platform"><option>YOUTUBE_SHORTS</option><option>TIKTOK</option><option>INSTAGRAM_REELS</option><option>FACEBOOK_REELS</option></select></div>
-      <div class="col-md-3"><label class="form-label">Objective</label><select class="form-select" name="objective"><option>EDUCATION</option><option>ENGAGEMENT</option><option>STORYTELLING</option><option>CONTROVERSY</option></select></div>
-      <div class="col-md-4"><label class="form-label">Number of clips</label><input class="form-control" name="clip_count" type="number" min="1" max="30" value="5"></div>
-      <div class="col-md-4"><label class="form-label">Minimum duration</label><input class="form-control" name="min_duration" type="number" min="10" max="180" value="30"></div>
-      <div class="col-md-4"><label class="form-label">Maximum duration</label><input class="form-control" name="max_duration" type="number" min="15" max="180" value="60"></div>
+      <div class="col-md-6"><label class="form-label">Preferred topic</label><input class="form-control" name="topic" maxlength="255" value="<%= formDefaults.topic %>" placeholder="Optional"></div>
+      <div class="col-md-6"><label class="form-label">Niche</label><input class="form-control" name="niche" maxlength="120" value="<%= formDefaults.niche %>" placeholder="Marketing, finance, creator education"></div>
+      <div class="col-md-6"><label class="form-label">Target audience</label><input class="form-control" name="target_audience" maxlength="255" value="<%= formDefaults.targetAudience %>" placeholder="Founders, beginner creators, students"></div>
+      <div class="col-md-3"><label class="form-label">Platform</label><select class="form-select" name="platform"><option <%= formDefaults.platform === 'YOUTUBE_SHORTS' ? 'selected' : '' %>>YOUTUBE_SHORTS</option><option <%= formDefaults.platform === 'TIKTOK' ? 'selected' : '' %>>TIKTOK</option><option <%= formDefaults.platform === 'INSTAGRAM_REELS' ? 'selected' : '' %>>INSTAGRAM_REELS</option><option <%= formDefaults.platform === 'FACEBOOK_REELS' ? 'selected' : '' %>>FACEBOOK_REELS</option></select></div>
+      <div class="col-md-3"><label class="form-label">Objective</label><select class="form-select" name="objective"><option <%= formDefaults.objective === 'EDUCATION' ? 'selected' : '' %>>EDUCATION</option><option <%= formDefaults.objective === 'ENGAGEMENT' ? 'selected' : '' %>>ENGAGEMENT</option><option <%= formDefaults.objective === 'STORYTELLING' ? 'selected' : '' %>>STORYTELLING</option><option <%= formDefaults.objective === 'CONTROVERSY' ? 'selected' : '' %>>CONTROVERSY</option></select></div>
+      <div class="col-md-3"><label class="form-label">Primary tone</label><select class="form-select" name="primary_tone"><option <%= formDefaults.primaryTone === 'EDUCATIONAL' ? 'selected' : '' %>>EDUCATIONAL</option><option <%= formDefaults.primaryTone === 'SERIOUS' ? 'selected' : '' %>>SERIOUS</option><option <%= formDefaults.primaryTone === 'DIRECT' ? 'selected' : '' %>>DIRECT</option><option <%= formDefaults.primaryTone === 'CASUAL' ? 'selected' : '' %>>CASUAL</option><option <%= formDefaults.primaryTone === 'CONTROVERSIAL' ? 'selected' : '' %>>CONTROVERSIAL</option></select></div>
+      <div class="col-md-3"><label class="form-label">Secondary tone</label><select class="form-select" name="secondary_tone"><option value="" <%= !formDefaults.secondaryTone ? 'selected' : '' %>>None</option><option <%= formDefaults.secondaryTone === 'SERIOUS' ? 'selected' : '' %>>SERIOUS</option><option <%= formDefaults.secondaryTone === 'CASUAL' ? 'selected' : '' %>>CASUAL</option><option <%= formDefaults.secondaryTone === 'EMOTIONAL' ? 'selected' : '' %>>EMOTIONAL</option><option <%= formDefaults.secondaryTone === 'CONFIDENT' ? 'selected' : '' %>>CONFIDENT</option></select></div>
+      <div class="col-md-4"><label class="form-label">Number of clips</label><input class="form-control" name="clip_count" type="number" min="1" max="30" value="<%= formDefaults.clipCount %>"></div>
+      <div class="col-md-4"><label class="form-label">Minimum duration</label><input class="form-control" name="min_duration" type="number" min="10" max="180" value="<%= formDefaults.minDuration %>"></div>
+      <div class="col-md-4"><label class="form-label">Maximum duration</label><input class="form-control" name="max_duration" type="number" min="15" max="180" value="<%= formDefaults.maxDuration %>"></div>
+      <div class="col-md-4"><label class="form-label">Minimum viral score</label><input class="form-control" name="minimum_viral_score" type="number" min="0" max="10" step="0.1" value="<%= formDefaults.minimumViralScore %>"></div>
+      <div class="col-md-4"><label class="form-label">Hook style</label><select class="form-select" name="hook_style"><option value="" <%= !formDefaults.hookStyle ? 'selected' : '' %>>Auto</option><option <%= formDefaults.hookStyle === 'QUESTION' ? 'selected' : '' %>>QUESTION</option><option <%= formDefaults.hookStyle === 'SHOCK' ? 'selected' : '' %>>SHOCK</option><option <%= formDefaults.hookStyle === 'DIRECT_CHALLENGE' ? 'selected' : '' %>>DIRECT_CHALLENGE</option><option <%= formDefaults.hookStyle === 'STORY_OPEN' ? 'selected' : '' %>>STORY_OPEN</option><option <%= formDefaults.hookStyle === 'MYTH_BUSTING' ? 'selected' : '' %>>MYTH_BUSTING</option></select></div>
+      <div class="col-md-4"><label class="form-label">CTA preference</label><select class="form-select" name="cta_preference"><option value="" <%= !formDefaults.ctaPreference ? 'selected' : '' %>>Auto</option><option <%= formDefaults.ctaPreference === 'COMMENT' ? 'selected' : '' %>>COMMENT</option><option <%= formDefaults.ctaPreference === 'SHARE' ? 'selected' : '' %>>SHARE</option><option <%= formDefaults.ctaPreference === 'FOLLOW' ? 'selected' : '' %>>FOLLOW</option><option <%= formDefaults.ctaPreference === 'SAVE' ? 'selected' : '' %>>SAVE</option></select></div>
+      <div class="col-md-4"><label class="form-label">Profanity handling</label><select class="form-select" name="profanity_handling"><option <%= formDefaults.profanityHandling === 'KEEP' ? 'selected' : '' %>>KEEP</option><option <%= formDefaults.profanityHandling === 'MUTE' ? 'selected' : '' %>>MUTE</option><option <%= formDefaults.profanityHandling === 'BLEEP' ? 'selected' : '' %>>BLEEP</option><option <%= formDefaults.profanityHandling === 'SUBTITLE_CENSOR' ? 'selected' : '' %>>SUBTITLE_CENSOR</option></select></div>
+      <div class="col-md-4"><label class="form-label">Preferred topics</label><input class="form-control" name="preferred_topics" value="<%= formDefaults.preferredTopics %>" placeholder="Hooks, audience retention, sales"></div>
+      <div class="col-md-4"><label class="form-label">Topics to avoid</label><input class="form-control" name="topics_to_avoid" value="<%= formDefaults.topicsToAvoid %>" placeholder="Politics, religion"></div>
+      <div class="col-12" data-advanced-field hidden><label class="form-label">Source context for analyzer</label><textarea class="form-control" name="content_context" rows="3" maxlength="5000" placeholder="Optional context, notes, or framing that helps the analyzer choose clips."><%= formDefaults.contentContext %></textarea></div>
+      <div class="col-md-6" data-advanced-field hidden><label class="form-label">Sensitive topics</label><input class="form-control" name="sensitive_topics" value="<%= formDefaults.sensitiveTopics %>" placeholder="Trauma, medical claims, legal advice"></div>
+      <div class="col-md-3" data-advanced-field hidden><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="remove_long_silence" checked><span class="form-check-label">Remove long silence</span></label></div>
+      <div class="col-md-3" data-advanced-field hidden><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="remove_filler_words"><span class="form-check-label">Remove filler words</span></label></div>
     </div></div></section>
     <section class="wizard-step"><div class="step-number">3</div><div class="step-body"><h2>Visual and subtitle</h2><div class="row g-3">
-      <div class="col-md-4"><label class="form-label">Aspect ratio</label><select class="form-select" name="aspect_ratio"><option>9:16</option><option>1:1</option><option>4:5</option><option>16:9</option></select></div>
-      <div class="col-md-4"><label class="form-label">Crop strategy</label><select class="form-select" name="crop_strategy"><option>AUTO_REFRAME</option><option>CENTER</option><option>ACTIVE_SPEAKER</option><option>FACE_TRACKING</option></select></div>
-      <div class="col-md-4"><label class="form-label">Subtitle language</label><input class="form-control" name="subtitle_language" value="id"></div>
+      <div class="col-md-4"><label class="form-label">Aspect ratio</label><select class="form-select" name="aspect_ratio"><option <%= formDefaults.aspectRatio === '9:16' ? 'selected' : '' %>>9:16</option><option <%= formDefaults.aspectRatio === '1:1' ? 'selected' : '' %>>1:1</option><option <%= formDefaults.aspectRatio === '4:5' ? 'selected' : '' %>>4:5</option><option <%= formDefaults.aspectRatio === '16:9' ? 'selected' : '' %>>16:9</option></select></div>
+      <div class="col-md-4"><label class="form-label">Crop strategy</label><select class="form-select" name="crop_strategy"><option <%= formDefaults.cropStrategy === 'AUTO_REFRAME' ? 'selected' : '' %>>AUTO_REFRAME</option><option <%= formDefaults.cropStrategy === 'CENTER' ? 'selected' : '' %>>CENTER</option><option <%= formDefaults.cropStrategy === 'ACTIVE_SPEAKER' ? 'selected' : '' %>>ACTIVE_SPEAKER</option><option <%= formDefaults.cropStrategy === 'FACE_TRACKING' ? 'selected' : '' %>>FACE_TRACKING</option></select></div>
+      <div class="col-md-4"><label class="form-label">Subtitle language</label><input class="form-control" name="subtitle_language" value="<%= formDefaults.subtitleLanguage %>"></div>
+      <div class="col-md-3" data-advanced-field hidden><label class="form-label">Subtitle style</label><input class="form-control" name="subtitle_style" value="<%= formDefaults.subtitleStyle %>" placeholder="Bold kinetic"></div>
+      <div class="col-md-3" data-advanced-field hidden><label class="form-label">Font</label><input class="form-control" name="subtitle_font_family" value="<%= formDefaults.subtitleFontFamily %>" placeholder="Montserrat"></div>
+      <div class="col-md-2" data-advanced-field hidden><label class="form-label">Position</label><select class="form-select" name="subtitle_position"><option <%= formDefaults.subtitlePosition === 'BOTTOM' ? 'selected' : '' %>>BOTTOM</option><option <%= formDefaults.subtitlePosition === 'CENTER' ? 'selected' : '' %>>CENTER</option><option <%= formDefaults.subtitlePosition === 'TOP' ? 'selected' : '' %>>TOP</option></select></div>
+      <div class="col-md-2" data-advanced-field hidden><label class="form-label">Max lines</label><input class="form-control" name="subtitle_max_lines" type="number" min="1" max="4" value="<%= formDefaults.subtitleMaxLines %>"></div>
+      <div class="col-md-2" data-advanced-field hidden><label class="form-label">Safe margin %</label><input class="form-control" name="subtitle_safe_margin_percent" type="number" min="0" max="30" value="<%= formDefaults.subtitleSafeMarginPercent %>"></div>
+      <div class="col-md-3" data-advanced-field hidden><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="subtitle_word_highlight" checked><span class="form-check-label">Word highlight</span></label></div>
+      <div class="col-md-3" data-advanced-field hidden><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="subtitle_profanity_censor"><span class="form-check-label">Profanity censor</span></label></div>
     </div></div></section>
-    <section class="wizard-step"><div class="step-number">4</div><div class="step-body"><h2>Review and submit</h2><p class="text-secondary">Submission uses an idempotency key so retries from the browser cannot create duplicate jobs.</p><button class="btn btn-primary" type="submit">Create durable job</button></div></section>
+    <section class="wizard-step"><div class="step-number">4</div><div class="step-body"><h2>Review and submit</h2><p class="text-secondary">Submission uses an idempotency key so retries from the browser cannot create duplicate jobs.</p><div class="alert alert-light border">Quick summary: source, strategy, and subtitle preferences will be snapshotted with the job so the analyzer and downstream render pipeline can reuse the same intent.</div><button class="btn btn-primary" type="submit">Create durable job</button></div></section>
   </form>
 </main></div>
 <%- include('../partials/footer') %>

@@ -1,0 +1,67 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<div class="app-shell"><%- include('../partials/admin-sidebar') %><main class="content-area">
+  <header class="page-header">
+    <div>
+      <span class="eyebrow">Workflow operations</span>
+      <h1>Admin Jobs</h1>
+      <p>Cross-tenant operational view for filtering jobs, reviewing failures, and triggering safe admin commands.</p>
+    </div>
+    <a class="btn btn-outline-primary" href="/admin/dashboard">Back to dashboard</a>
+  </header>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <div>
+        <h2>Filters</h2>
+        <p>Search by job ID, workflow ID, or user identity.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <form class="row g-3" method="get" action="/admin/jobs">
+        <div class="col-md-5"><label class="form-label">Search</label><input class="form-control" name="q" value="<%= filters.q %>" placeholder="job id, workflow id, email, display name"></div>
+        <div class="col-md-3">
+          <label class="form-label">Status</label>
+          <select class="form-select" name="status">
+            <option value="ALL" <%= filters.status === 'ALL' ? 'selected' : '' %>>All statuses</option>
+            <% jobStatusOptions.forEach((status) => { %><option value="<%= status %>" <%= filters.status === status ? 'selected' : '' %>><%= status %></option><% }) %>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Type</label>
+          <select class="form-select" name="type">
+            <option value="ALL" <%= filters.type === 'ALL' ? 'selected' : '' %>>All types</option>
+            <% jobTypeOptions.forEach((type) => { %><option value="<%= type %>" <%= filters.type === type ? 'selected' : '' %>><%= type %></option><% }) %>
+          </select>
+        </div>
+        <div class="col-md-2 d-flex align-items-end gap-2"><button class="btn btn-primary w-100" type="submit">Apply</button><a class="btn btn-outline-secondary" href="/admin/jobs">Reset</a></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Jobs</h2>
+        <p>Latest 100 matching jobs across all users.</p>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table align-middle">
+        <thead><tr><th>Job</th><th>User</th><th>Status</th><th>Workflow</th><th>Latest error</th><th>Created</th></tr></thead>
+        <tbody>
+          <% jobs.forEach((job) => { %>
+            <tr>
+              <td><a href="/admin/jobs/<%= job.id %>"><strong><%= job.id.slice(0, 8) %></strong></a><br><small><%= job.type %></small></td>
+              <td><strong><%= job.userDisplayName %></strong><br><small><%= job.userEmail %></small></td>
+              <td><%= job.status %><br><small><%= job.currentStage ?? 'no-stage' %> | <%= job.progressPercent %>%</small></td>
+              <td><small><%= job.workflowId ?? 'not-started' %></small><br><small><%= job.workflowRunId ?? '' %></small></td>
+              <td><% if (job.latestError) { %><strong><%= job.latestError.code %></strong><br><small><%= job.latestError.userMessage %></small><br><small><%= job.latestError.technicalErrorId %></small><% } else { %><small class="text-muted">No recent error</small><% } %></td>
+              <td><%= job.createdAt.toLocaleString() %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main></div>
+<%- include('../partials/footer') %>

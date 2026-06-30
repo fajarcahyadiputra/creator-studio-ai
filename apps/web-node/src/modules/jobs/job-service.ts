@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { JobStatus } from "../../generated/prisma/enums.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
+import { validateExternalSourceUrl } from "../../infrastructure/ingestion/client.js";
+import { createInternalSignedObjectReadUrl } from "../../infrastructure/storage/s3.js";
 import { temporalClient } from "../../infrastructure/temporal/client.js";
 import { env } from "../../config/env.js";
 import { AppError, ConflictError, NotFoundError } from "../../shared/errors/app-error.js";
@@ -36,6 +38,58 @@ interface UpdateClipCandidateSelectionInput {
 interface QueueSelectedClipOutputsInput {
   userId: string;
   jobId: string;
+}
+
+interface QueueSelectedClipOutputsResult {
+  jobId: string;
+  selectedCount: number;
+  createdCount: number;
+  existingCount: number;
+  startedWorkflowCount: number;
+}
+
+export type ClipOutputArtifact =
+  | "preview"
+  | "final"
+  | "metadata"
+  | "thumbnail"
+  | "subtitle"
+  | "subtitle_srt"
+  | "subtitle_ass"
+  | "subtitle_vtt"
+  | "subtitle_json";
+
+interface RerenderClipOutputInput {
+  userId: string;
+  jobId: string;
+  clipOutputId: string;
+}
+
+interface ClipOutputExportIndexItem {
+  artifact: ClipOutputArtifact;
+  label: string;
+  url: string;
+}
+
+interface ClipOutputExportIndex {
+  clipOutputId: string;
+  jobId: string;
+  candidateId: string;
+  qualityStatus: string;
+  artifacts: ClipOutputExportIndexItem[];
+}
+
+interface JobOutputsExportIndexItem {
+  clipOutputId: string;
+  candidateId: string;
+  qualityStatus: string;
+  artifacts: ClipOutputExportIndexItem[];
+}
+
+interface JobOutputsExportIndex {
+  jobId: string;
+  status: string;
+  clipOutputs: JobOutputsExportIndexItem[];
 }
 
 interface RenderSettingsSource {
@@ -81,20 +135,21 @@ export class JobService {
     });
     if (existing) return existing;
 
+    const normalizedInput = await prepareAutoClippingInput(params.input);
     const workflowId = `${randomUUID()}:attempt:1`;
     const job = await prisma.$transaction(async (tx) => {
       const created = await tx.job.create({
         data: {
           userId: params.userId,
-          projectId: params.input.project_id,
-          sourceMediaAssetId: params.input.source.media_asset_id,
+          projectId: normalizedInput.project_id,
+          sourceMediaAssetId: normalizedInput.source.media_asset_id,
           type: "AUTO_CLIPPING",
           status: "QUEUED",
           currentStage: "VALIDATING_SOURCE",
           idempotencyKey: params.idempotencyKey,
           operationKey: "CREATE_AUTO_CLIP_JOB",
           workflowId,
-          inputSnapshot: params.input as never,
+          inputSnapshot: normalizedInput as never,
           attempts: {
             create: {
               attemptNumber: 1,
@@ -106,20 +161,20 @@ export class JobService {
           },
           autoClipRequest: {
             create: {
-              sourceMediaAssetId: params.input.source.media_asset_id,
-              sourceType: params.input.source.type,
-              sourceUrl: params.input.source.url,
-              sourceLanguage: params.input.content.source_language,
-              speakerCount: params.input.content.speaker_count,
-              contentTitle: params.input.content.title,
-              contentContext: params.input.content.context,
-              topic: params.input.content.topic,
-              customVocabulary: params.input.content.custom_vocabulary,
+              sourceMediaAssetId: normalizedInput.source.media_asset_id,
+              sourceType: normalizedInput.source.type,
+              sourceUrl: normalizedInput.source.url,
+              sourceLanguage: normalizedInput.content.source_language,
+              speakerCount: normalizedInput.content.speaker_count,
+              contentTitle: normalizedInput.content.title,
+              contentContext: normalizedInput.content.context,
+              topic: normalizedInput.content.topic,
+              customVocabulary: normalizedInput.content.custom_vocabulary,
               rightsConfirmedAt: new Date(),
-              strategyConfig: params.input.strategy as never,
-              visualConfig: params.input.visual as never,
-              subtitleConfig: params.input.subtitle as never,
-              providerConfigSnapshot: params.input.ai as never
+              strategyConfig: normalizedInput.strategy as never,
+              visualConfig: normalizedInput.visual as never,
+              subtitleConfig: normalizedInput.subtitle as never,
+              providerConfigSnapshot: normalizedInput.ai as never
             }
           }
         }
@@ -137,7 +192,7 @@ export class JobService {
             job_id: job.id,
             user_id: params.userId,
             job_type: "AUTO_CLIPPING",
-            input_snapshot: params.input,
+            input_snapshot: normalizedInput,
             callback_base_url: env.WEB_INTERNAL_BASE_URL,
             attempt_number: 1
           }
@@ -401,7 +456,7 @@ export class JobService {
   }
 
   public async queueSelectedClipOutputs(params: QueueSelectedClipOutputsInput) {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const job = await tx.job.findFirst({
         where: { id: params.jobId, userId: params.userId, deletedAt: null },
         include: {
@@ -418,13 +473,14 @@ export class JobService {
       if (!job) throw new NotFoundError("Job");
 
       const existingCandidateIds = new Set(job.clipOutputs.map((output) => output.candidateId));
+      const createdClipOutputIds: string[] = [];
 
       let createdCount = 0;
       for (const candidate of job.clipCandidates) {
         if (existingCandidateIds.has(candidate.id)) {
           continue;
         }
-        await tx.clipOutput.create({
+        const created = await tx.clipOutput.create({
           data: {
             jobId: job.id,
             candidateId: candidate.id,
@@ -435,6 +491,7 @@ export class JobService {
             }) as never
           }
         });
+        createdClipOutputIds.push(created.id);
         createdCount += 1;
       }
 
@@ -443,10 +500,238 @@ export class JobService {
         jobId: job.id,
         selectedCount,
         createdCount,
-        existingCount: selectedCount - createdCount
+        existingCount: selectedCount - createdCount,
+        createdClipOutputIds
       };
     });
+
+    let startedWorkflowCount = 0;
+    if (result.createdClipOutputIds.length > 0) {
+      const client = await temporalClient();
+      for (const clipOutputId of result.createdClipOutputIds) {
+        await startClipOutputRenderWorkflow(client, clipOutputId, buildClipOutputRenderWorkflowId(clipOutputId));
+        startedWorkflowCount += 1;
+      }
+    }
+
+    return {
+      jobId: result.jobId,
+      selectedCount: result.selectedCount,
+      createdCount: result.createdCount,
+      existingCount: result.existingCount,
+      startedWorkflowCount
+    } satisfies QueueSelectedClipOutputsResult;
   }
+
+  public async rerenderClipOutput(params: RerenderClipOutputInput) {
+    const clipOutput = await prisma.clipOutput.findFirst({
+      where: {
+        id: params.clipOutputId,
+        jobId: params.jobId,
+        deletedAt: null,
+        job: {
+          userId: params.userId,
+          deletedAt: null
+        }
+      }
+    });
+    if (!clipOutput) throw new NotFoundError("Clip output");
+
+    const updated = await prisma.clipOutput.update({
+      where: { id: clipOutput.id },
+      data: {
+        qualityStatus: "PENDING",
+        qualityReport: {
+          rerender_requested_at: new Date().toISOString(),
+          previous_quality_status: clipOutput.qualityStatus
+        } as never
+      }
+    });
+
+    const client = await temporalClient();
+    await startClipOutputRenderWorkflow(client, clipOutput.id, buildClipOutputRerenderWorkflowId(clipOutput.id));
+
+    return {
+      clipOutputId: updated.id,
+      qualityStatus: updated.qualityStatus
+    };
+  }
+
+  public async createClipOutputArtifactUrl(
+    userId: string,
+    jobId: string,
+    clipOutputId: string,
+    artifact: ClipOutputArtifact
+  ) {
+    const clipOutput = await prisma.clipOutput.findFirst({
+      where: {
+        id: clipOutputId,
+        jobId,
+        deletedAt: null,
+        job: {
+          userId,
+          deletedAt: null
+        }
+      },
+      include: {
+        subtitles: {
+          where: { mediaAsset: { deletedAt: null } },
+          orderBy: { createdAt: "desc" }
+        }
+      }
+    });
+    if (!clipOutput) throw new NotFoundError("Clip output");
+
+    const objectKey = resolveClipOutputArtifactObjectKey(clipOutput, artifact);
+    if (!objectKey) {
+      throw new ConflictError(
+        "CLIP_OUTPUT_ARTIFACT_UNAVAILABLE",
+        `${artifactLabel(artifact)} is not available for this clip output yet.`
+      );
+    }
+
+    return createInternalSignedObjectReadUrl(objectKey);
+  }
+
+  public async createClipOutputExportIndex(
+    userId: string,
+    jobId: string,
+    clipOutputId: string
+  ): Promise<ClipOutputExportIndex> {
+    const clipOutput = await prisma.clipOutput.findFirst({
+      where: {
+        id: clipOutputId,
+        jobId,
+        deletedAt: null,
+        job: {
+          userId,
+          deletedAt: null
+        }
+      },
+      include: {
+        subtitles: {
+          where: { mediaAsset: { deletedAt: null } },
+          orderBy: { createdAt: "desc" }
+        }
+      }
+    });
+    if (!clipOutput) throw new NotFoundError("Clip output");
+
+    const artifacts: ClipOutputExportIndexItem[] = [];
+    for (const artifact of [
+      "preview",
+      "final",
+      "metadata",
+      "thumbnail",
+      "subtitle",
+      "subtitle_srt",
+      "subtitle_ass",
+      "subtitle_vtt",
+      "subtitle_json"
+    ] as const) {
+      const objectKey = resolveClipOutputArtifactObjectKey(clipOutput, artifact);
+      if (!objectKey) continue;
+      artifacts.push({
+        artifact,
+        label: artifactLabel(artifact),
+        url: await createInternalSignedObjectReadUrl(objectKey)
+      });
+    }
+
+    return {
+      clipOutputId: clipOutput.id,
+      jobId: clipOutput.jobId,
+      candidateId: clipOutput.candidateId,
+      qualityStatus: clipOutput.qualityStatus,
+      artifacts
+    };
+  }
+
+  public async createJobOutputsExportIndex(
+    userId: string,
+    jobId: string
+  ): Promise<JobOutputsExportIndex> {
+    const job = await prisma.job.findFirst({
+      where: {
+        id: jobId,
+        userId,
+        deletedAt: null
+      },
+      include: {
+        clipOutputs: {
+          where: { deletedAt: null },
+          include: {
+            subtitles: {
+              where: { mediaAsset: { deletedAt: null } },
+              orderBy: { createdAt: "desc" }
+            }
+          },
+          orderBy: { createdAt: "asc" }
+        }
+      }
+    });
+    if (!job) throw new NotFoundError("Job");
+
+    const clipOutputs: JobOutputsExportIndexItem[] = [];
+    for (const clipOutput of job.clipOutputs) {
+      const artifacts: ClipOutputExportIndexItem[] = [];
+      for (const artifact of [
+        "preview",
+        "final",
+        "metadata",
+        "thumbnail",
+        "subtitle",
+        "subtitle_srt",
+        "subtitle_ass",
+        "subtitle_vtt",
+        "subtitle_json"
+      ] as const) {
+        const objectKey = resolveClipOutputArtifactObjectKey(clipOutput, artifact);
+        if (!objectKey) continue;
+        artifacts.push({
+          artifact,
+          label: artifactLabel(artifact),
+          url: await createInternalSignedObjectReadUrl(objectKey)
+        });
+      }
+
+      clipOutputs.push({
+        clipOutputId: clipOutput.id,
+        candidateId: clipOutput.candidateId,
+        qualityStatus: clipOutput.qualityStatus,
+        artifacts
+      });
+    }
+
+    return {
+      jobId: job.id,
+      status: job.status,
+      clipOutputs
+    };
+  }
+}
+
+export async function prepareAutoClippingInput(input: CreateAutoClipInput): Promise<CreateAutoClipInput> {
+  if (input.source.type !== "EXTERNAL_URL" || !input.source.url) {
+    return input;
+  }
+
+  const normalizedUrl = await validateExternalSourceUrl(input.source.url);
+  return {
+    ...input,
+    source: {
+      ...input.source,
+      url: normalizedUrl
+    }
+  };
+}
+
+interface ClipOutputArtifactSource {
+  previewObjectKey: string | null;
+  finalObjectKey: string | null;
+  metadataObjectKey: string | null;
+  thumbnailObjectKey: string | null;
+  subtitles: Array<{ format: string; objectKey: string }>;
 }
 
 export function assertIdempotencyKey(value: string | undefined): string {
@@ -516,7 +801,16 @@ export function buildRenderSettings(source: RenderSettingsSource): Record<string
       suggested_hashtags: Array.isArray(metadataSuggestions.suggested_hashtags)
         ? metadataSuggestions.suggested_hashtags.filter((value): value is string => typeof value === "string")
         : [],
-      thumbnail_text: typeof metadataSuggestions.thumbnail_text === "string" ? metadataSuggestions.thumbnail_text : null
+      thumbnail_text: typeof metadataSuggestions.thumbnail_text === "string" ? metadataSuggestions.thumbnail_text : null,
+      hook_second: typeof metadataSuggestions.hook_second === "number" ? metadataSuggestions.hook_second : null,
+      main_point_second: typeof metadataSuggestions.main_point_second === "number" ? metadataSuggestions.main_point_second : null,
+      punchline_second: typeof metadataSuggestions.punchline_second === "number" ? metadataSuggestions.punchline_second : null,
+      retention_level:
+        typeof metadataSuggestions.retention_level === "string" ? metadataSuggestions.retention_level : null,
+      requires_context:
+        typeof metadataSuggestions.requires_context === "boolean" ? metadataSuggestions.requires_context : null,
+      can_standalone:
+        typeof metadataSuggestions.can_standalone === "boolean" ? metadataSuggestions.can_standalone : null
     },
     analyzer: {
       analysis_version: typeof analyzerMetadata.analysis_version === "string" ? analyzerMetadata.analysis_version : null,
@@ -526,4 +820,80 @@ export function buildRenderSettings(source: RenderSettingsSource): Record<string
       model: typeof analyzerMetadata.model === "string" ? analyzerMetadata.model : null
     }
   };
+}
+
+export function buildClipOutputRenderWorkflowId(clipOutputId: string): string {
+  return `clip-output-render:${clipOutputId}`;
+}
+
+export function buildClipOutputRerenderWorkflowId(clipOutputId: string): string {
+  return `clip-output-rerender:${clipOutputId}:${randomUUID()}`;
+}
+
+async function startClipOutputRenderWorkflow(
+  client: Awaited<ReturnType<typeof temporalClient>>,
+  clipOutputId: string,
+  workflowId: string
+) {
+  await client.workflow.start("ClipOutputRenderWorkflow", {
+    taskQueue: env.TEMPORAL_AUTO_CLIP_TASK_QUEUE,
+    workflowId,
+    args: [{ clip_output_id: clipOutputId }]
+  });
+}
+
+function resolveClipOutputArtifactObjectKey(
+  clipOutput: ClipOutputArtifactSource,
+  artifact: ClipOutputArtifact
+) {
+  switch (artifact) {
+    case "preview":
+      return clipOutput.previewObjectKey;
+    case "final":
+      return clipOutput.finalObjectKey;
+    case "metadata":
+      return clipOutput.metadataObjectKey;
+    case "thumbnail":
+      return clipOutput.thumbnailObjectKey;
+    case "subtitle":
+      return clipOutput.subtitles[0]?.objectKey ?? null;
+    case "subtitle_srt":
+      return findSubtitleObjectKey(clipOutput.subtitles, "srt");
+    case "subtitle_ass":
+      return findSubtitleObjectKey(clipOutput.subtitles, "ass");
+    case "subtitle_vtt":
+      return findSubtitleObjectKey(clipOutput.subtitles, "vtt");
+    case "subtitle_json":
+      return findSubtitleObjectKey(clipOutput.subtitles, "json");
+  }
+}
+
+function artifactLabel(artifact: ClipOutputArtifact) {
+  switch (artifact) {
+    case "preview":
+      return "Preview video";
+    case "final":
+      return "Final video";
+    case "metadata":
+      return "Metadata file";
+    case "thumbnail":
+      return "Thumbnail";
+    case "subtitle":
+      return "Subtitle file";
+    case "subtitle_srt":
+      return "Subtitle SRT";
+    case "subtitle_ass":
+      return "Subtitle ASS";
+    case "subtitle_vtt":
+      return "Subtitle VTT";
+    case "subtitle_json":
+      return "Subtitle JSON";
+  }
+}
+
+function findSubtitleObjectKey(
+  subtitles: Array<{ format: string; objectKey: string }>,
+  format: string
+) {
+  return subtitles.find((subtitle) => subtitle.format.toLowerCase() === format.toLowerCase())?.objectKey ?? null;
 }

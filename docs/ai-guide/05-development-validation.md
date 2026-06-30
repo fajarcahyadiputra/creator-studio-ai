@@ -41,9 +41,9 @@ npm run migration:validate
 
 ```bash
 cd apps/ai-media-python
-python -m pytest
-python -m ruff check .
-python -m mypy app
+py -3 -m pytest
+py -3 -m ruff check .
+py -3 -m mypy app
 ```
 
 ## Make Targets
@@ -107,8 +107,17 @@ Python worker:
 
 ```bash
 cd apps/ai-media-python
-python -m venv .venv
-. .venv/bin/activate
-pip install -e '.[dev]'
-python -m app.worker
+py -3 -m venv .venv
+.venv\Scripts\activate
+py -3 -m pip install -e ".[dev]"
+py -3 -m app.worker
+```
+
+If you are using PowerShell on Windows and `python` is not callable but `py` is, prefer `py -3` for every command above.
+
+For ad-hoc test runs outside an activated virtualenv, set `PYTHONPATH` so `app` imports resolve:
+
+```powershell
+$env:PYTHONPATH="$PWD\apps\ai-media-python"
+py -3 -m pytest apps/ai-media-python/tests
 ```

@@ -22,7 +22,8 @@ describe("render queue route", () => {
       jobId: "job-1",
       selectedCount: 3,
       createdCount: 2,
-      existingCount: 1
+      existingCount: 1,
+      startedWorkflowCount: 2
     });
 
     const app = express();
@@ -66,6 +67,7 @@ describe("render queue route", () => {
       selected_candidate_count: 3,
       created_clip_output_count: 2,
       existing_clip_output_count: 1,
+      started_render_workflow_count: 2,
       message: "Queued 2 selected candidate(s) for render preparation."
     });
   });

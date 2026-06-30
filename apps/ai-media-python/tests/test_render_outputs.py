@@ -1,0 +1,201 @@
+import pytest
+
+from app.activities.render_outputs import execute_clip_output_render
+
+
+@pytest.mark.asyncio
+async def test_execute_clip_output_render_executes_render_pipeline(tmp_path, monkeypatch) -> None:
+    uploads: list[tuple[str, str, bytes]] = []
+    commands: list[list[str]] = []
+
+    async def fake_run_command(command: list[str], *, timeout_seconds: float) -> None:
+        commands.append(command)
+        destination = command[-1]
+        if destination.endswith(".mp4"):
+            tmp_path.joinpath(destination).write_bytes(b"fake-mp4")
+        elif destination.endswith(".jpg"):
+            tmp_path.joinpath(destination).write_bytes(b"fake-jpg")
+
+    async def fake_ffprobe(source: str, *, timeout_seconds: float) -> dict[str, object]:
+        is_preview = source.endswith("preview.mp4")
+        return {
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "codec_name": "h264",
+                    "width": 540 if is_preview else 1080,
+                    "height": 960 if is_preview else 1920,
+                    "avg_frame_rate": "24/1" if is_preview else "30/1",
+                },
+                {
+                    "codec_type": "audio",
+                    "codec_name": "aac",
+                    "sample_rate": "48000",
+                },
+            ],
+            "format": {
+                "duration": "18.000",
+            },
+        }
+
+    async def fake_upload_file(upload_url: str, path, *, content_type: str) -> None:
+        uploads.append((upload_url, content_type, path.read_bytes()))
+
+    monkeypatch.setattr("app.activities.render_outputs.get_settings", lambda: type("S", (), {
+        "TEMP_WORKDIR": str(tmp_path),
+        "TRANSCRIPTION_TIMEOUT_SECONDS": 30.0,
+        "AUDIO_EXTRACTION_TIMEOUT_SECONDS": 30.0,
+        "MEDIA_PROBE_TIMEOUT_SECONDS": 30.0,
+    })())
+    monkeypatch.setattr("app.activities.render_outputs._run_command", fake_run_command)
+    monkeypatch.setattr("app.activities.render_outputs.run_ffprobe_json", fake_ffprobe)
+    monkeypatch.setattr("app.activities.render_outputs._upload_file", fake_upload_file)
+
+    result = await execute_clip_output_render(
+        {
+            "clip_output_id": "output-1",
+            "job_id": "job-1",
+            "candidate_id": "candidate-row-1",
+            "render_settings": {
+                "visual": {"aspect_ratio": "9:16"},
+                "subtitle": {"format": "srt", "language": "id"},
+                "metadata": {
+                    "suggested_caption": "Caption singkat",
+                    "suggested_cta": "Follow untuk part berikutnya",
+                    "suggested_hashtags": ["#retention", "#content"],
+                    "thumbnail_text": "STOP SCROLL",
+                    "hook_second": 0,
+                    "main_point_second": 6.2,
+                    "punchline_second": 17.5,
+                    "retention_level": "very_high",
+                    "requires_context": False,
+                    "can_standalone": True,
+                },
+                "strategy": {"target_platform": "TIKTOK"},
+            },
+            "candidate": {
+                "candidate_id": "candidate-01",
+                "title": "Judul clip",
+                "summary": "Ringkasan clip",
+                "hook_text": "Kalimat hook",
+                "start_ms": "12000",
+                "end_ms": "30000",
+                "duration_ms": "18000",
+            },
+            "source_media": {
+                "media_asset_id": "asset-1",
+                "object_key": "users/u/uploads/source.mp4",
+                "download_url": "http://minio:9000/source.mp4",
+                "mime_type": "video/mp4",
+                "duration_ms": "65000",
+                "width": 1920,
+                "height": 1080,
+            },
+            "transcript": {
+                "language": "id",
+                "segments": [
+                    {
+                        "segment_id": "segment-1",
+                        "start_seconds": 12.0,
+                        "end_seconds": 13.2,
+                        "text": "Halo semuanya retention itu penting",
+                        "speaker_label": None,
+                        "confidence": 0.95,
+                        "words": [
+                            {"start_seconds": 12.0, "end_seconds": 12.2, "text": "Halo", "confidence": 0.99},
+                            {"start_seconds": 12.2, "end_seconds": 12.5, "text": "semuanya", "confidence": 0.99},
+                            {"start_seconds": 12.5, "end_seconds": 12.8, "text": "retention", "confidence": 0.99},
+                            {"start_seconds": 12.8, "end_seconds": 13.0, "text": "itu", "confidence": 0.99},
+                            {"start_seconds": 13.0, "end_seconds": 13.2, "text": "penting", "confidence": 0.99},
+                        ],
+                    }
+                ],
+            },
+            "output_targets": {
+                "preview_object_key": "jobs/job-1/clip-outputs/output-1/preview.mp4",
+                "final_object_key": "jobs/job-1/clip-outputs/output-1/final.mp4",
+                "metadata_object_key": "jobs/job-1/clip-outputs/output-1/metadata.json",
+                "thumbnail_object_key": "jobs/job-1/clip-outputs/output-1/thumbnail.jpg",
+                "subtitle_object_key": "jobs/job-1/clip-outputs/output-1/subtitle.srt",
+            },
+            "artifact_uploads": [
+                {
+                    "artifact": "preview",
+                    "object_key": "jobs/job-1/clip-outputs/output-1/preview.mp4",
+                    "content_type": "video/mp4",
+                    "upload_url": "http://minio:9000/upload/preview.mp4",
+                },
+                {
+                    "artifact": "final",
+                    "object_key": "jobs/job-1/clip-outputs/output-1/final.mp4",
+                    "content_type": "video/mp4",
+                    "upload_url": "http://minio:9000/upload/final.mp4",
+                },
+                {
+                    "artifact": "metadata",
+                    "object_key": "jobs/job-1/clip-outputs/output-1/metadata.json",
+                    "content_type": "application/json",
+                    "upload_url": "http://minio:9000/upload/metadata.json",
+                },
+                {
+                    "artifact": "thumbnail",
+                    "object_key": "jobs/job-1/clip-outputs/output-1/thumbnail.jpg",
+                    "content_type": "image/jpeg",
+                    "upload_url": "http://minio:9000/upload/thumbnail.jpg",
+                },
+                {
+                    "artifact": "subtitle",
+                    "object_key": "jobs/job-1/clip-outputs/output-1/subtitle.srt",
+                    "content_type": "application/x-subrip",
+                    "upload_url": "http://minio:9000/upload/subtitle.srt",
+                },
+                {
+                    "artifact": "subtitle_vtt",
+                    "object_key": "jobs/job-1/clip-outputs/output-1/subtitle.vtt",
+                    "content_type": "text/vtt",
+                    "upload_url": "http://minio:9000/upload/subtitle.vtt",
+                },
+                {
+                    "artifact": "subtitle_json",
+                    "object_key": "jobs/job-1/clip-outputs/output-1/subtitle.json",
+                    "content_type": "application/json",
+                    "upload_url": "http://minio:9000/upload/subtitle.json",
+                },
+            ],
+        }
+    )
+
+    assert result["quality_status"] == "PASSED"
+    assert result["preview_object_key"] == "jobs/job-1/clip-outputs/output-1/preview.mp4"
+    assert result["final_object_key"] == "jobs/job-1/clip-outputs/output-1/final.mp4"
+    assert result["subtitle_object_key"] == "jobs/job-1/clip-outputs/output-1/subtitle.srt"
+    assert result["subtitle_format"] == "srt"
+    assert result["subtitle_language"] == "id"
+    assert result["quality_report"]["manifest_version"] == "phase2-render-manifest-v2"
+    assert len(result["quality_report"]["artifacts"]) == 7
+    assert result["quality_report"]["render_plan"]["command"][0] == "ffmpeg"
+    assert result["quality_report"]["render_plan"]["crop_mode"] == "center_crop"
+    assert result["quality_report"]["preview_plan"]["command"][0] == "ffmpeg"
+    assert result["quality_report"]["candidate"]["title"] == "Judul clip"
+    assert result["quality_report"]["metadata"]["retention_level"] == "very_high"
+    assert result["quality_report"]["metadata"]["suggested_hashtags"] == ["#retention", "#content"]
+    assert result["quality_report"]["validation"]["status"] == "passed"
+    assert result["quality_report"]["validation"]["checks"]["playable"] is True
+    assert result["quality_report"]["validation"]["checks"]["preview_playable"] is True
+    assert result["quality_report"]["validation"]["checks"]["thumbnail_generated"] is True
+    assert result["quality_report"]["validation"]["checks"]["subtitle_sidecar_generated"] is True
+    assert result["quality_report"]["validation"]["expected"]["video_codec"] == "h264"
+    assert result["quality_report"]["validation"]["observed"]["final"]["subtitle_format"] == "srt"
+    assert result["quality_report"]["validation"]["observed"]["preview"]["width"] == 540
+    assert result["quality_report"]["subtitle"]["sidecars"]["vtt"] == "subtitle.vtt"
+    assert result["quality_report"]["subtitle"]["sidecars"]["json"] == "subtitle.json"
+    assert result["duration_ms"] == "18000"
+    assert result["width"] == 1080
+    assert result["height"] == 1920
+    assert len(commands) == 3
+    assert any("crop=608:1080:656:0,scale=1080:1920,fps=30" in argument for argument in commands[0])
+    assert any("scale=540:960,fps=24" in argument for argument in commands[1])
+    assert uploads[0][0] == "http://minio:9000/upload/preview.mp4"
+    assert any(b"Halo semuanya retention" in payload for _, _, payload in uploads)
+    assert (tmp_path / "clip-output-renders" / "output-1" / "subtitle.vtt").exists()
+    assert (tmp_path / "clip-output-renders" / "output-1" / "subtitle.json").exists()

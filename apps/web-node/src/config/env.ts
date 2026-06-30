@@ -41,6 +41,7 @@ const schema = z.object({
   TEMPORAL_NAMESPACE: z.string().min(1).default("default"),
   TEMPORAL_AUTO_CLIP_TASK_QUEUE: z.string().min(1).default("auto-clipping"),
   WEB_INTERNAL_BASE_URL: z.url().default("http://web-node:3000"),
+  MEDIA_INGESTION_INTERNAL_BASE_URL: z.url().default("http://media-ingestion-node:3100"),
 
   SMTP_HOST: z.string().min(1),
   SMTP_PORT: z.coerce.number().int().positive(),

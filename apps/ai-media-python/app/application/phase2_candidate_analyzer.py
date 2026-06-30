@@ -8,7 +8,14 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import get_settings
-from app.domain.auto_clip_pipeline import build_candidate_analyses, build_output_summary, build_pipeline_config
+from app.domain.auto_clip_pipeline import (
+    build_candidate_analyses,
+    build_output_summary,
+    build_pipeline_config,
+    deduplicate_and_rank,
+    normalize_candidates,
+    PipelineConfig,
+)
 from app.domain.contracts import AnalysisInputs, CandidateAnalysis
 from app.domain.phase2_prompting import (
     AUTO_CLIP_ANALYZER_PROMPT_VERSION,
@@ -66,7 +73,7 @@ async def analyze_phase2_candidates_with_fallback(
                 schema=load_clip_analyzer_schema(),
             )
             batch = CandidateBatchOutput.model_validate(provider_result["output"])
-            candidates = _limit_and_score_candidates(batch.candidates, config.minimum_viral_score, config.desired_clip_count)
+            candidates = _limit_and_score_candidates(batch.candidates, analysis_inputs, config)
             summary = build_output_summary(candidates, source_summary=batch.source_summary)
             usage = provider_result.get("usage") if isinstance(provider_result.get("usage"), dict) else None
             provider_request_id = (
@@ -136,12 +143,18 @@ def load_clip_analyzer_schema() -> dict[str, Any]:
 
 def _limit_and_score_candidates(
     candidates: list[CandidateAnalysis],
-    minimum_viral_score: float,
-    desired_clip_count: int,
+    analysis_inputs: AnalysisInputs,
+    config: PipelineConfig,
 ) -> list[CandidateAnalysis]:
-    filtered = [candidate for candidate in candidates if candidate.scores.get("final_viral_score", 0) >= minimum_viral_score]
-    ranked = sorted(filtered, key=lambda candidate: float(candidate.scores.get("final_viral_score", 0)), reverse=True)
-    return ranked[:desired_clip_count]
+    filtered = [
+        candidate
+        for candidate in candidates
+        if candidate.scores.get("final_viral_score", 0) >= config.minimum_viral_score
+        and candidate.duration_seconds >= config.minimum_duration_seconds
+        and candidate.duration_seconds <= config.maximum_duration_seconds
+    ]
+    normalized = normalize_candidates(filtered, analysis_inputs.scenes, analysis_inputs.silences)
+    return deduplicate_and_rank(normalized, config.desired_clip_count)
 
 
 def _finalize_summary(
@@ -173,7 +186,7 @@ def _finalize_summary(
         "input_silence_count": len(analysis_inputs.silences),
         "fallback_reason": fallback_reason,
     }
-    summary["analysis_version"] = "2.2"
+    summary["analysis_version"] = "2.4"
     summary["analyzer"] = analyzer_metadata
 
     logger.info(

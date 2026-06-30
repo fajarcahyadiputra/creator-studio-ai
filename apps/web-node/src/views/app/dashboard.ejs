@@ -1,20 +1,76 @@
 <%- include('../partials/head', { title, csrfToken }) %>
-<div class="app-shell">
-  <%- include('../partials/sidebar') %>
-  <main class="content-area">
+<div class="workspace-shell">
+  <%- include('../partials/user-topbar') %>
+  <main class="workspace-main content-area">
     <header class="page-header">
-      <div><span class="eyebrow">Creator workspace</span><h1>Welcome, <%= user.displayName %></h1><p>Track durable media jobs and continue safely after failures.</p></div>
-      <a class="btn btn-primary" href="/app/tools/auto-clipping">New Auto Clip</a>
+      <div><span class="eyebrow">Creator workspace</span><h1>Welcome, <%= user.displayName %></h1><p>Track durable media jobs, review candidate clips, and continue your short-form workflow without losing progress.</p></div>
+      <div class="d-flex gap-2"><a class="btn btn-primary" href="/app/tools/auto-clipping">New Auto Clip</a><a class="btn btn-outline-primary" href="/app/jobs">View Jobs</a></div>
     </header>
+    <section class="workspace-highlight-grid">
+      <article class="workspace-highlight-card">
+        <span class="eyebrow">Quick Action</span>
+        <h2>Buat job clipping baru</h2>
+        <p>Upload source atau pakai external URL, lalu biarkan pipeline memilih kandidat clip terbaik.</p>
+        <a class="btn btn-warning" href="/app/tools/auto-clipping">Start Auto Clipping</a>
+      </article>
+      <article class="workspace-highlight-card workspace-highlight-card--dark">
+        <span class="eyebrow">Workspace Health</span>
+        <h2><%= counts.RUNNING ?? 0 %> job sedang berjalan</h2>
+        <p><%= summary.totalClipOutputs %> clip output sudah tersimpan, dengan rata-rata viral score <%= summary.averageViralScore ? summary.averageViralScore.toFixed(2) : '-' %>.</p>
+        <a class="btn btn-outline-light" href="/app/jobs">Open Results</a>
+      </article>
+    </section>
     <section class="stat-grid">
       <% const cards = [['RUNNING','Running'],['QUEUED','Queued'],['COMPLETED','Completed'],['FAILED','Failed'],['NEEDS_REVIEW','Needs review']]; %>
       <% cards.forEach(([key,label]) => { %><article class="stat-card"><span><%= label %></span><strong><%= counts[key] ?? 0 %></strong></article><% }) %>
     </section>
+    <section class="stat-grid mt-4">
+      <article class="stat-card"><span>Jobs today / month</span><strong><%= summary.jobsToday %> / <%= summary.jobsThisMonth %></strong></article>
+      <article class="stat-card"><span>Processed source duration</span><strong><%= Math.round(summary.totalSourceDurationSeconds / 60) %> min</strong></article>
+      <article class="stat-card"><span>Clip outputs</span><strong><%= summary.totalClipOutputs %></strong></article>
+      <article class="stat-card"><span>Average viral score</span><strong><%= summary.averageViralScore ? summary.averageViralScore.toFixed(2) : '-' %></strong></article>
+    </section>
+    <% if (summary.alerts.length) { %>
+      <section class="panel mt-4">
+        <div class="panel-heading"><div><h2>Attention needed</h2><p>Operational signals from your current workspace.</p></div></div>
+        <div class="p-4">
+          <% summary.alerts.forEach((alert) => { %><div class="alert alert-warning mb-2"><%= alert %></div><% }) %>
+        </div>
+      </section>
+    <% } %>
+    <section class="panel mt-4">
+      <div class="panel-heading"><div><h2>Workspace trends</h2><p>Recent job creation trend and clip score distribution.</p></div></div>
+      <div class="p-4">
+        <div class="row g-4">
+          <div class="col-md-6">
+            <h3 class="h5">Jobs per day</h3>
+            <% const maxTrend = Math.max(...summary.jobTrend.map(item => item.count), 1); %>
+            <% summary.jobTrend.forEach((item) => { %>
+              <div class="d-flex align-items-center gap-3 mb-2"><small style="width:48px;"><%= item.label %></small><div class="progress flex-grow-1"><div class="progress-bar" style="width:<%= (item.count / maxTrend) * 100 %>%"></div></div><small><%= item.count %></small></div>
+            <% }) %>
+          </div>
+          <div class="col-md-6">
+            <h3 class="h5">Clip score ranges</h3>
+            <% const maxRange = Math.max(...summary.clipScoreRanges.map(item => item.count), 1); %>
+            <% summary.clipScoreRanges.forEach((item) => { %>
+              <div class="d-flex align-items-center gap-3 mb-2"><small style="width:64px;"><%= item.label %></small><div class="progress flex-grow-1"><div class="progress-bar bg-success" style="width:<%= (item.count / maxRange) * 100 %>%"></div></div><small><%= item.count %></small></div>
+            <% }) %>
+          </div>
+        </div>
+      </div>
+    </section>
     <section class="panel mt-4">
       <div class="panel-heading"><div><h2>Recent jobs</h2><p>Progress is stored as an event timeline.</p></div><a href="/app/jobs">View all</a></div>
-      <div class="table-responsive"><table class="table align-middle"><thead><tr><th>Job</th><th>Tool</th><th>Status</th><th>Stage</th><th>Progress</th><th>Created</th></tr></thead><tbody>
-        <% if (!recent.length) { %><tr><td colspan="6" class="empty-cell">No jobs yet. Create an auto-clipping foundation job.</td></tr><% } %>
-        <% recent.forEach(job => { %><tr><td><a href="/app/jobs/<%= job.id %>"><code><%= job.id.slice(0,8) %></code></a></td><td><%= job.type %></td><td><span class="status status-<%= job.status.toLowerCase() %>"><%= job.status %></span></td><td><%= job.currentStage ?? '-' %></td><td><div class="progress"><div class="progress-bar" style="width:<%= job.progressPercent %>%"></div></div><small><%= job.progressPercent %>%</small></td><td><%= job.createdAt.toLocaleString() %></td></tr><% }) %>
+      <div class="table-responsive"><table class="table align-middle"><thead><tr><th>Job</th><th>Project / Source</th><th>Tool</th><th>Status</th><th>Stage</th><th>Progress</th><th>Created</th></tr></thead><tbody>
+        <% if (!recent.length) { %><tr><td colspan="7" class="empty-cell">No jobs yet. Create an auto-clipping foundation job.</td></tr><% } %>
+        <% recent.forEach(job => { %><tr data-job-stream-row="<%= job.id %>"><td><a href="/app/jobs/<%= job.id %>"><code><%= job.id.slice(0,8) %></code></a></td><td><strong><%= job.projectName ?? 'No project' %></strong><br><small><%= job.sourceName ?? 'No source linked' %></small></td><td><%= job.type %></td><td><span class="status status-<%= job.status.toLowerCase() %>" data-job-row-status><%= job.status %></span></td><td data-job-row-stage><%= job.currentStage ?? '-' %></td><td><div class="progress"><div class="progress-bar" data-job-row-progress-bar style="width:<%= job.progressPercent %>%"></div></div><small data-job-row-progress-value><%= job.progressPercent %>%</small></td><td><%= job.createdAt.toLocaleString() %></td></tr><% }) %>
+      </tbody></table></div>
+    </section>
+    <section class="panel mt-4">
+      <div class="panel-heading"><div><h2>Recent outputs</h2><p>Latest generated clip outputs attached to your jobs.</p></div></div>
+      <div class="table-responsive"><table class="table align-middle"><thead><tr><th>Output</th><th>Title</th><th>Score</th><th>Created</th></tr></thead><tbody>
+        <% if (!summary.recentOutputs.length) { %><tr><td colspan="4" class="empty-cell">No clip outputs yet.</td></tr><% } %>
+        <% summary.recentOutputs.forEach((output) => { %><tr><td><a href="/app/jobs/<%= output.jobId %>"><code><%= output.id.slice(0,8) %></code></a></td><td><%= output.title %></td><td><%= output.score.toFixed(2) %></td><td><%= output.createdAt.toLocaleString() %></td></tr><% }) %>
       </tbody></table></div>
     </section>
   </main>

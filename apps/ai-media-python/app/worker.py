@@ -4,12 +4,34 @@ import logging
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from app.activities.phase2_analysis import analyze_phase2_candidates, prepare_analysis_inputs
+from app.activities.audio_pipeline import execute_audio_extraction, prepare_audio_extraction
+from app.activities.media_validation import (
+    prepare_media_asset_validation,
+    probe_media_asset_validation,
+    submit_media_asset_validation_result,
+)
+from app.activities.phase2_analysis import (
+    analyze_phase2_candidates,
+    enrich_analysis_inputs,
+    prepare_analysis_inputs,
+    prepare_analysis_inputs_from_transcript,
+)
 from app.activities.progress import emit_progress, validate_foundation_request
-from app.activities.render_outputs import prepare_clip_output_render, submit_clip_output_result
+from app.activities.render_outputs import (
+    execute_clip_output_render,
+    prepare_clip_output_render,
+    submit_clip_output_result,
+)
+from app.activities.transcription_pipeline import (
+    execute_transcription,
+    prepare_transcription,
+    submit_transcription_result,
+)
 from app.config import get_settings
 from app.observability.logging import configure_logging
 from app.workflows.foundation_auto_clipping import FoundationAutoClippingWorkflow
+from app.workflows.clip_output_render import ClipOutputRenderWorkflow
+from app.workflows.media_asset_validation import MediaAssetValidationWorkflow
 
 
 async def main() -> None:
@@ -23,13 +45,24 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=settings.TEMPORAL_AUTO_CLIP_TASK_QUEUE,
-        workflows=[FoundationAutoClippingWorkflow],
+        workflows=[FoundationAutoClippingWorkflow, MediaAssetValidationWorkflow, ClipOutputRenderWorkflow],
         activities=[
             validate_foundation_request,
             emit_progress,
             prepare_analysis_inputs,
+            prepare_analysis_inputs_from_transcript,
+            enrich_analysis_inputs,
             analyze_phase2_candidates,
+            prepare_media_asset_validation,
+            probe_media_asset_validation,
+            submit_media_asset_validation_result,
+            prepare_audio_extraction,
+            execute_audio_extraction,
+            prepare_transcription,
+            execute_transcription,
+            submit_transcription_result,
             prepare_clip_output_render,
+            execute_clip_output_render,
             submit_clip_output_result,
         ],
         max_concurrent_activities=20,

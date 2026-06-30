@@ -60,6 +60,12 @@ const candidateOutputSchema = z.object({
   thumbnail_text: z.string().trim().min(1).max(120),
   speaker_ids: z.array(z.string().trim().min(1).max(100)).max(10).default([]),
   scene_ids: z.array(z.string().trim().min(1).max(100)).max(20).default([]),
+  hook_second: z.number().min(0),
+  main_point_second: z.number().min(0),
+  punchline_second: z.number().min(0),
+  retention_level: z.enum(["very_high", "high", "medium", "low"]),
+  requires_context: z.boolean(),
+  can_standalone: z.boolean(),
   scores: z.record(z.string(), z.unknown())
 }).refine((value) => value.end_seconds > value.start_seconds, {
   message: "Candidate end must be greater than start."
@@ -96,6 +102,15 @@ type PersistableCandidate = {
   rank: number;
 };
 
+type TranscriptLinkSource = {
+  sourceMediaAssetId: string | null;
+};
+
+type TranscriptLinkTarget = {
+  id: string;
+  mediaAssetId: string;
+};
+
 export function resolvePersistableCandidates(
   metadata: Record<string, unknown> | undefined
 ): PersistableCandidate[] | undefined {
@@ -128,7 +143,13 @@ export function resolvePersistableCandidates(
         suggested_caption: candidate.suggested_caption,
         suggested_cta: candidate.suggested_cta,
         suggested_hashtags: candidate.suggested_hashtags,
-        thumbnail_text: candidate.thumbnail_text
+        thumbnail_text: candidate.thumbnail_text,
+        hook_second: candidate.hook_second,
+        main_point_second: candidate.main_point_second,
+        punchline_second: candidate.punchline_second,
+        retention_level: candidate.retention_level,
+        requires_context: candidate.requires_context,
+        can_standalone: candidate.can_standalone
       } satisfies Prisma.InputJsonObject,
       speakerIds: candidate.speaker_ids,
       sceneIds: candidate.scene_ids,
@@ -169,6 +190,14 @@ export function computeServerOverallProgress(params: {
   return Math.max(0, Math.min(100, Math.round(weightedProgress / totalStageWeight * 100)));
 }
 
+export function resolveCandidateTranscriptId(
+  job: TranscriptLinkSource,
+  transcript: TranscriptLinkTarget | null | undefined
+): string | null {
+  if (!job.sourceMediaAssetId || !transcript) return null;
+  return transcript.mediaAssetId === job.sourceMediaAssetId ? transcript.id : null;
+}
+
 export class JobProjectionService {
   public constructor(private readonly eventBus: JobEventBus) {}
 
@@ -195,7 +224,9 @@ export class JobProjectionService {
           currentStage: input.stage,
           progressPercent: Math.max(current.progressPercent, serverOverallProgress),
           status: nextStatus,
-          outputSummary: outputSummary ?? current.outputSummary,
+          outputSummary:
+            outputSummary
+            ?? (current.outputSummary === null ? undefined : (current.outputSummary as Prisma.InputJsonValue)),
           startedAt: current.startedAt ?? new Date(),
           completedAt: ["COMPLETED", "FAILED", "CANCELED", "PARTIALLY_COMPLETED", "NEEDS_REVIEW"].includes(nextStatus)
             ? new Date()
@@ -225,6 +256,17 @@ export class JobProjectionService {
       });
 
       if (persistedCandidates) {
+        const linkedTranscript = current.sourceMediaAssetId
+          ? await tx.transcript.findFirst({
+              where: {
+                mediaAssetId: current.sourceMediaAssetId,
+                status: "READY"
+              },
+              orderBy: { version: "desc" },
+              select: { id: true, mediaAssetId: true }
+            })
+          : null;
+        const transcriptId = resolveCandidateTranscriptId(current, linkedTranscript);
         const activeCandidateIds = persistedCandidates.map((candidate) => candidate.candidateExternalId);
 
         await tx.clipCandidate.deleteMany({
@@ -245,7 +287,7 @@ export class JobProjectionService {
             update: candidate,
             create: {
               jobId,
-              transcriptId: null,
+              transcriptId,
               ...candidate
             }
           });

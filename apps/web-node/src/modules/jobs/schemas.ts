@@ -45,6 +45,8 @@ export const autoClipJobSchema = z.object({
     title: z.string().trim().max(255).optional(),
     context: z.string().trim().max(5000).optional(),
     topic: z.string().trim().max(255).optional(),
+    niche: z.string().trim().max(120).optional(),
+    target_audience: z.string().trim().max(255).optional(),
     source_language: z.string().trim().max(20).optional(),
     speaker_count: z.number().int().min(1).max(20).optional(),
     custom_vocabulary: z.array(z.string().trim().min(1).max(100)).max(200).default([]),
@@ -58,6 +60,12 @@ export const autoClipJobSchema = z.object({
     minimum_duration_seconds: z.number().int().min(10).max(180),
     maximum_duration_seconds: z.number().int().min(15).max(180),
     minimum_viral_score: z.number().min(0).max(10).default(7),
+    preferred_topics: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
+    topics_to_avoid: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
+    sensitive_topics: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
+    hook_style: z.string().trim().max(80).optional(),
+    cta_preference: z.string().trim().max(120).optional(),
+    profanity_handling: z.enum(["KEEP", "MUTE", "BLEEP", "SUBTITLE_CENSOR"]).default("KEEP"),
     remove_long_silence: z.boolean().default(true),
     remove_filler_words: z.boolean().default(false)
   }).refine((value) => value.maximum_duration_seconds >= value.minimum_duration_seconds, {
@@ -73,7 +81,15 @@ export const autoClipJobSchema = z.object({
     language: z.string().max(20),
     burn_in: z.boolean(),
     export_formats: z.array(z.enum(["SRT", "VTT", "ASS", "JSON"])),
-    settings: z.record(z.string(), z.unknown()).default({})
+    settings: z.object({
+      style: z.string().trim().max(80).optional(),
+      font_family: z.string().trim().max(120).optional(),
+      position: z.enum(["TOP", "CENTER", "BOTTOM"]).optional(),
+      max_lines: z.number().int().min(1).max(4).optional(),
+      safe_margin_percent: z.number().min(0).max(30).optional(),
+      word_highlight: z.boolean().optional(),
+      profanity_censor: z.boolean().optional()
+    }).catchall(z.unknown()).default({})
   }),
   ai: z.object({
     credential_mode: z.enum(["PLATFORM", "USER_OWNED"]),

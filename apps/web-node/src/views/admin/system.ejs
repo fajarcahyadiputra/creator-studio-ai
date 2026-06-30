@@ -1,0 +1,126 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<div class="app-shell"><%- include('../partials/admin-sidebar') %><main class="content-area">
+  <header class="page-header">
+    <div>
+      <span class="eyebrow">Operations controls</span>
+      <h1>Feature Flags & System Settings</h1>
+      <p>Manage runtime toggles, maintenance-mode style switches, and structured platform settings with audited admin actions.</p>
+    </div>
+    <a class="btn btn-outline-primary" href="/admin/dashboard">Back to dashboard</a>
+  </header>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <div>
+        <h2>Create feature flag</h2>
+        <p>Use rules JSON for rollout targeting or environment-specific metadata.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="form-message"></div>
+      <form class="row g-3" data-api-form action="/api/v1/admin/feature-flags" method="post">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="col-md-3"><label class="form-label">Key</label><input class="form-control" name="key" placeholder="maintenance_mode" required></div>
+        <div class="col-md-4"><label class="form-label">Description</label><input class="form-control" name="description" placeholder="Temporarily block new jobs"></div>
+        <div class="col-md-2">
+          <label class="form-label">Enabled</label>
+          <select class="form-select" name="enabled">
+            <option value="false" selected>false</option>
+            <option value="true">true</option>
+          </select>
+        </div>
+        <div class="col-md-3 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit">Create feature flag</button></div>
+        <div class="col-md-12"><label class="form-label">Rules JSON</label><textarea class="form-control font-monospace" rows="4" name="rules_json">{}</textarea></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Create system setting</h2>
+        <p>Examples from the prompt include upload limits, provider routing, maintenance controls, webhook config, and moderation settings.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="form-message"></div>
+      <form class="row g-3" data-api-form action="/api/v1/admin/system-settings" method="post">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="col-md-3"><label class="form-label">Key</label><input class="form-control" name="key" placeholder="provider_routing" required></div>
+        <div class="col-md-4"><label class="form-label">Description</label><input class="form-control" name="description" placeholder="Routing and fallback policy"></div>
+        <div class="col-md-2">
+          <label class="form-label">Secret</label>
+          <select class="form-select" name="is_secret">
+            <option value="false" selected>false</option>
+            <option value="true">true</option>
+          </select>
+        </div>
+        <div class="col-md-3 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit">Create system setting</button></div>
+        <div class="col-md-12"><label class="form-label">Value JSON</label><textarea class="form-control font-monospace" rows="4" name="value_json">{}</textarea></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Feature flags</h2>
+        <p>Use these for operator-controlled product and infrastructure toggles.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <% if (!featureFlags.length) { %>
+        <p class="text-muted mb-0">No feature flags configured yet.</p>
+      <% } %>
+      <% featureFlags.forEach((featureFlag) => { %>
+        <form class="row g-3 border rounded-4 p-3 mb-3" data-api-form action="/api/v1/admin/feature-flags/<%= featureFlag.id %>/update" method="post">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="col-md-3"><label class="form-label">Key</label><input class="form-control" name="key" value="<%= featureFlag.key %>" required></div>
+          <div class="col-md-4"><label class="form-label">Description</label><input class="form-control" name="description" value="<%= featureFlag.description ?? '' %>"></div>
+          <div class="col-md-2">
+            <label class="form-label">Enabled</label>
+            <select class="form-select" name="enabled">
+              <option value="true" <%= featureFlag.enabled ? 'selected' : '' %>>true</option>
+              <option value="false" <%= !featureFlag.enabled ? 'selected' : '' %>>false</option>
+            </select>
+          </div>
+          <div class="col-md-3 d-flex align-items-end justify-content-end"><button class="btn btn-outline-primary" type="submit">Save feature flag</button></div>
+          <div class="col-md-12"><label class="form-label">Rules JSON</label><textarea class="form-control font-monospace" rows="4" name="rules_json"><%= featureFlag.rulesJson %></textarea></div>
+          <div class="col-md-12"><small>Version <%= featureFlag.version %> | Updated <%= featureFlag.updatedAt.toLocaleString() %></small></div>
+        </form>
+      <% }) %>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>System settings</h2>
+        <p>Secret settings remain redacted on read, but can still be replaced through a full JSON update.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <% if (!systemSettings.length) { %>
+        <p class="text-muted mb-0">No system settings configured yet.</p>
+      <% } %>
+      <% systemSettings.forEach((systemSetting) => { %>
+        <form class="row g-3 border rounded-4 p-3 mb-3" data-api-form action="/api/v1/admin/system-settings/<%= systemSetting.id %>/update" method="post">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="col-md-3"><label class="form-label">Key</label><input class="form-control" name="key" value="<%= systemSetting.key %>" required></div>
+          <div class="col-md-4"><label class="form-label">Description</label><input class="form-control" name="description" value="<%= systemSetting.description ?? '' %>"></div>
+          <div class="col-md-2">
+            <label class="form-label">Secret</label>
+            <select class="form-select" name="is_secret">
+              <option value="true" <%= systemSetting.isSecret ? 'selected' : '' %>>true</option>
+              <option value="false" <%= !systemSetting.isSecret ? 'selected' : '' %>>false</option>
+            </select>
+          </div>
+          <div class="col-md-3 d-flex align-items-end justify-content-end"><button class="btn btn-outline-primary" type="submit">Save system setting</button></div>
+          <div class="col-md-12"><label class="form-label">Value JSON</label><textarea class="form-control font-monospace" rows="4" name="value_json"><%= systemSetting.valueJson %></textarea></div>
+          <div class="col-md-12"><small>Version <%= systemSetting.version %> | Updated <%= systemSetting.updatedAt.toLocaleString() %></small></div>
+        </form>
+      <% }) %>
+    </div>
+  </section>
+</main></div>
+<%- include('../partials/footer') %>

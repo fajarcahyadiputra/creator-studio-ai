@@ -12,10 +12,22 @@ This file summarizes the important runtime paths.
 6. Browser uploads file parts directly to MinIO/S3.
 7. Browser calls complete upload.
 8. Node completes multipart upload and marks the asset `VALIDATING`.
+9. Node starts `MediaAssetValidationWorkflow` through Temporal and updates `MediaAsset.metadata.validation.status` to `QUEUED` when that succeeds.
+10. If the workflow trigger fails, Node keeps the asset in `VALIDATING` and records `TRIGGER_FAILED` metadata instead of pretending that validation completed.
+11. A Python media-validation slice can inspect the stored object and report FFprobe-style metadata back to Node through `/internal/v1/media-assets/:mediaAssetId/validation-result`.
+12. Node marks the asset `READY` or `FAILED` and stores the normalized metadata on the `MediaAsset` row.
+13. The validation-context endpoint now returns a short-lived internal signed read URL so a Python probe activity can inspect the object without direct database or bucket credentials.
+14. The Python media-validation slice can now run an FFprobe command against that signed URL and turn probe results into a `READY` or `FAILED` validation payload.
+15. Once a media asset is `READY`, the Python audio-extraction planning slice can build a stable FFmpeg command and working-path contract for the later transcription stage.
+16. The Python audio-extraction execution slice can now run that FFmpeg command and require the output audio artifact to exist before the stage is considered successful.
+
+While the full worker-triggered validation pipeline is still being wired, `MediaAsset.metadata.validation` now records an explicit pending-worker state immediately after upload completion so operators can distinguish "awaiting validation orchestration" from an ordinary `READY` asset.
 
 Key file:
 
 - `apps/web-node/src/modules/uploads/upload-service.ts`
+- `apps/web-node/src/modules/internal/routes.ts`
+- `apps/ai-media-python/app/media/ffmpeg.py`
 
 ## Auto-Clipping Job
 
@@ -25,10 +37,15 @@ Key file:
 4. Node starts Temporal workflow `FoundationAutoClippingWorkflow`.
 5. Python workflow validates the envelope.
 6. Python emits progress through Node internal API.
-7. `JobProjectionService` writes authoritative `JobEvent`, updates `Job`/`JobStage`, and publishes a Redis notification.
-8. Browser receives events through `/api/v1/jobs/:jobId/events/stream`.
-9. Polling fallback is available at `/api/v1/jobs/:jobId/events`.
-10. Phase 1 workflow ends as `NEEDS_REVIEW`.
+7. If `analysis_inputs` is already present, Python uses that structured transcript/scene/silence payload directly.
+8. If `analysis_inputs` is absent but `source.media_asset_id` is present, Python now fetches the validated media asset context, extracts mono WAV audio, runs transcription, persists the normalized transcript back to Node, and converts that transcript into minimal `analysis_inputs`.
+9. Candidate analysis runs against the prepared transcript-driven inputs and produces ranked clip candidates plus metadata suggestions.
+10. `JobProjectionService` writes authoritative `JobEvent`, updates `Job`/`JobStage`, and publishes a Redis notification.
+11. Browser receives events through `/api/v1/jobs/:jobId/events/stream`.
+12. Polling fallback is available at `/api/v1/jobs/:jobId/events`.
+13. When the user queues selected candidates for rendering, Node creates `ClipOutput` rows and now starts one `ClipOutputRenderWorkflow` per newly created output.
+14. The Python render slice currently returns a deterministic placeholder render result, then reports preview/final/metadata/thumbnail/subtitle object keys plus width/height back to Node through the internal clip-output result endpoint.
+15. When a subtitle object key is supplied, Node upserts a `SUBTITLE` media asset and linked `SubtitleAsset` row so the user-facing download route can treat it as an official clip artifact.
 
 Key files:
 
@@ -36,6 +53,10 @@ Key files:
 - `apps/web-node/src/modules/jobs/job-projection-service.ts`
 - `apps/web-node/src/modules/jobs/routes.ts`
 - `apps/web-node/src/modules/internal/routes.ts`
+- `apps/ai-media-python/app/activities/audio_pipeline.py`
+- `apps/ai-media-python/app/activities/render_outputs.py`
+- `apps/ai-media-python/app/activities/transcription_pipeline.py`
+- `apps/ai-media-python/app/workflows/clip_output_render.py`
 - `apps/ai-media-python/app/workflows/foundation_auto_clipping.py`
 - `apps/ai-media-python/app/activities/progress.py`
 

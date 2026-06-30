@@ -171,16 +171,29 @@ class CandidateAnalysis(BaseModel):
     thumbnail_text: str = Field(min_length=1, max_length=120)
     speaker_ids: list[str] = Field(default_factory=list, max_length=10)
     scene_ids: list[str] = Field(default_factory=list, max_length=20)
+    hook_second: float = Field(ge=0)
+    main_point_second: float = Field(ge=0)
+    punchline_second: float = Field(ge=0)
+    retention_level: Literal["very_high", "high", "medium", "low"]
+    requires_context: bool
+    can_standalone: bool
     scores: dict[str, Any]
 
     @model_validator(mode="after")
     def validate_order(self) -> "CandidateAnalysis":
         if self.end_seconds <= self.start_seconds:
             raise ValueError("candidate end_seconds must be greater than start_seconds")
+        if self.main_point_second < self.hook_second:
+            raise ValueError("main_point_second must be greater than or equal to hook_second")
+        if self.punchline_second < self.main_point_second:
+            raise ValueError("punchline_second must be greater than or equal to main_point_second")
+        if self.punchline_second > self.duration_seconds:
+            raise ValueError("punchline_second must not exceed duration_seconds")
         return self
 
 
 ClipQualityStatus = Literal["PENDING", "PASSED", "NEEDS_REVIEW", "FAILED"]
+MediaValidationStatus = Literal["READY", "FAILED"]
 
 
 class ClipRenderCandidate(BaseModel):
@@ -202,6 +215,45 @@ class ClipOutputTargets(BaseModel):
     final_object_key: str | None = None
     metadata_object_key: str | None = None
     thumbnail_object_key: str | None = None
+    subtitle_object_key: str | None = None
+
+
+class ClipRenderSourceMedia(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_asset_id: str = Field(min_length=1, max_length=64)
+    object_key: str = Field(min_length=1, max_length=1000)
+    download_url: HttpUrl
+    mime_type: str | None = Field(default=None, max_length=160)
+    duration_ms: str | None = Field(default=None, pattern=r"^\d+$")
+    width: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=1)
+
+
+class ClipRenderSubtitleWindow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    language: str = Field(min_length=2, max_length=20)
+    segments: list[TranscriptSegment] = Field(default_factory=list, max_length=5000)
+
+
+class ClipRenderArtifactUpload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact: Literal[
+        "preview",
+        "final",
+        "metadata",
+        "thumbnail",
+        "subtitle",
+        "subtitle_srt",
+        "subtitle_ass",
+        "subtitle_vtt",
+        "subtitle_json",
+    ]
+    object_key: str = Field(min_length=1, max_length=1000)
+    content_type: str = Field(min_length=1, max_length=160)
+    upload_url: HttpUrl
 
 
 class ClipRenderContext(BaseModel):
@@ -214,7 +266,10 @@ class ClipRenderContext(BaseModel):
     quality_status: ClipQualityStatus
     render_settings: dict[str, Any] = Field(default_factory=dict)
     candidate: ClipRenderCandidate
+    source_media: ClipRenderSourceMedia
+    transcript: ClipRenderSubtitleWindow | None = None
     output_targets: ClipOutputTargets
+    artifact_uploads: list[ClipRenderArtifactUpload] = Field(default_factory=list, max_length=10)
 
 
 class ClipOutputResult(BaseModel):
@@ -225,7 +280,100 @@ class ClipOutputResult(BaseModel):
     final_object_key: str | None = Field(default=None, max_length=1000)
     metadata_object_key: str | None = Field(default=None, max_length=1000)
     thumbnail_object_key: str | None = Field(default=None, max_length=1000)
+    subtitle_object_key: str | None = Field(default=None, max_length=1000)
+    subtitle_format: str | None = Field(default=None, min_length=1, max_length=20)
+    subtitle_language: str | None = Field(default=None, min_length=2, max_length=20)
+    subtitle_burned_in: bool | None = None
     quality_report: dict[str, Any] = Field(default_factory=dict)
     duration_ms: str | None = Field(default=None, pattern=r"^\d+$")
     width: int | None = Field(default=None, ge=1)
     height: int | None = Field(default=None, ge=1)
+
+
+class MediaAssetValidationResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: MediaValidationStatus
+    duration_ms: str | None = Field(default=None, pattern=r"^\d+$")
+    width: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=1)
+    frame_rate: float | None = Field(default=None, gt=0)
+    audio_sample_rate: int | None = Field(default=None, ge=1)
+    codec_name: str | None = Field(default=None, max_length=80)
+    audio_codec_name: str | None = Field(default=None, max_length=80)
+    rotation: int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    failure_reason: str | None = Field(default=None, max_length=2000)
+
+
+class MediaAssetValidationContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_asset_id: str = Field(min_length=1, max_length=64)
+    user_id: str = Field(min_length=1, max_length=64)
+    project_id: str | None = Field(default=None, max_length=64)
+    type: str = Field(min_length=1, max_length=40)
+    status: str = Field(min_length=1, max_length=40)
+    object_key: str = Field(min_length=1, max_length=1000)
+    display_name: str = Field(min_length=1, max_length=255)
+    original_file_name: str | None = Field(default=None, max_length=255)
+    mime_type: str | None = Field(default=None, max_length=160)
+    extension: str | None = Field(default=None, max_length=20)
+    size_bytes: str | None = Field(default=None, pattern=r"^\d+$")
+    checksum_sha256: str | None = Field(default=None, min_length=64, max_length=64)
+    download_url: HttpUrl
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AudioExtractionPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_asset_id: str = Field(min_length=1, max_length=64)
+    user_id: str = Field(min_length=1, max_length=64)
+    object_key: str = Field(min_length=1, max_length=1000)
+    source_url: HttpUrl
+    working_directory: str = Field(min_length=1, max_length=1000)
+    output_audio_path: str = Field(min_length=1, max_length=1000)
+    sample_rate: int = Field(ge=1)
+    command: list[str] = Field(min_length=1)
+
+
+class AudioExtractionResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_asset_id: str = Field(min_length=1, max_length=64)
+    output_audio_path: str = Field(min_length=1, max_length=1000)
+    sample_rate: int = Field(ge=1)
+    command: list[str] = Field(min_length=1)
+
+
+class TranscriptionPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_asset_id: str = Field(min_length=1, max_length=64)
+    job_id: str | None = Field(default=None, min_length=1, max_length=64)
+    user_id: str = Field(min_length=1, max_length=64)
+    audio_path: str = Field(min_length=1, max_length=1000)
+    output_transcript_path: str = Field(min_length=1, max_length=1000)
+    language_hint: str | None = Field(default=None, max_length=20)
+    custom_vocabulary: list[str] = Field(default_factory=list, max_length=200)
+
+
+class TranscriptionResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_asset_id: str = Field(min_length=1, max_length=64)
+    job_id: str | None = Field(default=None, min_length=1, max_length=64)
+    output_transcript_path: str = Field(min_length=1, max_length=1000)
+    transcript: TranscriptDocument
+
+
+class TranscriptionPersistenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_asset_id: str = Field(min_length=1, max_length=64)
+    job_id: str | None = Field(default=None, min_length=1, max_length=64)
+    output_transcript_path: str = Field(min_length=1, max_length=1000)
+    model_identifier: str | None = Field(default=None, max_length=200)
+    word_timestamps: bool = True
+    transcript: TranscriptDocument

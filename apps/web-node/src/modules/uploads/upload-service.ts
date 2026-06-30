@@ -8,6 +8,7 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { prisma } from "../../infrastructure/database/prisma.js";
 import { s3Internal, s3PublicSigner } from "../../infrastructure/storage/s3.js";
+import { temporalClient } from "../../infrastructure/temporal/client.js";
 import { env } from "../../config/env.js";
 import { AppError, ConflictError, NotFoundError, ValidationError } from "../../shared/errors/app-error.js";
 
@@ -38,6 +39,25 @@ function validateFile(fileName: string, contentType: string, sizeBytes: number):
   if (!extensionByMime[contentType]?.includes(extension)) {
     throw new ValidationError("The file extension does not match the declared media type.");
   }
+}
+
+interface ValidationMetadataInput {
+  currentMetadata: unknown;
+  uploadSessionId: string;
+  checksumSha256?: string;
+  requestedAt: Date;
+}
+
+interface ValidationWorkflowMetadataInput {
+  currentMetadata: unknown;
+  workflowId: string;
+  queuedAt: Date;
+}
+
+interface ValidationTriggerFailureMetadataInput {
+  currentMetadata: unknown;
+  failedAt: Date;
+  reason: string;
 }
 
 export class UploadService {
@@ -174,16 +194,27 @@ export class UploadService {
           Parts: sorted.map((part) => ({ ETag: part.etag, PartNumber: part.part_number }))
         }
       }));
-      return prisma.$transaction(async (tx) => {
+      const asset = await prisma.$transaction(async (tx) => {
+        const validationRequestedAt = new Date();
         await tx.uploadSession.update({
           where: { id: session.id },
           data: { status: "COMPLETED", completedAt: new Date(), completedParts: sorted }
         });
         return tx.mediaAsset.update({
           where: { id: session.mediaAssetId },
-          data: { status: "VALIDATING", checksumSha256: params.checksumSha256?.toLowerCase() }
+          data: {
+            status: "VALIDATING",
+            checksumSha256: params.checksumSha256?.toLowerCase(),
+            metadata: buildPendingValidationMetadata({
+              currentMetadata: session.mediaAsset.metadata,
+              uploadSessionId: session.id,
+              checksumSha256: params.checksumSha256,
+              requestedAt: validationRequestedAt
+            }) as never
+          }
         });
       });
+      return this.startMediaValidationWorkflow(asset.id);
     } catch (error) {
       await prisma.uploadSession.update({ where: { id: session.id }, data: { status: "FAILED" } });
       throw new AppError({
@@ -212,4 +243,108 @@ export class UploadService {
       prisma.mediaAsset.update({ where: { id: session.mediaAssetId }, data: { status: "FAILED" } })
     ]);
   }
+
+  private async startMediaValidationWorkflow(mediaAssetId: string) {
+    const workflowId = `media-asset-validation:${mediaAssetId}`;
+
+    try {
+      const client = await temporalClient();
+      await client.workflow.start("MediaAssetValidationWorkflow", {
+        taskQueue: env.TEMPORAL_AUTO_CLIP_TASK_QUEUE,
+        workflowId,
+        args: [{ media_asset_id: mediaAssetId }],
+      });
+
+      return prisma.mediaAsset.update({
+        where: { id: mediaAssetId },
+        data: {
+          metadata: buildQueuedValidationMetadata({
+            currentMetadata: await this.getCurrentMetadata(mediaAssetId),
+            workflowId,
+            queuedAt: new Date(),
+          }) as never,
+        },
+      });
+    } catch (error) {
+      return prisma.mediaAsset.update({
+        where: { id: mediaAssetId },
+        data: {
+          metadata: buildTriggerFailedValidationMetadata({
+            currentMetadata: await this.getCurrentMetadata(mediaAssetId),
+            failedAt: new Date(),
+            reason: error instanceof Error ? error.message : String(error),
+          }) as never,
+        },
+      });
+    }
+  }
+
+  private async getCurrentMetadata(mediaAssetId: string): Promise<unknown> {
+    const asset = await prisma.mediaAsset.findUnique({
+      where: { id: mediaAssetId },
+      select: { metadata: true },
+    });
+    return asset?.metadata;
+  }
+}
+
+export function buildPendingValidationMetadata(input: ValidationMetadataInput): Record<string, unknown> {
+  const metadata =
+    input.currentMetadata && typeof input.currentMetadata === "object" && !Array.isArray(input.currentMetadata)
+      ? { ...(input.currentMetadata as Record<string, unknown>) }
+      : {};
+
+  return {
+    ...metadata,
+    validation: {
+      status: "PENDING_WORKER",
+      stage: "POST_UPLOAD_MEDIA_VALIDATION",
+      upload_session_id: input.uploadSessionId,
+      requested_at: input.requestedAt.toISOString(),
+      checksum_sha256_present: Boolean(input.checksumSha256)
+    }
+  };
+}
+
+export function buildQueuedValidationMetadata(input: ValidationWorkflowMetadataInput): Record<string, unknown> {
+  const metadata =
+    input.currentMetadata && typeof input.currentMetadata === "object" && !Array.isArray(input.currentMetadata)
+      ? { ...(input.currentMetadata as Record<string, unknown>) }
+      : {};
+  const currentValidation =
+    metadata.validation && typeof metadata.validation === "object" && !Array.isArray(metadata.validation)
+      ? (metadata.validation as Record<string, unknown>)
+      : {};
+
+  return {
+    ...metadata,
+    validation: {
+      ...currentValidation,
+      status: "QUEUED",
+      workflow_id: input.workflowId,
+      queued_at: input.queuedAt.toISOString(),
+      trigger_failure_reason: null,
+    },
+  };
+}
+
+export function buildTriggerFailedValidationMetadata(input: ValidationTriggerFailureMetadataInput): Record<string, unknown> {
+  const metadata =
+    input.currentMetadata && typeof input.currentMetadata === "object" && !Array.isArray(input.currentMetadata)
+      ? { ...(input.currentMetadata as Record<string, unknown>) }
+      : {};
+  const currentValidation =
+    metadata.validation && typeof metadata.validation === "object" && !Array.isArray(metadata.validation)
+      ? (metadata.validation as Record<string, unknown>)
+      : {};
+
+  return {
+    ...metadata,
+    validation: {
+      ...currentValidation,
+      status: "TRIGGER_FAILED",
+      trigger_failed_at: input.failedAt.toISOString(),
+      trigger_failure_reason: input.reason,
+    },
+  };
 }

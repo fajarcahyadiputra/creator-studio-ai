@@ -76,10 +76,10 @@ services:
       POSTGRES_USER: creator
       POSTGRES_PWD: creator_dev_password
       POSTGRES_SEEDS: postgres
-      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/docker.yaml
       ENABLE_ES: "false"
     healthcheck:
-      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "localhost:7233"]
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "temporal:7233"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -100,9 +100,8 @@ services:
       - "8080:8080"
 
   migrate:
-    build:
-      context: .
-      dockerfile: apps/web-node/Dockerfile
+    image: creator-studio-ai-web-node:dev
+    pull_policy: never
     env_file: .env
     depends_on:
       postgres:
@@ -112,9 +111,8 @@ services:
     restart: "no"
 
   seed:
-    build:
-      context: .
-      dockerfile: apps/web-node/Dockerfile
+    image: creator-studio-ai-web-node:dev
+    pull_policy: never
     env_file: .env
     depends_on:
       migrate:
@@ -124,6 +122,7 @@ services:
     restart: "no"
 
   web-node:
+    image: creator-studio-ai-web-node:dev
     build:
       context: .
       dockerfile: apps/web-node/Dockerfile
@@ -147,9 +146,8 @@ services:
       - "3000:3000"
 
   web-email-worker:
-    build:
-      context: .
-      dockerfile: apps/web-node/Dockerfile
+    image: creator-studio-ai-web-node:dev
+    pull_policy: never
     env_file: .env
     depends_on:
       redis:
@@ -177,6 +175,7 @@ services:
     networks: [internal]
 
   ai-media-python:
+    image: creator-studio-ai-ai-media-python:dev
     build:
       context: .
       dockerfile: apps/ai-media-python/Dockerfile
@@ -195,9 +194,8 @@ services:
     networks: [internal]
 
   ai-media-python-api:
-    build:
-      context: .
-      dockerfile: apps/ai-media-python/Dockerfile
+    image: creator-studio-ai-ai-media-python:dev
+    pull_policy: never
     env_file: .env
     command: ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
@@ -215,6 +213,7 @@ services:
       - "1025:1025"
 
   prometheus:
+    profiles: ["observability"]
     image: prom/prometheus:v3.5.0
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
     volumes:
@@ -225,6 +224,7 @@ services:
       - "9090:9090"
 
   loki:
+    profiles: ["observability"]
     image: grafana/loki:3.5.1
     command: ["-config.file=/etc/loki/local-config.yaml"]
     volumes:
@@ -233,6 +233,7 @@ services:
     networks: [internal]
 
   otel-collector:
+    profiles: ["observability"]
     image: otel/opentelemetry-collector-contrib:0.130.1
     command: ["--config=/etc/otelcol/config.yml"]
     volumes:
@@ -240,6 +241,7 @@ services:
     networks: [internal]
 
   grafana:
+    profiles: ["observability"]
     image: grafana/grafana:12.0.2
     environment:
       GF_SECURITY_ADMIN_USER: admin

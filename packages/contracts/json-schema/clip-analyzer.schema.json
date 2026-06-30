@@ -23,7 +23,9 @@
           "title", "hook_text", "ending_text", "summary", "why_it_works",
           "content_category", "scores", "context_complete", "safety_notes",
           "suggested_caption", "suggested_cta", "suggested_hashtags",
-          "thumbnail_text", "speaker_ids", "scene_ids"
+          "thumbnail_text", "speaker_ids", "scene_ids", "hook_second",
+          "main_point_second", "punchline_second", "retention_level",
+          "requires_context", "can_standalone"
         ],
         "properties": {
           "candidate_id": { "type": "string", "minLength": 1 },
@@ -76,6 +78,15 @@
           "thumbnail_text": { "type": "string" },
           "speaker_ids": { "type": "array", "items": { "type": "string" } },
           "scene_ids": { "type": "array", "items": { "type": "string" } }
+          ,
+          "hook_second": { "type": "number", "minimum": 0 },
+          "main_point_second": { "type": "number", "minimum": 0 },
+          "punchline_second": { "type": "number", "minimum": 0 },
+          "retention_level": {
+            "enum": ["very_high", "high", "medium", "low"]
+          },
+          "requires_context": { "type": "boolean" },
+          "can_standalone": { "type": "boolean" }
         }
       }
     }

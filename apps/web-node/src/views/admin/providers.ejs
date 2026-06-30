@@ -1,0 +1,214 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<div class="app-shell"><%- include('../partials/admin-sidebar') %><main class="content-area">
+  <header class="page-header">
+    <div>
+      <span class="eyebrow">Provider routing</span>
+      <h1>AI Providers & Models</h1>
+      <p>Manage provider metadata, runtime controls, model capabilities, and price context without hardcoding vendors in business logic.</p>
+    </div>
+    <a class="btn btn-outline-primary" href="/admin/dashboard">Back to dashboard</a>
+  </header>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <div>
+        <h2>Create provider</h2>
+        <p>This covers provider code, adapter, timeout, retry, rate-limit, and degraded/health status metadata.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="form-message"></div>
+      <form class="row g-3" data-api-form action="/api/v1/admin/providers" method="post">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="col-md-3"><label class="form-label">Code</label><input class="form-control" name="code" placeholder="OPENAI" required></div>
+        <div class="col-md-3"><label class="form-label">Display name</label><input class="form-control" name="display_name" placeholder="OpenAI" required></div>
+        <div class="col-md-3"><label class="form-label">Adapter type</label><input class="form-control" name="adapter_type" placeholder="openai" required></div>
+        <div class="col-md-3"><label class="form-label">Base URL</label><input class="form-control" name="base_url" placeholder="https://api.example.com"></div>
+        <div class="col-md-2">
+          <label class="form-label">Enabled</label>
+          <select class="form-select" name="enabled">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </div>
+        <div class="col-md-2"><label class="form-label">Health</label><input class="form-control" name="health_status" value="UNKNOWN" required></div>
+        <div class="col-md-2"><label class="form-label">Timeout ms</label><input class="form-control" type="number" name="timeout_ms" value="60000" min="1" required></div>
+        <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit">Create provider</button></div>
+        <div class="col-md-2"><label class="form-label">Capabilities reference</label><input class="form-control" value="<%= capabilities.join(',') %>" readonly></div>
+        <div class="col-md-4"><label class="form-label">Retry policy JSON</label><textarea class="form-control font-monospace" rows="4" name="retry_policy_json">{}</textarea></div>
+        <div class="col-md-4"><label class="form-label">Rate limit JSON</label><textarea class="form-control font-monospace" rows="4" name="rate_limit_config_json">{}</textarea></div>
+        <div class="col-md-4"><label class="form-label">Metadata JSON</label><textarea class="form-control font-monospace" rows="4" name="metadata_json">{}</textarea></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Create model</h2>
+        <p>Capabilities are entered as CSV, for example: <code>CHAT,STRUCTURED_OUTPUT</code>.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="form-message"></div>
+      <form class="row g-3" data-api-form action="/api/v1/admin/models" method="post">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="col-md-3">
+          <label class="form-label">Provider</label>
+          <select class="form-select" name="provider_id" required>
+            <option value="">Choose provider</option>
+            <% providers.forEach((provider) => { %>
+              <option value="<%= provider.id %>"><%= provider.displayName %> (<%= provider.code %>)</option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="col-md-3"><label class="form-label">Identifier</label><input class="form-control" name="identifier" placeholder="gpt-4.1-mini" required></div>
+        <div class="col-md-3"><label class="form-label">Display name</label><input class="form-control" name="display_name" placeholder="GPT-4.1 Mini" required></div>
+        <div class="col-md-3">
+          <label class="form-label">Enabled</label>
+          <select class="form-select" name="enabled">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </div>
+        <div class="col-md-3"><label class="form-label">Context limit</label><input class="form-control" type="number" name="context_limit" min="1"></div>
+        <div class="col-md-3"><label class="form-label">Input price / 1M</label><input class="form-control" type="number" step="0.000001" name="input_price_per_million" min="0"></div>
+        <div class="col-md-3"><label class="form-label">Output price / 1M</label><input class="form-control" type="number" step="0.000001" name="output_price_per_million" min="0"></div>
+        <div class="col-md-3"><label class="form-label">Capabilities CSV</label><input class="form-control" name="capabilities_csv" placeholder="CHAT,STRUCTURED_OUTPUT"></div>
+        <div class="col-md-9"><label class="form-label">Metadata JSON</label><textarea class="form-control font-monospace" rows="3" name="metadata_json">{}</textarea></div>
+        <div class="col-md-3 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit">Create model</button></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Configured providers</h2>
+        <p>Platform credentials are stored encrypted at rest. Secrets can be rotated, but stored payloads are never rendered back to the browser.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <% if (!providers.length) { %>
+        <p class="mb-0 text-muted">No providers have been configured yet.</p>
+      <% } %>
+      <% providers.forEach((provider) => { %>
+        <section class="panel mb-4">
+          <div class="panel-heading">
+            <div>
+              <h2><%= provider.displayName %> (<%= provider.code %>)</h2>
+              <p><%= provider.adapterType %> | Health: <%= provider.healthStatus %> | Models: <%= provider.modelCount %> | Platform credentials: <%= provider.credentialCount %></p>
+            </div>
+          </div>
+          <div class="p-4">
+            <div class="form-message"></div>
+            <form class="row g-3" data-api-form action="/api/v1/admin/providers/<%= provider.id %>/update" method="post">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <div class="col-md-3"><label class="form-label">Code</label><input class="form-control" name="code" value="<%= provider.code %>" required></div>
+              <div class="col-md-3"><label class="form-label">Display name</label><input class="form-control" name="display_name" value="<%= provider.displayName %>" required></div>
+              <div class="col-md-3"><label class="form-label">Adapter type</label><input class="form-control" name="adapter_type" value="<%= provider.adapterType %>" required></div>
+              <div class="col-md-3"><label class="form-label">Base URL</label><input class="form-control" name="base_url" value="<%= provider.baseUrl ?? '' %>"></div>
+              <div class="col-md-2">
+                <label class="form-label">Enabled</label>
+                <select class="form-select" name="enabled">
+                  <option value="true" <%= provider.enabled ? 'selected' : '' %>>true</option>
+                  <option value="false" <%= !provider.enabled ? 'selected' : '' %>>false</option>
+                </select>
+              </div>
+              <div class="col-md-2"><label class="form-label">Health</label><input class="form-control" name="health_status" value="<%= provider.healthStatus %>" required></div>
+              <div class="col-md-2"><label class="form-label">Timeout ms</label><input class="form-control" type="number" name="timeout_ms" value="<%= provider.timeoutMs %>" min="1" required></div>
+              <div class="col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary w-100" type="submit">Save provider</button></div>
+              <div class="col-md-4"><label class="form-label">Retry policy JSON</label><textarea class="form-control font-monospace" rows="4" name="retry_policy_json"><%= provider.retryPolicyJson %></textarea></div>
+              <div class="col-md-4"><label class="form-label">Rate limit JSON</label><textarea class="form-control font-monospace" rows="4" name="rate_limit_config_json"><%= provider.rateLimitConfigJson %></textarea></div>
+              <div class="col-md-4"><label class="form-label">Metadata JSON</label><textarea class="form-control font-monospace" rows="4" name="metadata_json"><%= provider.metadataJson %></textarea></div>
+            </form>
+
+            <div class="mt-4">
+              <h3 class="h5">Platform credentials</h3>
+              <div class="form-message"></div>
+              <form class="row g-3 mb-4 border rounded-4 p-3" data-api-form action="/api/v1/admin/credentials" method="post">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <input type="hidden" name="provider_id" value="<%= provider.id %>">
+                <div class="col-md-3"><label class="form-label">Label</label><input class="form-control" name="label" placeholder="Primary platform key" required></div>
+                <div class="col-md-2">
+                  <label class="form-label">Status</label>
+                  <select class="form-select" name="status">
+                    <option value="ACTIVE" selected>ACTIVE</option>
+                    <option value="DEGRADED">DEGRADED</option>
+                    <option value="REVOKED">REVOKED</option>
+                    <option value="EXPIRED">EXPIRED</option>
+                  </select>
+                </div>
+                <div class="col-md-3"><label class="form-label">Allowed tools CSV</label><input class="form-control" name="allowed_tools_csv" placeholder="AUTO_CLIPPING,TRANSCRIPTION"></div>
+                <div class="col-md-4"><label class="form-label">Allowed model IDs CSV</label><input class="form-control" name="allowed_model_ids_csv" placeholder="<%= provider.models.map((model) => model.id).join(',') %>"></div>
+                <div class="col-md-4"><label class="form-label">Secret payload JSON</label><textarea class="form-control font-monospace" rows="4" name="payload_json">{}</textarea></div>
+                <div class="col-md-4"><label class="form-label">Usage limit config JSON</label><textarea class="form-control font-monospace" rows="4" name="usage_limit_config_json">{}</textarea></div>
+                <div class="col-md-2"><label class="form-label">Last connection</label><input class="form-control" name="last_connection_status" placeholder="UNKNOWN"></div>
+                <div class="col-md-2"><label class="form-label">Expires at</label><input class="form-control" type="datetime-local" name="expires_at"></div>
+                <div class="col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary w-100" type="submit">Create credential</button></div>
+              </form>
+              <% if (!provider.recentPlatformCredentials.length) { %>
+                <p class="text-muted mb-0">No platform credentials stored for this provider yet.</p>
+              <% } else { %>
+                <% provider.recentPlatformCredentials.forEach((credential) => { %>
+                  <form class="row g-3 border rounded-4 p-3 mb-3" data-api-form action="/api/v1/admin/credentials/<%= credential.id %>/update" method="post">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <div class="col-md-3"><label class="form-label">Label</label><input class="form-control" name="label" value="<%= credential.label %>" required></div>
+                    <div class="col-md-2">
+                      <label class="form-label">Status</label>
+                      <select class="form-select" name="status">
+                        <option value="ACTIVE" <%= credential.status === 'ACTIVE' ? 'selected' : '' %>>ACTIVE</option>
+                        <option value="DEGRADED" <%= credential.status === 'DEGRADED' ? 'selected' : '' %>>DEGRADED</option>
+                        <option value="REVOKED" <%= credential.status === 'REVOKED' ? 'selected' : '' %>>REVOKED</option>
+                        <option value="EXPIRED" <%= credential.status === 'EXPIRED' ? 'selected' : '' %>>EXPIRED</option>
+                      </select>
+                    </div>
+                    <div class="col-md-3"><label class="form-label">Allowed tools CSV</label><input class="form-control" name="allowed_tools_csv" value="<%= credential.allowedToolsCsv %>"></div>
+                    <div class="col-md-4"><label class="form-label">Allowed model IDs CSV</label><input class="form-control" name="allowed_model_ids_csv" value="<%= credential.allowedModelIdsCsv %>"></div>
+                    <div class="col-md-4"><label class="form-label">Rotate payload JSON</label><textarea class="form-control font-monospace" rows="4" name="rotate_payload_json" placeholder='{"api_key":"new-secret"}'></textarea></div>
+                    <div class="col-md-4"><label class="form-label">Usage limit config JSON</label><textarea class="form-control font-monospace" rows="4" name="usage_limit_config_json"><%= credential.usageLimitConfigJson %></textarea></div>
+                    <div class="col-md-2"><label class="form-label">Last connection</label><input class="form-control" name="last_connection_status" value="<%= credential.lastConnectionStatus ?? '' %>"></div>
+                    <div class="col-md-2"><label class="form-label">Expires at</label><input class="form-control" type="datetime-local" name="expires_at" value="<%= credential.expiresAt ? credential.expiresAt.slice(0,16) : '' %>"></div>
+                    <div class="col-md-12 d-flex justify-content-between align-items-center">
+                      <small>Masked: <strong><%= credential.maskedHint ?? 'not available' %></strong></small>
+                      <button class="btn btn-outline-primary" type="submit">Save credential</button>
+                    </div>
+                  </form>
+                <% }) %>
+              <% } %>
+            </div>
+
+            <div class="mt-4">
+              <h3 class="h5">Models</h3>
+              <% if (!provider.models.length) { %>
+                <p class="text-muted">No models configured for this provider yet.</p>
+              <% } %>
+              <% provider.models.forEach((model) => { %>
+                <form class="row g-3 border rounded-4 p-3 mb-3" data-api-form action="/api/v1/admin/models/<%= model.id %>/update" method="post">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <input type="hidden" name="provider_id" value="<%= provider.id %>">
+                  <div class="col-md-3"><label class="form-label">Identifier</label><input class="form-control" name="identifier" value="<%= model.identifier %>" required></div>
+                  <div class="col-md-3"><label class="form-label">Display name</label><input class="form-control" name="display_name" value="<%= model.displayName %>" required></div>
+                  <div class="col-md-2">
+                    <label class="form-label">Enabled</label>
+                    <select class="form-select" name="enabled">
+                      <option value="true" <%= model.enabled ? 'selected' : '' %>>true</option>
+                      <option value="false" <%= !model.enabled ? 'selected' : '' %>>false</option>
+                    </select>
+                  </div>
+                  <div class="col-md-2"><label class="form-label">Context limit</label><input class="form-control" type="number" name="context_limit" value="<%= model.contextLimit ?? '' %>" min="1"></div>
+                  <div class="col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary w-100" type="submit">Save model</button></div>
+                  <div class="col-md-3"><label class="form-label">Input price / 1M</label><input class="form-control" type="number" step="0.000001" name="input_price_per_million" value="<%= model.inputPricePerMillion %>" min="0"></div>
+                  <div class="col-md-3"><label class="form-label">Output price / 1M</label><input class="form-control" type="number" step="0.000001" name="output_price_per_million" value="<%= model.outputPricePerMillion %>" min="0"></div>
+                  <div class="col-md-6"><label class="form-label">Capabilities CSV</label><input class="form-control" name="capabilities_csv" value="<%= model.capabilities.join(',') %>"></div>
+                  <div class="col-md-12"><label class="form-label">Metadata JSON</label><textarea class="form-control font-monospace" rows="3" name="metadata_json"><%= model.metadataJson %></textarea></div>
+                </form>
+              <% }) %>
+            </div>
+          </div>
+        </section>
+      <% }) %>
+    </div>
+  </section>
+</main></div>
+<%- include('../partials/footer') %>

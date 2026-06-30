@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     INTERNAL_SERVICE_TOKEN: str = Field(min_length=32)
     TEMP_WORKDIR: str = "/tmp/creator-studio"
     CALLBACK_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0, le=60)
+    MEDIA_PROBE_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0, le=180)
+    AUDIO_EXTRACTION_TIMEOUT_SECONDS: float = Field(default=120.0, gt=0, le=900)
+    TRANSCRIPTION_TIMEOUT_SECONDS: float = Field(default=600.0, gt=0, le=3600)
+    FASTER_WHISPER_MODEL_SIZE: str = "small"
+    FASTER_WHISPER_DEVICE: str = "cpu"
+    FASTER_WHISPER_COMPUTE_TYPE: str = "int8"
     AUTO_CLIP_ANALYZER_MODE: str = "openai"
     AUTO_CLIP_ANALYZER_PROVIDER: str | None = "openai"
     AUTO_CLIP_ANALYZER_MODEL: str | None = "gpt-5.5"

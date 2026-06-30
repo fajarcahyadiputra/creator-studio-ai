@@ -1,0 +1,32 @@
+<aside class="sidebar sidebar-admin">
+  <a class="brand" href="/admin/dashboard"><span class="brand-mark">A</span><span>Admin Console</span></a>
+  <nav class="nav flex-column gap-1 mt-4">
+    <a class="nav-link <%= path === '/admin/dashboard' ? 'active' : '' %>" href="/admin/dashboard">Dashboard</a>
+    <% if (identity?.permissions?.has('admin.users.read')) { %>
+      <a class="nav-link <%= path.startsWith('/admin/users') ? 'active' : '' %>" href="/admin/users">Users</a>
+    <% } %>
+    <% if (identity?.permissions?.has('admin.providers.manage')) { %>
+      <a class="nav-link <%= path.startsWith('/admin/providers') ? 'active' : '' %>" href="/admin/providers">Providers</a>
+    <% } %>
+    <% if (identity?.permissions?.has('admin.jobs.manage')) { %>
+      <a class="nav-link <%= path.startsWith('/admin/jobs') ? 'active' : '' %>" href="/admin/jobs">Jobs</a>
+    <% } %>
+    <% if (identity?.permissions?.has('admin.system.manage')) { %>
+      <a class="nav-link <%= path.startsWith('/admin/system') ? 'active' : '' %>" href="/admin/system">System</a>
+    <% } %>
+    <% if (identity?.permissions?.has('admin.audit.read')) { %>
+      <a class="nav-link <%= path.startsWith('/admin/audit-logs') ? 'active' : '' %>" href="/admin/audit-logs">Audit Logs</a>
+    <% } %>
+    <% if (identity?.permissions?.has('admin.dashboard.view')) { %>
+      <a class="nav-link <%= path.startsWith('/admin/workers') ? 'active' : '' %>" href="/admin/workers">Worker Health</a>
+    <% } %>
+    <a class="nav-link mt-3" href="/app/dashboard">Open User Workspace</a>
+  </nav>
+  <div class="sidebar-footer">
+    <% if (impersonation) { %>
+      <div class="alert alert-warning small py-2">Viewing user workspace with an audited context.</div>
+      <button class="btn btn-sm btn-outline-warning w-100" data-api-action="/api/v1/admin/impersonation/stop">Stop view-as-user</button>
+    <% } %>
+    <button class="btn btn-sm btn-outline-light w-100 mt-2" data-api-action="/api/v1/auth/logout">Logout</button>
+  </div>
+</aside>

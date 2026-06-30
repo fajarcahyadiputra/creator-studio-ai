@@ -1,0 +1,186 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<div class="app-shell"><%- include('../partials/admin-sidebar') %><main class="content-area">
+  <header class="page-header">
+    <div>
+      <span class="eyebrow">Platform operations</span>
+      <h1>User Management</h1>
+      <p>Search, create, update, verify, revoke sessions, and soft-delete users with audited admin actions.</p>
+    </div>
+    <a class="btn btn-outline-primary" href="/admin/dashboard">Back to dashboard</a>
+  </header>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <div>
+        <h2>Filters</h2>
+        <p>Current scope is the latest 50 non-deleted users.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <form class="row g-3" method="get" action="/admin/users">
+        <div class="col-md-6">
+          <label class="form-label">Search</label>
+          <input class="form-control" name="q" value="<%= filters.q %>" placeholder="Email or display name">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Status</label>
+          <select class="form-select" name="status">
+            <option value="ALL" <%= filters.status === 'ALL' ? 'selected' : '' %>>All statuses</option>
+            <% statusOptions.forEach((status) => { %>
+              <option value="<%= status %>" <%= filters.status === status ? 'selected' : '' %>><%= status %></option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="col-md-3 d-flex align-items-end gap-2">
+          <button class="btn btn-primary w-100" type="submit">Apply filters</button>
+          <a class="btn btn-outline-secondary" href="/admin/users">Reset</a>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Create user</h2>
+        <p>Available role codes: <%= roles.map((role) => role.code).join(', ') %></p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="form-message"></div>
+      <form class="row g-3" data-api-form action="/api/v1/admin/users" method="post">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="col-md-4">
+          <label class="form-label">Display name</label>
+          <input class="form-control" name="display_name" minlength="2" maxlength="160" required>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Email</label>
+          <input class="form-control" type="email" name="email" maxlength="320" required>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Password</label>
+          <input class="form-control" type="password" name="password" minlength="12" required>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Status</label>
+          <select class="form-select" name="status">
+            <% statusOptions.forEach((status) => { %>
+              <option value="<%= status %>" <%= status === 'ACTIVE' ? 'selected' : '' %>><%= status %></option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Plan</label>
+          <select class="form-select" name="plan_code">
+            <option value="">No plan</option>
+            <% plans.forEach((plan) => { %>
+              <option value="<%= plan.code %>"><%= plan.name %> (<%= plan.code %>)</option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Role codes (CSV)</label>
+          <input class="form-control" name="role_codes_csv" value="USER" placeholder="USER,SUPERADMIN">
+        </div>
+        <div class="col-md-2 d-flex align-items-end">
+          <button class="btn btn-primary w-100" type="submit">Create user</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Users</h2>
+        <p>Inline edits cover the most important admin CRUD and account operations from the prompt.</p>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table align-middle">
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Plan</th>
+            <th>Roles</th>
+            <th>Sessions / Jobs</th>
+            <th>Audit</th>
+            <th style="min-width: 420px;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% users.forEach((user) => { %>
+            <tr>
+              <td>
+                <strong><%= user.displayName %></strong><br>
+                <small><%= user.email %></small><br>
+                <small>Status: <%= user.status %> | Verified: <%= user.emailVerifiedAt ? 'Yes' : 'No' %></small><br>
+                <small>Joined: <%= user.createdAt.toLocaleString() %></small>
+                <% if (user.lastLoginAt) { %><br><small>Last login: <%= user.lastLoginAt.toLocaleString() %></small><% } %>
+              </td>
+              <td><%= user.planName ?? 'No plan' %><br><small><%= user.planCode ?? '-' %></small></td>
+              <td><%= user.roleCodes.join(', ') %></td>
+              <td><%= user.activeSessionCount %> active<br><small><%= user.jobCount %> jobs</small></td>
+              <td><%= user.auditCount %> records</td>
+              <td>
+                <div class="d-grid gap-3">
+                  <form class="row g-2" data-api-form action="/api/v1/admin/users/<%= user.id %>/update" method="post">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <div class="col-12"><input class="form-control form-control-sm" name="display_name" value="<%= user.displayName %>" required></div>
+                    <div class="col-12"><input class="form-control form-control-sm" type="email" name="email" value="<%= user.email %>" required></div>
+                    <div class="col-md-4">
+                      <select class="form-select form-select-sm" name="status">
+                        <% statusOptions.forEach((status) => { %>
+                          <option value="<%= status %>" <%= user.status === status ? 'selected' : '' %>><%= status %></option>
+                        <% }) %>
+                      </select>
+                    </div>
+                    <div class="col-md-4">
+                      <select class="form-select form-select-sm" name="plan_code">
+                        <option value="">No plan</option>
+                        <% plans.forEach((plan) => { %>
+                          <option value="<%= plan.code %>" <%= user.planCode === plan.code ? 'selected' : '' %>><%= plan.code %></option>
+                        <% }) %>
+                      </select>
+                    </div>
+                    <div class="col-md-4"><input class="form-control form-control-sm" name="role_codes_csv" value="<%= user.roleCodes.join(',') %>" required></div>
+                    <div class="col-12"><button class="btn btn-sm btn-primary" type="submit">Save changes</button></div>
+                  </form>
+
+                  <div class="d-flex flex-wrap gap-2">
+                    <% if (!user.emailVerifiedAt) { %>
+                      <form data-api-form action="/api/v1/admin/users/<%= user.id %>/verify-email" method="post">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <button class="btn btn-sm btn-outline-success" type="submit">Verify email</button>
+                      </form>
+                    <% } %>
+                    <form data-api-form action="/api/v1/admin/users/<%= user.id %>/reset-password" method="post">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <button class="btn btn-sm btn-outline-secondary" type="submit">Send reset link</button>
+                    </form>
+                    <form data-api-form action="/api/v1/admin/users/<%= user.id %>/revoke-sessions" method="post">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <button class="btn btn-sm btn-outline-warning" type="submit">Revoke sessions</button>
+                    </form>
+                    <form data-api-form action="/api/v1/admin/impersonation/start" method="post" data-success-redirect>
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <input type="hidden" name="target_user_id" value="<%= user.id %>">
+                      <input class="form-control form-control-sm" name="reason" minlength="10" placeholder="Reason for access" required>
+                      <button class="btn btn-sm btn-outline-primary" type="submit">View as user</button>
+                    </form>
+                    <form data-api-form action="/api/v1/admin/users/<%= user.id %>/delete" method="post">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <button class="btn btn-sm btn-outline-danger" type="submit">Soft delete</button>
+                    </form>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main></div>
+<%- include('../partials/footer') %>

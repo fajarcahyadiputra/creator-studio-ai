@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "../src/generated/prisma/client.js";
-import { hashPassword } from "../src/modules/auth/password.js";
+import { PrismaClient } from "../src/generated/prisma/client";
+import { hashPassword } from "../src/modules/auth/password";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required.");

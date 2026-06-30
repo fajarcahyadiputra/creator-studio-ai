@@ -1,0 +1,113 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<div class="workspace-shell"><%- include('../partials/user-topbar') %><main class="workspace-main content-area">
+  <header class="page-header">
+    <div>
+      <span class="eyebrow">Workspace settings</span>
+      <h1>Settings</h1>
+      <p>Manage profile defaults, AI provider preference, notification behavior, and account security.</p>
+    </div>
+  </header>
+
+  <section class="panel">
+    <div class="panel-heading"><div><h2>Profile</h2><p>Name, locale, timezone, and creator defaults.</p></div></div>
+    <div class="p-4">
+      <div class="form-message"></div>
+      <form class="row g-3" data-api-form action="/api/v1/settings/profile" method="post">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="col-md-4"><label class="form-label">Display name</label><input class="form-control" name="display_name" value="<%= profile.displayName %>" required></div>
+        <div class="col-md-2"><label class="form-label">Locale</label><select class="form-select" name="locale"><option value="id" <%= profile.locale === 'id' ? 'selected' : '' %>>Indonesia</option><option value="en" <%= profile.locale === 'en' ? 'selected' : '' %>>English</option></select></div>
+        <div class="col-md-3"><label class="form-label">Timezone</label><input class="form-control" name="timezone" value="<%= profile.timezone %>" required></div>
+        <div class="col-md-3"><label class="form-label">Plan</label><input class="form-control" value="<%= user.plan?.name ?? 'No plan assigned' %>" readonly></div>
+        <div class="col-md-6"><label class="form-label">Default content niche</label><input class="form-control" name="default_content_niche" value="<%= profile.defaultContentNiche %>"></div>
+        <div class="col-md-6"><label class="form-label">Default audience</label><input class="form-control" name="default_audience" value="<%= profile.defaultAudience %>"></div>
+        <div class="col-md-12 d-flex justify-content-end"><button class="btn btn-primary" type="submit">Save profile</button></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading"><div><h2>AI Provider</h2><p>Choose platform credentials or your own encrypted credential for auto clipping defaults.</p></div></div>
+    <div class="p-4">
+      <div class="form-message"></div>
+      <form class="row g-3" data-api-form action="/api/v1/settings/ai-preference" method="post">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="col-md-3">
+          <label class="form-label">Credential mode</label>
+          <select class="form-select" name="credential_mode">
+            <option value="PLATFORM" <%= aiPreference.credentialMode === 'PLATFORM' ? 'selected' : '' %>>Use platform credentials</option>
+            <option value="USER_OWNED" <%= aiPreference.credentialMode === 'USER_OWNED' ? 'selected' : '' %>>Use my own credentials</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Provider</label>
+          <select class="form-select" name="provider_id">
+            <option value="">Choose provider</option>
+            <% providers.forEach((provider) => { %>
+              <option value="<%= provider.id %>" <%= aiPreference.providerId === provider.id ? 'selected' : '' %>><%= provider.displayName %></option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="col-md-3"><label class="form-label">Credential label</label><input class="form-control" name="label" value="<%= aiPreference.credentialLabel %>" placeholder="My OpenAI key"></div>
+        <div class="col-md-3"><label class="form-label">Masked secret</label><input class="form-control" value="<%= aiPreference.maskedSecret || 'No saved secret' %>" readonly></div>
+        <div class="col-md-4"><label class="form-label">Base URL override</label><input class="form-control" name="base_url_override" value="<%= aiPreference.baseUrlOverride %>"></div>
+        <div class="col-md-4"><label class="form-label">Organization ID</label><input class="form-control" name="organization_id" value="<%= aiPreference.organizationId %>"></div>
+        <div class="col-md-4"><label class="form-label">Project ID</label><input class="form-control" name="project_id" value="<%= aiPreference.projectId %>"></div>
+        <div class="col-md-4"><label class="form-label">Analysis model</label><select class="form-select" name="analysis_model_id"><option value="">Choose model</option><% providers.forEach((provider) => { provider.models.forEach((model) => { %><option value="<%= model.id %>" <%= aiPreference.analysisModelId === model.id ? 'selected' : '' %>><%= provider.displayName %> - <%= model.displayName %></option><% }) }) %></select></div>
+        <div class="col-md-4"><label class="form-label">Text generation model</label><select class="form-select" name="text_model_id"><option value="">Choose model</option><% providers.forEach((provider) => { provider.models.forEach((model) => { %><option value="<%= model.id %>" <%= aiPreference.textModelId === model.id ? 'selected' : '' %>><%= provider.displayName %> - <%= model.displayName %></option><% }) }) %></select></div>
+        <div class="col-md-4"><label class="form-label">TTS model</label><select class="form-select" name="tts_model_id"><option value="">Choose model</option><% providers.forEach((provider) => { provider.models.forEach((model) => { %><option value="<%= model.id %>" <%= aiPreference.ttsModelId === model.id ? 'selected' : '' %>><%= provider.displayName %> - <%= model.displayName %></option><% }) }) %></select></div>
+        <div class="col-md-6"><label class="form-label">New credential payload JSON</label><textarea class="form-control font-monospace" rows="4" name="payload_json" placeholder='{"api_key":"..."}'></textarea></div>
+        <div class="col-md-6"><label class="form-label">Rotate existing credential JSON</label><textarea class="form-control font-monospace" rows="4" name="rotate_payload_json" placeholder='{"api_key":"new-secret"}'></textarea></div>
+        <div class="col-md-12"><small>Last connection status: <strong><%= aiPreference.lastConnectionStatus || 'unknown' %></strong></small></div>
+        <div class="col-md-12 d-flex justify-content-end"><button class="btn btn-primary" type="submit">Save AI preference</button></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading"><div><h2>Notification Preferences</h2><p>Simple email and in-app defaults for job completion, failures, and quota signals.</p></div></div>
+    <div class="p-4">
+      <div class="form-message"></div>
+      <form class="row g-3" data-api-form action="/api/v1/settings/notifications" method="post">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="col-md-4 form-check"><input class="form-check-input" type="checkbox" name="email_job_completed" id="email_job_completed" <%= notifications.email_job_completed ? 'checked' : '' %>><label class="form-check-label" for="email_job_completed">Email on job completed</label></div>
+        <div class="col-md-4 form-check"><input class="form-check-input" type="checkbox" name="email_job_failed" id="email_job_failed" <%= notifications.email_job_failed ? 'checked' : '' %>><label class="form-check-label" for="email_job_failed">Email on job failed</label></div>
+        <div class="col-md-4 form-check"><input class="form-check-input" type="checkbox" name="email_quota_warning" id="email_quota_warning" <%= notifications.email_quota_warning ? 'checked' : '' %>><label class="form-check-label" for="email_quota_warning">Email on quota warning</label></div>
+        <div class="col-md-4 form-check"><input class="form-check-input" type="checkbox" name="in_app_job_completed" id="in_app_job_completed" <%= notifications.in_app_job_completed ? 'checked' : '' %>><label class="form-check-label" for="in_app_job_completed">In-app on job completed</label></div>
+        <div class="col-md-4 form-check"><input class="form-check-input" type="checkbox" name="in_app_job_failed" id="in_app_job_failed" <%= notifications.in_app_job_failed ? 'checked' : '' %>><label class="form-check-label" for="in_app_job_failed">In-app on job failed</label></div>
+        <div class="col-md-4 form-check"><input class="form-check-input" type="checkbox" name="in_app_publish_completed" id="in_app_publish_completed" <%= notifications.in_app_publish_completed ? 'checked' : '' %>><label class="form-check-label" for="in_app_publish_completed">In-app on publish completed</label></div>
+        <div class="col-md-12 d-flex justify-content-end"><button class="btn btn-primary" type="submit">Save notifications</button></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading"><div><h2>Security</h2><p>Change password and revoke active sessions.</p></div></div>
+    <div class="p-4">
+      <div class="form-message"></div>
+      <form class="row g-3" data-api-form action="/api/v1/settings/password" method="post">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="col-md-4"><label class="form-label">Current password</label><input class="form-control" type="password" name="current_password" required></div>
+        <div class="col-md-4"><label class="form-label">New password</label><input class="form-control" type="password" name="new_password" minlength="12" required></div>
+        <div class="col-md-4 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit">Change password</button></div>
+      </form>
+
+      <div class="table-responsive mt-4">
+        <table class="table align-middle">
+          <thead><tr><th>Session</th><th>Network</th><th>Timing</th><th>Action</th></tr></thead>
+          <tbody>
+            <% if (!sessions.length) { %><tr><td colspan="4" class="empty-cell">No active sessions found.</td></tr><% } %>
+            <% sessions.forEach((session) => { %>
+              <tr>
+                <td><strong><%= session.isCurrent ? 'Current session' : 'Active session' %></strong><br><small><%= session.userAgent ?? 'Unknown device' %></small></td>
+                <td><%= session.ipAddress ?? 'Unknown IP' %><br><small><%= session.impersonatedUserId ? `Impersonating ${session.impersonatedUserId}` : 'Standard access' %></small></td>
+                <td><%= session.createdAt.toLocaleString() %><br><small>Expires <%= session.expiresAt.toLocaleString() %></small></td>
+                <td><% if (!session.isCurrent) { %><form data-api-form action="/api/v1/settings/sessions/<%= session.id %>/revoke" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn-sm btn-outline-danger" type="submit">Revoke</button></form><% } else { %><span class="text-muted">Current session</span><% } %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main></div>
+<%- include('../partials/footer') %>

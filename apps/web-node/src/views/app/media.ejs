@@ -1,0 +1,98 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<div class="workspace-shell"><%- include('../partials/user-topbar') %><main class="workspace-main content-area">
+  <header class="page-header">
+    <div>
+      <span class="eyebrow">Workspace assets</span>
+      <h1>Media Library</h1>
+      <p>Browse uploaded source files and generated assets, manage metadata, and restore soft-deleted items.</p>
+    </div>
+    <a class="btn btn-primary" href="/app/tools/auto-clipping">New Auto Clip</a>
+  </header>
+
+  <section class="stat-grid">
+    <article class="stat-card"><span>Storage usage</span><strong><%= (storageBytes / (1024 * 1024)).toFixed(1) %> MB</strong></article>
+    <article class="stat-card"><span>View mode</span><strong><%= filters.view %></strong></article>
+    <article class="stat-card"><span>Include deleted</span><strong><%= filters.deleted ? 'yes' : 'no' %></strong></article>
+    <article class="stat-card"><span>Assets shown</span><strong><%= assets.length %></strong></article>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading"><div><h2>Filters</h2><p>Search by name or object key, narrow by type/status, and inspect deleted items when needed.</p></div></div>
+    <div class="p-4">
+      <form class="row g-3" method="get" action="/app/media">
+        <div class="col-md-4"><label class="form-label">Search</label><input class="form-control" name="q" value="<%= filters.q %>" placeholder="name, original file, object key"></div>
+        <div class="col-md-2"><label class="form-label">Type</label><select class="form-select" name="type"><option value="ALL" <%= filters.type === 'ALL' ? 'selected' : '' %>>All</option><% typeOptions.forEach((type) => { %><option value="<%= type %>" <%= filters.type === type ? 'selected' : '' %>><%= type %></option><% }) %></select></div>
+        <div class="col-md-2"><label class="form-label">Status</label><select class="form-select" name="status"><option value="ALL" <%= filters.status === 'ALL' ? 'selected' : '' %>>All</option><% statusOptions.forEach((status) => { %><option value="<%= status %>" <%= filters.status === status ? 'selected' : '' %>><%= status %></option><% }) %></select></div>
+        <div class="col-md-2"><label class="form-label">View</label><select class="form-select" name="view"><option value="list" <%= filters.view === 'list' ? 'selected' : '' %>>List</option><option value="grid" <%= filters.view === 'grid' ? 'selected' : '' %>>Grid</option></select></div>
+        <div class="col-md-2 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" name="deleted" value="true" id="deleted" <%= filters.deleted ? 'checked' : '' %>><label class="form-check-label" for="deleted">Include deleted</label></div></div>
+        <div class="col-md-12 d-flex gap-2"><button class="btn btn-primary" type="submit">Apply filters</button><a class="btn btn-outline-secondary" href="/app/media">Reset</a></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading"><div><h2>Assets</h2><p>Prompt-aligned foundation for search, retention, metadata rename, download, and restore.</p></div></div>
+    <div class="p-4">
+      <% if (!assets.length) { %>
+        <div class="empty-cell">No media assets matched the current filters.</div>
+      <% } %>
+      <% if (filters.view === 'grid') { %>
+        <div class="candidate-grid">
+          <% assets.forEach((asset) => { %>
+            <article class="candidate-card">
+              <div class="candidate-topline"><span class="status status-<%= asset.status.toLowerCase() %>"><%= asset.type %></span><strong><%= asset.deletedAt ? 'Deleted' : asset.status %></strong></div>
+              <h3><%= asset.displayName %></h3>
+              <p class="candidate-summary"><%= asset.originalFileName ?? 'No original file name' %></p>
+              <dl class="candidate-meta">
+                <div><dt>Project</dt><dd><%= asset.projectName ?? '-' %></dd></div>
+                <div><dt>Size</dt><dd><%= asset.sizeBytes ? `${(asset.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : '-' %></dd></div>
+                <div><dt>Duration</dt><dd><%= asset.durationMs ? `${Math.round(asset.durationMs / 1000)}s` : '-' %></dd></div>
+              </dl>
+              <div class="d-flex flex-wrap gap-2 mt-3">
+                <% if (!asset.deletedAt) { %><a class="btn btn-sm btn-outline-primary" href="/app/media/<%= asset.id %>/download">Download</a><% } %>
+                <% if (asset.deletedAt) { %><form data-api-form action="/api/v1/media/<%= asset.id %>/restore" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn-sm btn-outline-success" type="submit">Restore</button></form><% } %>
+              </div>
+            </article>
+          <% }) %>
+        </div>
+      <% } else { %>
+        <div class="table-responsive">
+          <table class="table align-middle">
+            <thead><tr><th>Name</th><th>Project</th><th>Type / Status</th><th>Storage</th><th>Retention</th><th>Actions</th></tr></thead>
+            <tbody>
+              <% assets.forEach((asset) => { %>
+                <tr>
+                  <td>
+                    <strong><%= asset.displayName %></strong><br>
+                    <small><%= asset.originalFileName ?? '-' %></small><br>
+                    <small><code><%= asset.objectKey %></code></small>
+                  </td>
+                  <td><%= asset.projectName ?? 'No project' %></td>
+                  <td><span class="status status-<%= asset.status.toLowerCase() %>"><%= asset.status %></span><br><small><%= asset.type %> | <%= asset.mimeType ?? '-' %></small></td>
+                  <td><%= asset.sizeBytes ? `${(asset.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : '-' %><br><small><%= asset.durationMs ? `${Math.round(asset.durationMs / 1000)}s` : '-' %></small></td>
+                  <td><%= asset.retentionExpiresAt ? asset.retentionExpiresAt.toLocaleString() : 'Default retention' %><br><small><%= asset.deletedAt ? `Deleted ${asset.deletedAt.toLocaleString()}` : asset.createdAt.toLocaleString() %></small></td>
+                  <td>
+                    <div class="d-grid gap-2">
+                      <% if (!asset.deletedAt) { %>
+                        <a class="btn btn-sm btn-outline-primary" href="/app/media/<%= asset.id %>/download">Download</a>
+                        <form data-api-form action="/api/v1/media/<%= asset.id %>/rename" method="post">
+                          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                          <input class="form-control form-control-sm" name="display_name" value="<%= asset.displayName %>" required>
+                          <button class="btn btn-sm btn-outline-secondary mt-2" type="submit">Rename</button>
+                        </form>
+                        <form data-api-form action="/api/v1/media/<%= asset.id %>/delete" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn-sm btn-outline-danger" type="submit">Soft delete</button></form>
+                      <% } else { %>
+                        <form data-api-form action="/api/v1/media/<%= asset.id %>/restore" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn-sm btn-outline-success" type="submit">Restore</button></form>
+                      <% } %>
+                    </div>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+    </div>
+  </section>
+</main></div>
+<%- include('../partials/footer') %>

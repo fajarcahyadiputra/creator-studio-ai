@@ -1,0 +1,96 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<div class="app-shell"><%- include('../partials/admin-sidebar') %><main class="content-area">
+  <header class="page-header">
+    <div>
+      <span class="eyebrow">Workflow operations</span>
+      <h1>Admin Job Detail</h1>
+      <p><strong><%= job.user.displayName %></strong> | <%= job.user.email %> | <%= job.type %> | <%= job.status %></p>
+    </div>
+    <a class="btn btn-outline-primary" href="/admin/jobs">Back to jobs</a>
+  </header>
+
+  <section class="stat-grid">
+    <article class="stat-card"><span>Progress</span><strong><%= job.progressPercent %>%</strong></article>
+    <article class="stat-card"><span>Workflow</span><strong><%= job.workflowId ? job.workflowId.slice(0, 12) : 'n/a' %></strong></article>
+    <article class="stat-card"><span>Attempts</span><strong><%= job.attempts.length %></strong></article>
+    <article class="stat-card"><span>Candidates / Outputs</span><strong><%= job.clipCandidates.length %> / <%= job.clipOutputs.length %></strong></article>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading"><div><h2>Admin actions</h2><p>Only actions already supported by the backend are exposed here.</p></div></div>
+    <div class="p-4">
+      <div class="form-message"></div>
+      <div class="d-flex flex-wrap gap-2">
+        <form data-api-form action="/api/v1/admin/jobs/<%= job.id %>/cancel" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn-outline-danger" type="submit">Cancel job</button></form>
+        <form data-api-form action="/api/v1/admin/jobs/<%= job.id %>/duplicate" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn-outline-secondary" type="submit">Duplicate as new job</button></form>
+        <form data-api-form action="/api/v1/admin/jobs/<%= job.id %>/render-queue" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn-outline-primary" type="submit">Queue selected renders</button></form>
+      </div>
+      <form class="row g-3 mt-3" data-api-form action="/api/v1/admin/jobs/<%= job.id %>/retry" method="post">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="col-md-4"><label class="form-label">Resume from stage</label><input class="form-control" name="stage" value="<%= job.currentStage ?? '' %>" placeholder="Optional stage override"></div>
+        <div class="col-md-6"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="5" placeholder="Explain why the admin is retrying this job" required></div>
+        <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit">Retry job</button></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading"><div><h2>Job summary</h2><p>Input snapshot and output summary are shown as structured JSON for debugging.</p></div></div>
+    <div class="p-4">
+      <div class="row g-4">
+        <div class="col-md-6"><h3 class="h5">Input snapshot</h3><pre class="bg-light border rounded-4 p-3 small"><%= JSON.stringify(job.inputSnapshot, null, 2) %></pre></div>
+        <div class="col-md-6"><h3 class="h5">Output summary</h3><pre class="bg-light border rounded-4 p-3 small"><%= JSON.stringify(outputSummary, null, 2) %></pre></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading"><div><h2>Stages & attempts</h2><p>Workflow state machine detail for operator review.</p></div></div>
+    <div class="table-responsive">
+      <table class="table align-middle">
+        <thead><tr><th>Type</th><th>Name</th><th>Status</th><th>Progress</th><th>Timing</th></tr></thead>
+        <tbody>
+          <% job.stages.forEach((stage) => { %>
+            <tr><td>Stage</td><td><%= stage.name %></td><td><%= stage.status %></td><td><%= stage.progressPercent %>%</td><td><small><%= stage.createdAt.toLocaleString() %></small></td></tr>
+          <% }) %>
+          <% job.attempts.forEach((attempt) => { %>
+            <tr><td>Attempt</td><td>#<%= attempt.attemptNumber %></td><td><%= attempt.status %></td><td><small><%= attempt.workflowId ?? 'n/a' %></small></td><td><small><%= attempt.createdAt.toLocaleString() %></small></td></tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading"><div><h2>Errors & events</h2><p>Latest errors and recent event stream snapshots.</p></div></div>
+    <div class="p-4">
+      <div class="row g-4">
+        <div class="col-md-6">
+          <h3 class="h5">Errors</h3>
+          <% if (!job.errors.length) { %><p class="text-muted">No errors recorded.</p><% } %>
+          <% job.errors.forEach((error) => { %>
+            <article class="border rounded-4 p-3 mb-3">
+              <strong><%= error.code %></strong><br>
+              <small><%= error.category %> | retryable: <%= error.retryable ? 'yes' : 'no' %></small>
+              <p class="mb-1 mt-2"><%= error.userMessage %></p>
+              <small><%= error.technicalErrorId %></small>
+            </article>
+          <% }) %>
+        </div>
+        <div class="col-md-6">
+          <h3 class="h5">Recent events</h3>
+          <% if (!events.length) { %><p class="text-muted">No events recorded.</p><% } %>
+          <% events.forEach((event) => { %>
+            <article class="border rounded-4 p-3 mb-3">
+              <strong><%= event.eventType %></strong><br>
+              <small><%= event.stage ?? 'no-stage' %> | seq <%= event.sequence.toString() %></small>
+              <p class="mb-1 mt-2"><%= event.userMessage ?? event.message %></p>
+              <small><%= event.occurredAt.toLocaleString() %></small>
+            </article>
+          <% }) %>
+        </div>
+      </div>
+    </div>
+  </section>
+</main></div>
+<%- include('../partials/footer') %>

@@ -1,6 +1,10 @@
 import express from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../../infrastructure/database/prisma.js", () => ({
+  prisma: {}
+}));
 import { errorHandler } from "../../shared/http/error-handler.js";
 import { requestContext } from "../../shared/http/request-context.js";
 import { jobsRouter } from "./routes.js";
@@ -11,7 +15,7 @@ describe("job outputs route", () => {
       id: "job-1",
       status: "COMPLETED",
       outputSummary: {
-        analysis_version: "2.0",
+        analysis_version: "2.3",
         source_summary: "Source material summary.",
         candidate_count: 2,
         analyzer: { analysis_mode: "openai" },
@@ -20,6 +24,7 @@ describe("job outputs route", () => {
       clipCandidates: [
         {
           id: "db-candidate-1",
+          transcriptId: "transcript-1",
           candidateExternalId: "candidate-1",
           startMs: 12500n,
           endMs: 30250n,
@@ -35,10 +40,18 @@ describe("job outputs route", () => {
           finalViralScore: "8.15",
           contextComplete: true,
           safetyNotes: [],
-          metadataSuggestions: { suggested_caption: "Caption" },
+          metadataSuggestions: {
+            suggested_caption: "Caption",
+            hook_second: 0,
+            main_point_second: 6.2,
+            punchline_second: 17.5,
+            retention_level: "very_high",
+            requires_context: false,
+            can_standalone: true
+          },
           speakerIds: ["speaker-1"],
           sceneIds: ["scene-2"],
-          analyzerMetadata: { analysis_version: "2.0" },
+          analyzerMetadata: { analysis_version: "2.3" },
           selected: true,
           rank: 1,
           createdAt: new Date("2026-06-26T09:59:00.000Z"),
@@ -61,10 +74,42 @@ describe("job outputs route", () => {
             candidate: { candidate_id: "candidate-1", start_ms: "12500" },
             analyzer: { analysis_mode: "openai" }
           },
-          qualityReport: { score: 9.1 },
+          qualityReport: {
+            score: 9.1,
+            renderer: "phase2-placeholder",
+            status: "preview_ready",
+            candidate: {
+              title: "Kenapa intro ini bikin retention naik",
+              start_ms: "12500",
+              end_ms: "30250"
+            },
+            metadata: {
+              suggested_caption: "Caption siap upload",
+              suggested_hashtags: ["#retention", "#hook"],
+              retention_level: "very_high"
+            },
+            validation: {
+              status: "passed",
+              checks: {
+                playable: true,
+                resolution_matches_target: true,
+                audio_present: true
+              }
+            }
+          },
           durationMs: 27500n,
           width: 1080,
           height: 1920,
+          subtitles: [
+            {
+              id: "subtitle-1",
+              format: "srt",
+              language: "id",
+              objectKey: "subtitle/key.srt",
+              isBurnedIn: false,
+              createdAt: new Date("2026-06-26T10:04:30.000Z")
+            }
+          ],
           createdAt: new Date("2026-06-26T10:00:00.000Z"),
           updatedAt: new Date("2026-06-26T10:05:00.000Z")
         }
@@ -102,7 +147,7 @@ describe("job outputs route", () => {
       status: "COMPLETED",
       candidate_count: 2,
       output_summary: {
-        analysis_version: "2.0",
+        analysis_version: "2.3",
         source_summary: "Source material summary.",
         candidate_count: 2,
         analyzer: { analysis_mode: "openai" },
@@ -111,6 +156,7 @@ describe("job outputs route", () => {
       clip_candidates: [
         {
           id: "db-candidate-1",
+          transcript_id: "transcript-1",
           candidate_id: "candidate-1",
           start_ms: "12500",
           end_ms: "30250",
@@ -126,10 +172,18 @@ describe("job outputs route", () => {
           final_viral_score: "8.15",
           context_complete: true,
           safety_notes: [],
-          metadata_suggestions: { suggested_caption: "Caption" },
+          metadata_suggestions: {
+            suggested_caption: "Caption",
+            hook_second: 0,
+            main_point_second: 6.2,
+            punchline_second: 17.5,
+            retention_level: "very_high",
+            requires_context: false,
+            can_standalone: true
+          },
           speaker_ids: ["speaker-1"],
           scene_ids: ["scene-2"],
-          analyzer_metadata: { analysis_version: "2.0" },
+          analyzer_metadata: { analysis_version: "2.3" },
           selected: true,
           rank: 1,
           created_at: "2026-06-26T09:59:00.000Z",
@@ -152,10 +206,62 @@ describe("job outputs route", () => {
             candidate: { candidate_id: "candidate-1", start_ms: "12500" },
             analyzer: { analysis_mode: "openai" }
           },
-          quality_report: { score: 9.1 },
+          quality_report: {
+            score: 9.1,
+            renderer: "phase2-placeholder",
+            status: "preview_ready",
+            candidate: {
+              title: "Kenapa intro ini bikin retention naik",
+              start_ms: "12500",
+              end_ms: "30250"
+            },
+            metadata: {
+              suggested_caption: "Caption siap upload",
+              suggested_hashtags: ["#retention", "#hook"],
+              retention_level: "very_high"
+            },
+            validation: {
+              status: "passed",
+              checks: {
+                playable: true,
+                resolution_matches_target: true,
+                audio_present: true
+              }
+            }
+          },
           duration_ms: "27500",
           width: 1080,
           height: 1920,
+          output_summary: {
+            aspect_ratio: "9:16",
+            target_platform: null,
+            objective: null,
+            renderer: "phase2-placeholder",
+            render_status: "preview_ready",
+            candidate_title: "Kenapa intro ini bikin retention naik",
+            clip_start_ms: "12500",
+            clip_end_ms: "30250",
+            suggested_caption: "Caption siap upload",
+            suggested_hashtags: ["#retention", "#hook"],
+            retention_level: "very_high",
+            validation_status: "passed",
+            output_playable: true,
+            resolution_matches_target: true,
+            audio_present: true,
+            subtitle_format: null,
+            subtitle_language: null,
+            subtitle_burned_in: null
+          },
+          subtitles: [
+            {
+              id: "subtitle-1",
+              format: "srt",
+              language: "id",
+              object_key: "subtitle/key.srt",
+              is_burned_in: false,
+              created_at: "2026-06-26T10:04:30.000Z"
+            }
+          ],
           created_at: "2026-06-26T10:00:00.000Z",
           updated_at: "2026-06-26T10:05:00.000Z"
         }
@@ -185,6 +291,7 @@ describe("job outputs route", () => {
           durationMs: null,
           width: null,
           height: null,
+          subtitles: [],
           createdAt: new Date("2026-06-26T11:00:00.000Z"),
           updatedAt: new Date("2026-06-26T11:00:00.000Z")
         }

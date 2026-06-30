@@ -1,0 +1,66 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<div class="app-shell"><%- include('../partials/admin-sidebar') %><main class="content-area">
+  <header class="page-header">
+    <div>
+      <span class="eyebrow">Security & operations</span>
+      <h1>Audit Logs</h1>
+      <p>Review security-sensitive and administrative actions across auth, impersonation, jobs, providers, credentials, and system controls.</p>
+    </div>
+    <a class="btn btn-outline-primary" href="/admin/dashboard">Back to dashboard</a>
+  </header>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <div>
+        <h2>Filters</h2>
+        <p>Search by action, resource, actor, target, or reason.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <form class="row g-3" method="get" action="/admin/audit-logs">
+        <div class="col-md-7"><label class="form-label">Search</label><input class="form-control" name="q" value="<%= filters.q %>" placeholder="action, resource id, email, reason"></div>
+        <div class="col-md-3">
+          <label class="form-label">Action</label>
+          <select class="form-select" name="action">
+            <option value="ALL" <%= filters.action === 'ALL' ? 'selected' : '' %>>All actions</option>
+            <% actionOptions.forEach((action) => { %><option value="<%= action %>" <%= filters.action === action ? 'selected' : '' %>><%= action %></option><% }) %>
+          </select>
+        </div>
+        <div class="col-md-2 d-flex align-items-end gap-2"><button class="btn btn-primary w-100" type="submit">Apply</button><a class="btn btn-outline-secondary" href="/admin/audit-logs">Reset</a></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Recent entries</h2>
+        <p>Latest 100 matching audit records.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <% if (!auditLogs.length) { %><p class="text-muted mb-0">No audit logs matched the current filters.</p><% } %>
+      <% auditLogs.forEach((log) => { %>
+        <article class="border rounded-4 p-3 mb-3">
+          <div class="d-flex justify-content-between gap-3 flex-wrap">
+            <div>
+              <strong><%= log.action %></strong><br>
+              <small><%= log.resourceType ?? 'resource' %> | <%= log.resourceId ?? 'no-id' %></small>
+            </div>
+            <small><%= log.createdAt.toLocaleString() %></small>
+          </div>
+          <div class="mt-2">
+            <small>Actor: <%= log.actorUser?.displayName ?? 'system' %><%= log.actorUser?.email ? ` (${log.actorUser.email})` : '' %></small><br>
+            <small>Target: <%= log.targetUser?.displayName ?? 'n/a' %><%= log.targetUser?.email ? ` (${log.targetUser.email})` : '' %></small>
+          </div>
+          <% if (log.reason) { %><p class="mt-2 mb-1"><%= log.reason %></p><% } %>
+          <details class="mt-2">
+            <summary>Metadata & payloads</summary>
+            <pre class="bg-light border rounded-4 p-3 small mt-2"><%= JSON.stringify({ metadata: log.metadata, before_data: log.beforeData, after_data: log.afterData, request_id: log.requestId, ip_address: log.ipAddress }, null, 2) %></pre>
+          </details>
+        </article>
+      <% }) %>
+    </div>
+  </section>
+</main></div>
+<%- include('../partials/footer') %>

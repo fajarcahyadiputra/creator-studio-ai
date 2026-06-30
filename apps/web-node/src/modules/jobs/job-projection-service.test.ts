@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../../infrastructure/database/prisma.js", () => ({
+  prisma: {}
+}));
 import {
   computeServerOverallProgress,
+  resolveCandidateTranscriptId,
   resolvePersistableCandidates,
   resolveOutputSummary,
   resolveStageWeight,
@@ -29,11 +34,11 @@ describe("job projection helpers", () => {
   it("maps valid output candidates into persistable clip candidate records", () => {
     const candidates = resolvePersistableCandidates({
       output_summary: {
-        analysis_version: "2.0",
+        analysis_version: "2.3",
         candidate_count: 1,
         analyzer: {
           analysis_mode: "heuristic",
-          prompt_version: "phase2-candidate-analyzer-v1",
+          prompt_version: "phase2-candidate-analyzer-v2",
           request_id: "req-123"
         },
         candidates: [
@@ -56,6 +61,12 @@ describe("job projection helpers", () => {
             thumbnail_text: "Hook yang bikin retention naik",
             speaker_ids: ["speaker-1"],
             scene_ids: ["scene-2"],
+            hook_second: 0.0,
+            main_point_second: 4.8,
+            punchline_second: 17.4,
+            retention_level: "very_high",
+            requires_context: false,
+            can_standalone: true,
             scores: {
               hook: 8.8,
               base_viral_score: 8.42,
@@ -91,14 +102,20 @@ describe("job projection helpers", () => {
           suggested_caption: "Hook yang tajam bikin video lebih kuat.",
           suggested_cta: "Watch until the end and share your take.",
           suggested_hashtags: ["#creatorstudio", "#shortclips"],
-          thumbnail_text: "Hook yang bikin retention naik"
+          thumbnail_text: "Hook yang bikin retention naik",
+          hook_second: 0,
+          main_point_second: 4.8,
+          punchline_second: 17.4,
+          retention_level: "very_high",
+          requires_context: false,
+          can_standalone: true
         },
         speakerIds: ["speaker-1"],
         sceneIds: ["scene-2"],
         analyzerMetadata: {
-          analysis_version: "2.0",
+          analysis_version: "2.3",
           analysis_mode: "heuristic",
-          prompt_version: "phase2-candidate-analyzer-v1",
+          prompt_version: "phase2-candidate-analyzer-v2",
           request_id: "req-123"
         },
         selected: true,
@@ -111,12 +128,28 @@ describe("job projection helpers", () => {
     expect(
       resolvePersistableCandidates({
         output_summary: {
-          analysis_version: "2.0",
+          analysis_version: "2.3",
           candidate_count: 1,
           candidates: [{ candidate_id: "candidate-01" }]
         }
       })
     ).toBeUndefined();
+  });
+
+  it("links persisted candidates to the source media transcript when available", () => {
+    expect(
+      resolveCandidateTranscriptId(
+        { sourceMediaAssetId: "asset-1" },
+        { id: "transcript-1", mediaAssetId: "asset-1" }
+      )
+    ).toBe("transcript-1");
+    expect(
+      resolveCandidateTranscriptId(
+        { sourceMediaAssetId: "asset-1" },
+        { id: "transcript-2", mediaAssetId: "asset-2" }
+      )
+    ).toBeNull();
+    expect(resolveCandidateTranscriptId({ sourceMediaAssetId: null }, { id: "transcript-1", mediaAssetId: "asset-1" })).toBeNull();
   });
 
   it("recomputes server-side weighted progress when total stage weight is present", () => {

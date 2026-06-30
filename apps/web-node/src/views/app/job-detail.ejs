@@ -1,7 +1,7 @@
 <%- include('../partials/head', { title, csrfToken }) %>
-<div class="app-shell">
-  <%- include('../partials/sidebar') %>
-  <main class="content-area">
+<div class="workspace-shell">
+  <%- include('../partials/user-topbar') %>
+  <main class="workspace-main content-area" <% if (job) { %>data-job-stream="<%= job.id %>"<% } %>>
     <% if (!job) { %>
       <header class="page-header">
         <div><span class="eyebrow">Jobs</span><h1>Job not found</h1><p>The requested job is unavailable in this workspace.</p></div>
@@ -10,75 +10,127 @@
     <% } else { %>
       <header class="page-header">
         <div>
-          <span class="eyebrow">Jobs</span>
-          <h1><code><%= job.id.slice(0, 8) %></code></h1>
-          <p>Current stage: <strong><%= job.currentStage ?? 'Unknown' %></strong></p>
+          <span class="eyebrow">Async Job</span>
+          <h1>Job Detail</h1>
+          <p>
+            ID: <code><%= job.id %></code><br>
+            <small><%= job.type %> &middot; <%= job.project?.name ?? 'No project' %> &middot; <%= job.sourceMediaAsset?.displayName ?? 'No source linked' %></small>
+          </p>
         </div>
-        <a class="btn btn-outline-primary" href="/app/jobs">Back to jobs</a>
+        <div class="d-flex gap-2">
+          <a class="btn btn-outline-primary" href="/app/dashboard">Kembali ke Dashboard</a>
+          <% if (clipOutputs.length) { %>
+            <a class="btn btn-outline-secondary" href="/app/jobs/<%= job.id %>/export-index">Download all index</a>
+          <% } %>
+          <% if (['QUEUED','RUNNING','PAUSED','PAUSE_REQUESTED'].includes(job.status)) { %>
+            <form data-api-form action="/api/v1/jobs/<%= job.id %>/cancel" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn-outline-danger" type="submit">Cancel</button></form>
+          <% } %>
+          <% if (job.status === 'FAILED') { %>
+            <form data-api-form data-idempotency-key="true" action="/api/v1/jobs/<%= job.id %>/retry" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="reason" value="Retry requested from job detail"><input type="hidden" name="stage" value="<%= job.currentStage ?? '' %>"><button class="btn btn-outline-warning" type="submit">Retry failed stage</button></form>
+          <% } %>
+          <% if (job.type === 'AUTO_CLIPPING') { %>
+            <form data-api-form data-idempotency-key="true" action="/api/v1/auto-clipping/jobs/<%= job.id %>/duplicate" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn-outline-secondary" type="submit">Duplicate</button></form>
+          <% } %>
+        </div>
       </header>
 
-      <section class="stat-grid detail-stats">
-        <article class="stat-card"><span>Status</span><strong class="stat-small"><%= job.status %></strong></article>
-        <article class="stat-card"><span>Progress</span><strong class="stat-small"><%= job.progressPercent %>%</strong></article>
-        <article class="stat-card"><span>Attempts</span><strong class="stat-small"><%= job.attempts.length %></strong></article>
-        <article class="stat-card"><span>Candidates</span><strong class="stat-small"><%= outputSummary.candidateCount %></strong></article>
-        <article class="stat-card"><span>Created</span><strong class="stat-small"><%= job.createdAt.toLocaleString() %></strong></article>
+      <section class="panel job-hero-panel">
+        <div class="job-hero-panel__top">
+          <div>
+            <span class="status status-<%= job.status.toLowerCase() %>" data-job-status><%= job.status %></span>
+            <div class="text-muted small mt-2">Current stage: <strong data-job-stage><%= job.currentStage ?? 'Unknown' %></strong></div>
+          </div>
+          <div class="job-hero-panel__meta">
+            <article><span>Attempts</span><strong><%= job.attempts.length %></strong></article>
+            <article><span>Candidates</span><strong><%= outputSummary.candidateCount %></strong></article>
+            <article><span>Created</span><strong><%= job.createdAt.toLocaleString() %></strong></article>
+          </div>
+        </div>
+        <div class="job-hero-progress">
+          <div class="d-flex justify-content-between align-items-center gap-3 mb-2">
+            <strong>Progress</strong>
+            <strong data-job-progress-value-inline><%= job.progressPercent %>%</strong>
+          </div>
+          <div class="progress progress-lg">
+            <div class="progress-bar progress-bar-job" data-job-progress-bar style="width:<%= job.progressPercent %>%"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="job-primary-grid mt-4">
+        <div class="panel">
+          <div class="panel-heading">
+            <div><h2>Result</h2><p>Ringkasan analyzer, candidate review, dan hasil clip untuk job ini.</p></div>
+          </div>
+          <div class="p-4">
+            <div class="result-status-box">
+              <strong>
+                <% if (!clipOutputs.length && !candidates.length) { %>
+                  Memuat hasil...
+                <% } else { %>
+                  <%= clipOutputs.length %> output clip, <%= candidates.length %> kandidat tersimpan
+                <% } %>
+              </strong>
+              <span>
+                <% if (outputSummary.analysisVersion) { %>
+                  Analyzer <%= outputSummary.analysisVersion %>
+                <% } else { %>
+                  Menunggu hasil pipeline
+                <% } %>
+              </span>
+            </div>
+
+            <div class="job-summary-grid mt-3">
+              <article class="job-summary-card"><span>Source duration</span><strong><%= outputSummary.estimatedUsage.sourceDurationSeconds ? `${outputSummary.estimatedUsage.sourceDurationSeconds}s` : '-' %></strong></article>
+              <article class="job-summary-card"><span>Selected candidates</span><strong><%= outputSummary.estimatedUsage.selectedCandidates %></strong></article>
+              <article class="job-summary-card"><span>Clip outputs</span><strong><%= outputSummary.estimatedUsage.clipOutputs %></strong></article>
+              <article class="job-summary-card"><span>Workflow</span><strong><%= job.workflowId ?? '-' %></strong></article>
+            </div>
+          </div>
+          <% if (outputSummary.sourceSummary) { %>
+            <div class="analyzer-summary pt-0">
+              <h3>Source summary</h3>
+              <p><%= outputSummary.sourceSummary %></p>
+            </div>
+          <% } %>
+        </div>
+
+        <aside class="panel">
+          <div class="panel-heading">
+            <div><h2>Logs</h2><p>Event terbaru dari workflow durable.</p></div>
+          </div>
+          <div class="job-log-list" data-job-events>
+            <% if (!events.length) { %>
+              <div class="empty-cell" data-job-events-empty>No events recorded yet.</div>
+            <% } %>
+            <% events.forEach((event) => { %>
+              <article class="job-log-item">
+                <strong>[<%= event.eventType %>]</strong>
+                <span><%= event.occurredAt.toLocaleString() %></span>
+                <p><%= event.userMessage ?? event.message %></p>
+              </article>
+            <% }) %>
+          </div>
+        </aside>
       </section>
 
       <section class="panel mt-4">
         <div class="panel-heading">
-          <div><h2>Analyzer run</h2><p>Structured analysis metadata captured from the Phase 2 candidate analyzer.</p></div>
+          <div><h2>Analyzer run</h2><p>Metadata analisis dari pipeline clipping.</p></div>
         </div>
         <div class="analyzer-grid">
-          <article class="analyzer-card">
-            <span>Analysis version</span>
-            <strong><%= outputSummary.analysisVersion ?? '-' %></strong>
-          </article>
-          <article class="analyzer-card">
-            <span>Mode</span>
-            <strong><%= outputSummary.analyzer?.analysisMode ?? '-' %></strong>
-          </article>
-          <article class="analyzer-card">
-            <span>Provider</span>
-            <strong><%= outputSummary.analyzer?.provider ?? '-' %></strong>
-          </article>
-          <article class="analyzer-card">
-            <span>Model</span>
-            <strong><%= outputSummary.analyzer?.model ?? '-' %></strong>
-          </article>
-          <article class="analyzer-card">
-            <span>Prompt version</span>
-            <strong><%= outputSummary.analyzer?.promptVersion ?? '-' %></strong>
-          </article>
-          <article class="analyzer-card">
-            <span>Latency</span>
-            <strong><%= outputSummary.analyzer?.latencyMs ? `${outputSummary.analyzer.latencyMs} ms` : '-' %></strong>
-          </article>
+          <article class="analyzer-card"><span>Analysis version</span><strong><%= outputSummary.analysisVersion ?? '-' %></strong></article>
+          <article class="analyzer-card"><span>Mode</span><strong><%= outputSummary.analyzer?.analysisMode ?? '-' %></strong></article>
+          <article class="analyzer-card"><span>Provider</span><strong><%= outputSummary.analyzer?.provider ?? '-' %></strong></article>
+          <article class="analyzer-card"><span>Model</span><strong><%= outputSummary.analyzer?.model ?? '-' %></strong></article>
+          <article class="analyzer-card"><span>Prompt version</span><strong><%= outputSummary.analyzer?.promptVersion ?? '-' %></strong></article>
+          <article class="analyzer-card"><span>Latency</span><strong><%= outputSummary.analyzer?.latencyMs ? `${outputSummary.analyzer.latencyMs} ms` : '-' %></strong></article>
         </div>
-        <% if (outputSummary.sourceSummary) { %>
-          <div class="analyzer-summary">
-            <h3>Source summary</h3>
-            <p><%= outputSummary.sourceSummary %></p>
-          </div>
-        <% } %>
-        <% if (outputSummary.analyzer?.fallbackReason || outputSummary.analyzer?.providerRequestId || outputSummary.analyzer?.requestId) { %>
-          <dl class="analyzer-meta">
-            <% if (outputSummary.analyzer?.fallbackReason) { %>
-              <div><dt>Fallback</dt><dd><%= outputSummary.analyzer.fallbackReason %></dd></div>
-            <% } %>
-            <% if (outputSummary.analyzer?.providerRequestId) { %>
-              <div><dt>Provider request</dt><dd><code><%= outputSummary.analyzer.providerRequestId %></code></dd></div>
-            <% } %>
-            <% if (outputSummary.analyzer?.requestId) { %>
-              <div><dt>Internal request</dt><dd><code><%= outputSummary.analyzer.requestId %></code></dd></div>
-            <% } %>
-          </dl>
-        <% } %>
       </section>
 
       <section class="panel mt-4">
         <div class="panel-heading">
-          <div><h2>Candidate review</h2><p>Persisted Phase 2 candidate rows ready for downstream review and rendering.</p></div>
+          <div><h2>Candidate review</h2><p>Pilih kandidat terbaik sebelum dikirim ke render output.</p></div>
           <form data-api-form action="/api/v1/jobs/<%= job.id %>/render-queue" method="post">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <button class="btn btn-primary" type="submit">Queue selected for render</button>
@@ -88,23 +140,23 @@
         <% if (!candidates.length) { %>
           <div class="empty-cell">No persisted clip candidates are available for this job yet.</div>
         <% } else { %>
-          <div class="candidate-grid">
-            <% candidates.forEach((candidate) => { %>
-              <article class="candidate-card">
-                <div class="candidate-topline">
-                  <span class="status status-<%= candidate.selected ? 'running' : 'paused' %>"><%= candidate.contentCategory ?? 'candidate' %></span>
-                  <strong><%= Number(candidate.finalViralScore ?? 0).toFixed(2) %></strong>
+          <div class="candidate-grid candidate-grid--single">
+            <% candidates.forEach((candidate, index) => { %>
+              <article class="candidate-card candidate-card--result">
+                <div class="candidate-result-header">
+                  <div>
+                    <h3>#<%= index + 1 %> - <%= candidate.title ?? 'Untitled candidate' %></h3>
+                    <div class="text-muted small"><%= candidate.contentCategory ?? 'candidate' %> | <%= candidate.durationSeconds ?? 0 %> detik</div>
+                  </div>
+                  <div class="candidate-score-badge">Potensi Viral <%= Number(candidate.finalViralScore ?? 0).toFixed(1) %>/10</div>
                 </div>
-                <h3><%= candidate.title ?? 'Untitled candidate' %></h3>
-                <p class="candidate-hook"><%= candidate.hookText ?? 'No hook text available.' %></p>
-                <dl class="candidate-meta">
-                  <div><dt>Rank</dt><dd><%= candidate.rank ?? '-' %></dd></div>
-                  <div><dt>Window</dt><dd><%= candidate.startSeconds ?? 0 %>s - <%= candidate.endSeconds ?? 0 %>s</dd></div>
-                  <div><dt>Duration</dt><dd><%= candidate.durationSeconds ?? 0 %>s</dd></div>
-                </dl>
+                <p class="candidate-summary mb-2"><strong>Hook:</strong> <%= candidate.hookText ?? 'No hook text available.' %></p>
                 <p class="candidate-summary"><%= candidate.summary ?? '' %></p>
                 <% if (candidate.suggestedCaption) { %>
-                  <p class="candidate-summary"><strong>Caption:</strong> <%= candidate.suggestedCaption %></p>
+                  <div class="candidate-caption-box">
+                    <strong>Caption rekomendasi:</strong>
+                    <p><%= candidate.suggestedCaption %></p>
+                  </div>
                 <% } %>
                 <% if (Array.isArray(candidate.hashtags) && candidate.hashtags.length) { %>
                   <div class="candidate-tags">
@@ -113,13 +165,15 @@
                     <% }) %>
                   </div>
                 <% } %>
-                <form class="mt-3 d-flex" data-api-form action="/api/v1/jobs/<%= job.id %>/candidates/<%= candidate.id %>/selection" method="post">
-                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                  <input type="hidden" name="selected" value="<%= candidate.selected ? 'false' : 'true' %>">
-                  <button class="btn <%= candidate.selected ? 'btn-outline-primary' : 'btn-primary' %>" type="submit">
-                    <%= candidate.selected ? 'Remove from selected' : 'Select candidate' %>
-                  </button>
-                </form>
+                <div class="d-flex flex-wrap gap-2 mt-3">
+                  <form data-api-form action="/api/v1/jobs/<%= job.id %>/candidates/<%= candidate.id %>/selection" method="post">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <input type="hidden" name="selected" value="<%= candidate.selected ? 'false' : 'true' %>">
+                    <button class="btn <%= candidate.selected ? 'btn-outline-primary' : 'btn-primary' %>" type="submit">
+                      <%= candidate.selected ? 'Remove from selected' : 'Select candidate' %>
+                    </button>
+                  </form>
+                </div>
               </article>
             <% }) %>
           </div>
@@ -128,25 +182,132 @@
 
       <section class="panel mt-4">
         <div class="panel-heading">
-          <div><h2>Clip outputs</h2><p>Rendered artifacts attached to selected candidates.</p></div>
+          <div><h2>Clip outputs</h2><p>Hasil render, subtitle, metadata, dan file yang siap didownload.</p></div>
+          <% if (clipOutputs.length) { %>
+            <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/export-index">Export all outputs</a>
+          <% } %>
         </div>
-        <div class="table-responsive">
-          <table class="table align-middle">
-            <thead><tr><th>Output</th><th>Candidate</th><th>Quality</th><th>Duration</th></tr></thead>
-            <tbody>
-              <% if (!clipOutputs.length) { %>
-                <tr><td colspan="4" class="empty-cell">No rendered clip outputs have been stored yet.</td></tr>
+        <div class="clip-output-stack">
+          <% if (!clipOutputs.length) { %>
+            <div class="empty-cell">No rendered clip outputs have been stored yet.</div>
+          <% } %>
+          <% clipOutputs.forEach((output, index) => { %>
+            <article class="clip-output-card">
+              <div class="clip-output-card__header">
+                <div>
+                  <h3>#<%= index + 1 %> - <%= output.candidateTitle ?? `Clip Output ${output.id.slice(0, 8)}` %></h3>
+                  <div class="text-muted small"><%= output.aspectRatio ?? '-' %> | <%= output.width && output.height ? `${output.width}x${output.height}` : 'Pending dimensions' %> | <%= output.durationMs ? `${Number(output.durationMs) / 1000} detik` : '-' %></div>
+                </div>
+                <span class="status status-<%= String(output.qualityStatus).toLowerCase() %>"><%= output.qualityStatus %></span>
+              </div>
+              <% if (output.suggestedCaption) { %>
+                <div class="candidate-caption-box">
+                  <strong>Caption rekomendasi:</strong>
+                  <p><%= output.suggestedCaption %></p>
+                </div>
               <% } %>
-              <% clipOutputs.forEach((output) => { %>
-                <tr>
-                  <td><strong><%= output.id.slice(0, 8) %></strong></td>
-                  <td><code><%= output.candidateId.slice(0, 8) %></code></td>
-                  <td><span class="status status-<%= String(output.qualityStatus).toLowerCase() %>"><%= output.qualityStatus %></span></td>
-                  <td><%= output.durationMs ? `${Number(output.durationMs) / 1000}s` : '-' %></td>
-                </tr>
-              <% }) %>
-            </tbody>
-          </table>
+              <% if (output.retentionLevel) { %>
+                <div class="text-muted small mb-2">Retention: <strong><%= output.retentionLevel %></strong></div>
+              <% } %>
+              <div class="candidate-tags mb-3">
+                <% if (output.previewAvailable) { %><span>Preview</span><% } %>
+                <% if (output.finalAvailable) { %><span>Final video</span><% } %>
+                <% if (output.subtitleAvailable) { %><span>Subtitle <%= output.subtitleFormats.join(', ') %></span><% } %>
+                <% if (output.thumbnailAvailable) { %><span>Thumbnail</span><% } %>
+                <% if (output.metadataAvailable) { %><span>Metadata</span><% } %>
+                <% if (output.validationStatus) { %><span>Validation <%= output.validationStatus %></span><% } %>
+              </div>
+              <div class="clip-output-review-grid mb-3">
+                <article class="clip-output-review-card">
+                  <span>Validation</span>
+                  <strong><%= output.validationStatus ?? 'Pending review' %></strong>
+                  <p><%= output.renderStatus ?? 'Render status belum tersedia.' %></p>
+                </article>
+                <article class="clip-output-review-card">
+                  <span>Playback</span>
+                  <strong><%= output.outputPlayable === true ? 'Playable' : output.outputPlayable === false ? 'Check needed' : 'Unknown' %></strong>
+                  <p>Preview <%= output.previewPlayable === true ? 'ready' : output.previewPlayable === false ? 'needs review' : 'pending' %></p>
+                </article>
+                <article class="clip-output-review-card">
+                  <span>Codec</span>
+                  <strong><%= output.finalVideoCodec ?? 'Unknown' %> / <%= output.finalAudioCodec ?? 'Unknown' %></strong>
+                  <p><%= output.videoCodecMatchesTarget === true && output.audioCodecMatchesTarget === true ? 'Target codec matched' : 'Review codec target' %></p>
+                </article>
+                <article class="clip-output-review-card">
+                  <span>Subtitle cues</span>
+                  <strong><%= output.subtitleCueCount ?? 0 %></strong>
+                  <p><%= output.subtitleExportReady === true ? 'Export siap dipakai' : 'Subtitle export belum siap' %></p>
+                </article>
+              </div>
+              <div class="candidate-tags mb-3">
+                <span><%= output.resolutionMatchesTarget === true ? 'Resolution OK' : output.resolutionMatchesTarget === false ? 'Resolution review' : 'Resolution pending' %></span>
+                <span><%= output.audioPresent === true ? 'Audio OK' : output.audioPresent === false ? 'Audio missing' : 'Audio pending' %></span>
+                <span><%= output.durationWithinTolerance === true ? 'Duration OK' : output.durationWithinTolerance === false ? 'Duration review' : 'Duration pending' %></span>
+                <% if (output.finalDurationMs) { %><span>Final <%= Number(output.finalDurationMs) / 1000 %>s</span><% } %>
+                <% if (output.previewDurationMs) { %><span>Preview <%= Number(output.previewDurationMs) / 1000 %>s</span><% } %>
+              </div>
+              <% if (output.validationWarnings.length) { %>
+                <div class="clip-output-warning-box mb-3">
+                  <strong>Warning render</strong>
+                  <ul>
+                    <% output.validationWarnings.forEach((warning) => { %>
+                      <li><%= warning %></li>
+                    <% }) %>
+                  </ul>
+                </div>
+              <% } %>
+              <div class="d-flex flex-wrap gap-2">
+                <% if (output.previewAvailable) { %>
+                  <a class="btn btn-sm btn-outline-primary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=preview">Preview</a>
+                <% } %>
+                <% if (output.finalAvailable) { %>
+                  <a class="btn btn-sm btn-success" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=final">Download video</a>
+                <% } %>
+                <% if (output.subtitleAvailable) { %>
+                  <% output.subtitleDownloads.forEach((subtitle) => { %>
+                    <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=<%= subtitle.artifact %>">
+                      Subtitle <%= subtitle.label %>
+                    </a>
+                  <% }) %>
+                <% } %>
+                <% if (output.metadataAvailable) { %>
+                  <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=metadata">Metadata</a>
+                <% } %>
+                <% if (output.thumbnailAvailable) { %>
+                  <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=thumbnail">Thumbnail</a>
+                <% } %>
+                <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/export-index">Export index</a>
+                <form data-api-form action="/api/v1/jobs/<%= job.id %>/outputs/<%= output.id %>/rerender" method="post">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button class="btn btn-sm btn-outline-warning" type="submit">Rerender</button>
+                </form>
+              </div>
+              <div class="publish-actions-card mt-3">
+                <div>
+                  <strong>Publish / Upload</strong>
+                  <p>Gunakan file final ini untuk upload ke platform. Integrasi publish otomatis akan memakai credential user dari Settings saat workflow publish sudah aktif.</p>
+                </div>
+                <div class="d-flex flex-wrap gap-2">
+                  <a class="btn btn-sm btn-outline-secondary" href="/app/settings">Setup Credentials</a>
+                  <% if (output.finalAvailable) { %>
+                    <a class="btn btn-sm btn-outline-success" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=final">Upload ke Facebook</a>
+                    <a class="btn btn-sm btn-outline-dark" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=final">Upload ke TikTok</a>
+                    <a class="btn btn-sm btn-danger" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=final">Upload ke YouTube Shorts</a>
+                  <% } else { %>
+                    <button class="btn btn-sm btn-outline-secondary" type="button" disabled>Upload ke Facebook</button>
+                    <button class="btn btn-sm btn-outline-secondary" type="button" disabled>Upload ke TikTok</button>
+                    <button class="btn btn-sm btn-outline-secondary" type="button" disabled>Upload ke YouTube Shorts</button>
+                  <% } %>
+                </div>
+              </div>
+              <% if (output.subtitleAvailable) { %>
+                <div class="text-muted small mt-3">
+                  Subtitle tersedia:
+                  <%= output.subtitleDownloads.map((subtitle) => `${subtitle.label}${subtitle.language ? ` (${subtitle.language})` : ''}${subtitle.isBurnedIn ? ' burned-in' : ''}`).join(', ') %>
+                </div>
+              <% } %>
+            </article>
+          <% }) %>
         </div>
       </section>
 
@@ -162,10 +323,10 @@
                 <tr><td colspan="4" class="empty-cell">No stage projection yet.</td></tr>
               <% } %>
               <% job.stages.forEach((stage) => { %>
-                <tr>
+                <tr data-stage-row="<%= stage.name %>">
                   <td><strong><%= stage.name %></strong></td>
-                  <td><span class="status status-<%= stage.status.toLowerCase() %>"><%= stage.status %></span></td>
-                  <td><%= stage.progressPercent %>%</td>
+                  <td><span class="status status-<%= stage.status.toLowerCase() %>" data-stage-status><%= stage.status %></span></td>
+                  <td data-stage-progress><%= stage.progressPercent %>%</td>
                   <td><%= Number(stage.progressWeight).toString() %></td>
                 </tr>
               <% }) %>
@@ -174,25 +335,6 @@
         </div>
       </section>
 
-      <section class="panel mt-4">
-        <div class="panel-heading">
-          <div><h2>Recent events</h2><p>Latest user-facing progress events.</p></div>
-        </div>
-        <div class="event-list">
-          <% if (!events.length) { %>
-            <div class="empty-cell">No events recorded yet.</div>
-          <% } %>
-          <% events.forEach((event) => { %>
-            <article class="event-item">
-              <div class="event-line">
-                <strong><%= event.stage ?? event.eventType %></strong>
-                <span><%= event.occurredAt.toLocaleString() %></span>
-              </div>
-              <p><%= event.userMessage ?? event.message %></p>
-            </article>
-          <% }) %>
-        </div>
-      </section>
     <% } %>
   </main>
 </div>

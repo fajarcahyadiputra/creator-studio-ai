@@ -1,0 +1,107 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<main class="marketing-shell">
+  <section class="marketing-hero">
+    <div class="marketing-nav">
+      <a class="marketing-brand" href="/">
+        <span class="marketing-brand__mark">AI</span>
+        <span><%= appName %></span>
+      </a>
+      <div class="marketing-nav__actions">
+        <a class="btn btn-outline-dark" href="/login">Login</a>
+        <a class="btn btn-warning" href="/register">Coba Gratis</a>
+      </div>
+    </div>
+
+    <div class="marketing-hero__content">
+      <div class="marketing-hero__copy">
+        <span class="eyebrow">Built for Indonesia creator economy</span>
+        <h1>Ubah video panjang jadi short clip siap upload dalam workflow yang rapi.</h1>
+        <p>
+          Creator Studio AI membantu tim creator, agency, podcaster, dan UMKM memotong video panjang menjadi clip
+          vertikal dengan analisis hook, ranking viral score, subtitle, workflow review, dan render pipeline yang bisa
+          diandalkan.
+        </p>
+        <div class="marketing-hero__cta">
+          <a class="btn btn-warning btn-lg" href="/register">Mulai Workspace</a>
+          <a class="btn btn-outline-dark btn-lg" href="/login">Masuk ke Dashboard</a>
+        </div>
+        <ul class="marketing-points">
+          <li>Analisis kandidat clip dari video panjang</li>
+          <li>Progress job yang transparan dan durable</li>
+          <li>Review hasil clipping sebelum publish</li>
+        </ul>
+      </div>
+
+      <div class="marketing-hero__preview">
+        <div class="marketing-preview-card">
+          <div class="marketing-preview-card__label">Auto Clipping Workflow</div>
+          <h2>Pipeline creator yang fokus ke hasil, bukan chaos file.</h2>
+          <div class="marketing-preview-progress">
+            <span>Transcription</span>
+            <div class="progress progress-lg"><div class="progress-bar bg-success" style="width: 100%"></div></div>
+          </div>
+          <div class="marketing-preview-progress">
+            <span>Candidate Ranking</span>
+            <div class="progress progress-lg"><div class="progress-bar bg-warning" style="width: 82%"></div></div>
+          </div>
+          <div class="marketing-preview-progress">
+            <span>Render Output</span>
+            <div class="progress progress-lg"><div class="progress-bar" style="width: 68%"></div></div>
+          </div>
+          <div class="marketing-preview-metrics">
+            <article><strong>10</strong><span>Kandidat clip</span></article>
+            <article><strong>5</strong><span>Best clip siap review</span></article>
+            <article><strong>9:16</strong><span>Siap Shorts/Reels/TikTok</span></article>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="marketing-section">
+    <div class="marketing-section__header">
+      <span class="eyebrow">Kenapa Creator Studio AI</span>
+      <h2>Bukan cuma upload video, tapi workspace clipping end-to-end.</h2>
+    </div>
+    <div class="marketing-grid">
+      <article class="marketing-card">
+        <h3>Analisis clip yang lebih editorial</h3>
+        <p>Cari momen hook, konflik, insight, dan payoff yang paling layak dijadikan short-form content.</p>
+      </article>
+      <article class="marketing-card">
+        <h3>Job progress yang jelas</h3>
+        <p>Lihat status per tahap, event log, retry, dan review output tanpa kehilangan jejak proses.</p>
+      </article>
+      <article class="marketing-card">
+        <h3>Siap untuk tim creator</h3>
+        <p>Enak untuk workflow creator solo, editor, agency, sampai admin internal yang butuh kontrol operasional.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="marketing-section marketing-section--alt">
+    <div class="marketing-section__header">
+      <span class="eyebrow">Use Cases</span>
+      <h2>Cocok untuk konten edukasi, podcast, bisnis, politik, sampai personal brand.</h2>
+    </div>
+    <div class="marketing-grid marketing-grid--wide">
+      <article class="marketing-card">
+        <h3>Podcast & wawancara</h3>
+        <p>Temukan jawaban paling tajam, debat paling menarik, dan momen yang bikin orang berhenti scroll.</p>
+      </article>
+      <article class="marketing-card">
+        <h3>Konten edukasi & bisnis</h3>
+        <p>Potong insight yang padat, bisa berdiri sendiri, dan punya CTA kuat untuk komentar atau save.</p>
+      </article>
+      <article class="marketing-card">
+        <h3>Agency & media team</h3>
+        <p>Workflow clipping yang lebih rapi untuk review, retry, dan scaling produksi clip harian.</p>
+      </article>
+      <article class="marketing-card">
+        <h3>UMKM & creator Indonesia</h3>
+        <p>Bikin proses repurpose konten panjang jadi lebih cepat tanpa kehilangan rasa editorial.</p>
+      </article>
+    </div>
+  </section>
+</main>
+<%- include('../partials/footer') %>

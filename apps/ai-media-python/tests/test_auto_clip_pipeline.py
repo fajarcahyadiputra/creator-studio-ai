@@ -87,6 +87,8 @@ def test_pipeline_builds_ranked_candidates() -> None:
     assert candidates[0].scores["final_viral_score"] >= 6.5
     assert candidates[0].title
     assert candidates[0].suggested_hashtags
+    assert candidates[0].retention_level in {"very_high", "high", "medium", "low"}
+    assert candidates[0].punchline_second <= candidates[0].duration_seconds
 
 
 def test_output_summary_is_json_ready() -> None:
@@ -102,9 +104,33 @@ def test_output_summary_is_json_ready() -> None:
     )
     candidates = build_candidate_analyses(analysis_inputs(), config)
     summary = build_output_summary(deduplicate_and_rank(candidates, 2))
-    assert summary["analysis_version"] == "2.0"
+    assert summary["analysis_version"] == "2.4"
     assert isinstance(summary["source_summary"], str)
     assert summary["candidate_count"] >= 1
+
+
+def test_pipeline_applies_strategy_preferences_to_candidates() -> None:
+    config = build_pipeline_config(
+        {
+            "strategy": {
+                "desired_clip_count": 2,
+                "minimum_duration_seconds": 15,
+                "maximum_duration_seconds": 45,
+                "minimum_viral_score": 6.0,
+                "preferred_topics": ["retention"],
+                "topics_to_avoid": ["politik"],
+                "sensitive_topics": ["salah"],
+                "cta_preference": "Save this and follow for part two.",
+            }
+        }
+    )
+
+    candidates = build_candidate_analyses(analysis_inputs(), config)
+
+    assert candidates
+    assert candidates[0].suggested_cta == "Save this and follow for part two."
+    assert any("sensitive topic" in note.lower() for note in candidates[0].safety_notes)
+    assert candidates[0].scores["final_viral_score"] >= candidates[0].scores["base_viral_score"] - 0.5
 
 
 def test_shared_clip_analyzer_schema_is_available() -> None:
@@ -129,9 +155,9 @@ class FakeOpenAIProvider(StructuredOutputProvider):
         assert schema["type"] == "object"
         return {
             "output": {
-                "analysis_version": "2.2",
+                "analysis_version": "2.4",
                 "source_summary": "OpenAI summary of the source material.",
-                "candidate_count": 1,
+                "candidate_count": 2,
                 "candidates": [
                     {
                         "candidate_id": "candidate-openai-01",
@@ -152,6 +178,12 @@ class FakeOpenAIProvider(StructuredOutputProvider):
                         "thumbnail_text": "OpenAI picked this hook",
                         "speaker_ids": ["SPEAKER_01"],
                         "scene_ids": ["scene-1"],
+                        "hook_second": 0.0,
+                        "main_point_second": 12.0,
+                        "punchline_second": 19.0,
+                        "retention_level": "very_high",
+                        "requires_context": False,
+                        "can_standalone": True,
                         "scores": {
                             "hook": 8.9,
                             "conflict": 7.8,
@@ -160,6 +192,49 @@ class FakeOpenAIProvider(StructuredOutputProvider):
                             "comment_potential": 8.1,
                             "base_viral_score": 8.45,
                             "final_viral_score": 8.31,
+                            "penalties": {
+                                "context": 0,
+                                "weak_ending": 0,
+                                "slow_start": 0,
+                                "duplicate": 0,
+                                "unsafe_or_misleading": 0,
+                                "cut_quality": 0,
+                            },
+                        },
+                    },
+                    {
+                        "candidate_id": "candidate-openai-02",
+                        "start_seconds": 13.0,
+                        "end_seconds": 31.5,
+                        "duration_seconds": 18.5,
+                        "title": "OpenAI picked a nearly identical hook",
+                        "hook_text": "Kebanyakan orang salah memahami strategi konten ini.",
+                        "ending_text": "Padahal justru bagian pembuka yang menentukan retention paling besar.",
+                        "summary": "OpenAI structured candidate summary.",
+                        "why_it_works": ["Strong opening claim."],
+                        "content_category": "insight",
+                        "context_complete": True,
+                        "safety_notes": [],
+                        "suggested_caption": "OpenAI generated caption.",
+                        "suggested_cta": "Comment your take.",
+                        "suggested_hashtags": ["#creatorstudio", "#openai"],
+                        "thumbnail_text": "OpenAI picked this hook",
+                        "speaker_ids": ["SPEAKER_01"],
+                        "scene_ids": ["scene-1"],
+                        "hook_second": 0.0,
+                        "main_point_second": 12.0,
+                        "punchline_second": 18.5,
+                        "retention_level": "high",
+                        "requires_context": False,
+                        "can_standalone": True,
+                        "scores": {
+                            "hook": 8.7,
+                            "conflict": 7.7,
+                            "emotion": 7.1,
+                            "novelty": 7.8,
+                            "comment_potential": 7.9,
+                            "base_viral_score": 8.22,
+                            "final_viral_score": 8.12,
                             "penalties": {
                                 "context": 0,
                                 "weak_ending": 0,
@@ -206,11 +281,11 @@ async def test_phase2_analyzer_uses_openai_provider_when_available() -> None:
         provider=FakeOpenAIProvider(),
     )
 
-    assert summary["analysis_version"] == "2.2"
-    assert summary["candidate_count"] >= 1
+    assert summary["analysis_version"] == "2.4"
+    assert summary["candidate_count"] == 1
     analyzer = summary["analyzer"]
     assert analyzer["analysis_mode"] == "openai"
-    assert analyzer["prompt_version"] == "phase2-candidate-analyzer-v1"
+    assert analyzer["prompt_version"] == "phase2-candidate-analyzer-v2"
     assert analyzer["provider"] == "openai"
     assert analyzer["provider_request_id"] == "req_openai_123"
     assert analyzer["token_usage"]["total_tokens"] == 1480
@@ -235,7 +310,7 @@ async def test_phase2_analyzer_falls_back_to_heuristic_when_provider_fails() -> 
         provider=FailingProvider(),
     )
 
-    assert summary["analysis_version"] == "2.2"
+    assert summary["analysis_version"] == "2.4"
     assert summary["candidate_count"] >= 1
     analyzer = summary["analyzer"]
     assert analyzer["analysis_mode"] == "heuristic"

@@ -26,7 +26,7 @@ async def test_openai_provider_parses_output_text(monkeypatch: pytest.MonkeyPatc
             json={
                 "output_text": json.dumps(
                     {
-                        "analysis_version": "2.2",
+                        "analysis_version": "2.3",
                         "source_summary": "OpenAI source summary.",
                         "candidate_count": 1,
                         "candidates": [
@@ -49,6 +49,12 @@ async def test_openai_provider_parses_output_text(monkeypatch: pytest.MonkeyPatc
                                 "thumbnail_text": "Thumb",
                                 "speaker_ids": ["speaker-1"],
                                 "scene_ids": ["scene-1"],
+                                "hook_second": 0.0,
+                                "main_point_second": 6.0,
+                                "punchline_second": 20.0,
+                                "retention_level": "high",
+                                "requires_context": False,
+                                "can_standalone": True,
                                 "scores": {
                                     "hook": 8.0,
                                     "conflict": 7.0,
@@ -123,7 +129,7 @@ async def test_openai_provider_parses_nested_output_content(monkeypatch: pytest.
                                 "type": "output_text",
                                 "text": json.dumps(
                                     {
-                                        "analysis_version": "2.2",
+                                        "analysis_version": "2.3",
                                         "source_summary": "OpenAI source summary.",
                                         "candidate_count": 0,
                                         "candidates": [],
@@ -154,7 +160,7 @@ async def test_openai_provider_parses_nested_output_content(monkeypatch: pytest.
 
     assert result["provider_request_id"] == "req_nested"
     assert result["output"] == {
-        "analysis_version": "2.2",
+        "analysis_version": "2.3",
         "source_summary": "OpenAI source summary.",
         "candidate_count": 0,
         "candidates": [],

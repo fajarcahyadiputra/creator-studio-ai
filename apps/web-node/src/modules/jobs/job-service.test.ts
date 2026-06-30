@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../../infrastructure/database/prisma.js", () => ({
+  prisma: {}
+}));
 import { buildRenderSettings } from "./job-service.js";
 
 describe("buildRenderSettings", () => {
@@ -33,12 +37,18 @@ describe("buildRenderSettings", () => {
           suggested_caption: "Caption text",
           suggested_cta: "Watch until the end.",
           suggested_hashtags: ["#creatorstudio", "#shortclips"],
-          thumbnail_text: "Hook thumbnail"
+          thumbnail_text: "Hook thumbnail",
+          hook_second: 0,
+          main_point_second: 5.2,
+          punchline_second: 17.8,
+          retention_level: "very_high",
+          requires_context: false,
+          can_standalone: true
         },
         analyzerMetadata: {
-          analysis_version: "2.2",
+          analysis_version: "2.3",
           analysis_mode: "openai",
-          prompt_version: "phase2-candidate-analyzer-v1",
+          prompt_version: "phase2-candidate-analyzer-v2",
           provider: "openai",
           model: "gpt-5.5"
         }
@@ -74,12 +84,18 @@ describe("buildRenderSettings", () => {
         suggested_caption: "Caption text",
         suggested_cta: "Watch until the end.",
         suggested_hashtags: ["#creatorstudio", "#shortclips"],
-        thumbnail_text: "Hook thumbnail"
+        thumbnail_text: "Hook thumbnail",
+        hook_second: 0,
+        main_point_second: 5.2,
+        punchline_second: 17.8,
+        retention_level: "very_high",
+        requires_context: false,
+        can_standalone: true
       },
       analyzer: {
-        analysis_version: "2.2",
+        analysis_version: "2.3",
         analysis_mode: "openai",
-        prompt_version: "phase2-candidate-analyzer-v1",
+        prompt_version: "phase2-candidate-analyzer-v2",
         provider: "openai",
         model: "gpt-5.5"
       }

@@ -6,8 +6,20 @@ from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from app.domain.auto_clip_stages import STAGE_WEIGHTS, TOTAL_STAGE_WEIGHT, compute_overall_progress
-    from app.activities.phase2_analysis import analyze_phase2_candidates, prepare_analysis_inputs
+    from app.activities.audio_pipeline import execute_audio_extraction, prepare_audio_extraction
+    from app.activities.media_validation import prepare_media_asset_validation
+    from app.activities.phase2_analysis import (
+        analyze_phase2_candidates,
+        enrich_analysis_inputs,
+        prepare_analysis_inputs,
+        prepare_analysis_inputs_from_transcript,
+    )
     from app.activities.progress import emit_progress, validate_foundation_request
+    from app.activities.transcription_pipeline import (
+        execute_transcription,
+        prepare_transcription,
+        submit_transcription_result,
+    )
 
 
 ACTIVITY_RETRY = RetryPolicy(
@@ -24,7 +36,16 @@ class FoundationAutoClippingWorkflow:
     @workflow.run
     async def run(self, raw_input: dict[str, Any]) -> dict[str, Any]:
         job_id = str(raw_input["job_id"])
-        await self._emit(job_id, "VALIDATING_SOURCE", 5, "job.started", "Validating the durable workflow input.", "Validating source and job settings.", "RUNNING", {"attempt_number": raw_input.get("attempt_number", 1)})
+        await self._emit(
+            job_id,
+            "VALIDATING_SOURCE",
+            5,
+            "job.started",
+            "Validating the durable workflow input.",
+            "Validating source and job settings.",
+            "RUNNING",
+            {"attempt_number": raw_input.get("attempt_number", 1)},
+        )
         validated = await workflow.execute_activity(
             validate_foundation_request,
             raw_input,
@@ -32,10 +53,19 @@ class FoundationAutoClippingWorkflow:
             heartbeat_timeout=timedelta(seconds=10),
             retry_policy=ACTIVITY_RETRY,
         )
-        await self._emit(job_id, "VALIDATING_SOURCE", 100, "job.progress", "Workflow input passed schema and rights validation.", "Source settings are valid.", "RUNNING", {"job_type": validated["job_type"]})
+        await self._emit(
+            job_id,
+            "VALIDATING_SOURCE",
+            100,
+            "job.progress",
+            "Workflow input passed schema and rights validation.",
+            "Source settings are valid.",
+            "RUNNING",
+            {"job_type": validated["job_type"]},
+        )
 
         input_snapshot = validated["input_snapshot"]
-        if not isinstance(input_snapshot, dict) or "analysis_inputs" not in input_snapshot:
+        if not isinstance(input_snapshot, dict):
             await self._emit(
                 job_id,
                 "PROBING_MEDIA",
@@ -53,18 +83,186 @@ class FoundationAutoClippingWorkflow:
                 "message": "Analysis inputs or media-processing adapters were not available.",
             }
 
+        if "analysis_inputs" in input_snapshot:
+            prepared_analysis_inputs = await workflow.execute_activity(
+                prepare_analysis_inputs,
+                {"input_snapshot": input_snapshot},
+                start_to_close_timeout=timedelta(seconds=30),
+                heartbeat_timeout=timedelta(seconds=10),
+                retry_policy=ACTIVITY_RETRY,
+            )
+            await self._emit(
+                job_id,
+                "PROBING_MEDIA",
+                100,
+                "job.progress",
+                "Prepared structured analysis inputs for the auto-clipping pipeline.",
+                "Analysis inputs are ready.",
+                "RUNNING",
+                {"artifact": "analysis_inputs"},
+            )
+            await self._emit(
+                job_id,
+                "EXTRACTING_AUDIO",
+                100,
+                "job.progress",
+                "Audio extraction stage is satisfied by the prepared MVP analysis inputs.",
+                "Audio preparation is complete.",
+                "RUNNING",
+                {},
+            )
+            await self._emit(
+                job_id,
+                "TRANSCRIBING",
+                100,
+                "job.progress",
+                "Transcript data is available for candidate analysis.",
+                "Transcript is ready.",
+                "RUNNING",
+                {"segment_count": len(prepared_analysis_inputs["transcript"]["segments"])},
+            )
+        else:
+            media_asset_id = _extract_media_asset_id(input_snapshot)
+            if media_asset_id is None:
+                await self._emit(
+                    job_id,
+                    "PROBING_MEDIA",
+                    0,
+                    "job.needs_review",
+                    "A source media asset is required when analysis inputs are not provided.",
+                    "This job needs a ready source media asset before auto clipping can continue.",
+                    "NEEDS_REVIEW",
+                    {"phase": "AUTO_CLIPPING_MVP", "missing": "source.media_asset_id"},
+                )
+                return {
+                    "job_id": job_id,
+                    "status": "NEEDS_REVIEW",
+                    "phase": "AUTO_CLIPPING_MVP",
+                    "message": "A source media asset is required when analysis inputs are not provided.",
+                }
+
+            media_context = await workflow.execute_activity(
+                prepare_media_asset_validation,
+                {"media_asset_id": media_asset_id},
+                start_to_close_timeout=timedelta(seconds=30),
+                heartbeat_timeout=timedelta(seconds=10),
+                retry_policy=ACTIVITY_RETRY,
+            )
+            await self._emit(
+                job_id,
+                "PROBING_MEDIA",
+                100,
+                "job.progress",
+                "Fetched the validated media asset context for pipeline execution.",
+                "Source media is ready.",
+                "RUNNING",
+                {"media_asset_id": media_asset_id},
+            )
+
+            audio_plan = await workflow.execute_activity(
+                prepare_audio_extraction,
+                media_context,
+                start_to_close_timeout=timedelta(seconds=30),
+                heartbeat_timeout=timedelta(seconds=10),
+                retry_policy=ACTIVITY_RETRY,
+            )
+            audio_result = await workflow.execute_activity(
+                execute_audio_extraction,
+                audio_plan,
+                start_to_close_timeout=timedelta(minutes=10),
+                heartbeat_timeout=timedelta(seconds=15),
+                retry_policy=ACTIVITY_RETRY,
+            )
+            await self._emit(
+                job_id,
+                "EXTRACTING_AUDIO",
+                100,
+                "job.progress",
+                "Extracted a mono WAV audio track for speech analysis.",
+                "Audio extraction is complete.",
+                "RUNNING",
+                {
+                    "media_asset_id": media_asset_id,
+                    "sample_rate": audio_result["sample_rate"],
+                },
+            )
+
+            transcription_plan = await workflow.execute_activity(
+                prepare_transcription,
+                {
+                    **audio_result,
+                    "job_id": job_id,
+                    "input_snapshot": input_snapshot,
+                },
+                start_to_close_timeout=timedelta(seconds=30),
+                heartbeat_timeout=timedelta(seconds=10),
+                retry_policy=ACTIVITY_RETRY,
+            )
+            transcription_result = await workflow.execute_activity(
+                execute_transcription,
+                transcription_plan,
+                start_to_close_timeout=timedelta(minutes=15),
+                heartbeat_timeout=timedelta(seconds=15),
+                retry_policy=ACTIVITY_RETRY,
+            )
+            await workflow.execute_activity(
+                submit_transcription_result,
+                transcription_result,
+                start_to_close_timeout=timedelta(seconds=30),
+                heartbeat_timeout=timedelta(seconds=10),
+                retry_policy=ACTIVITY_RETRY,
+            )
+            prepared_analysis_inputs = await workflow.execute_activity(
+                prepare_analysis_inputs_from_transcript,
+                transcription_result,
+                start_to_close_timeout=timedelta(seconds=30),
+                heartbeat_timeout=timedelta(seconds=10),
+                retry_policy=ACTIVITY_RETRY,
+            )
+            await self._emit(
+                job_id,
+                "TRANSCRIBING",
+                100,
+                "job.progress",
+                "Generated transcript segments from the extracted audio track.",
+                "Transcript is ready.",
+                "RUNNING",
+                {
+                    "segment_count": len(prepared_analysis_inputs["transcript"]["segments"]),
+                    "language": prepared_analysis_inputs["transcript"]["language"],
+                },
+            )
+
         analysis_inputs = await workflow.execute_activity(
-            prepare_analysis_inputs,
-            {"input_snapshot": input_snapshot},
+            enrich_analysis_inputs,
+            {
+                "input_snapshot": input_snapshot,
+                "analysis_inputs": prepared_analysis_inputs,
+            },
             start_to_close_timeout=timedelta(seconds=30),
             heartbeat_timeout=timedelta(seconds=10),
             retry_policy=ACTIVITY_RETRY,
         )
-        await self._emit(job_id, "PROBING_MEDIA", 100, "job.progress", "Prepared structured analysis inputs for the auto-clipping pipeline.", "Analysis inputs are ready.", "RUNNING", {"artifact": "analysis_inputs"})
-        await self._emit(job_id, "EXTRACTING_AUDIO", 100, "job.progress", "Audio extraction stage is satisfied by the prepared MVP analysis inputs.", "Audio preparation is complete.", "RUNNING", {})
-        await self._emit(job_id, "TRANSCRIBING", 100, "job.progress", "Transcript data is available for candidate analysis.", "Transcript is ready.", "RUNNING", {"segment_count": len(analysis_inputs["transcript"]["segments"])})
-        await self._emit(job_id, "DETECTING_SCENES", 100, "job.progress", "Scene markers are ready for boundary-aware clipping.", "Scene detection is ready.", "RUNNING", {"scene_count": len(analysis_inputs.get("scenes", []))})
-        await self._emit(job_id, "DETECTING_SILENCE", 100, "job.progress", "Silence markers are ready for natural boundary adjustments.", "Silence detection is ready.", "RUNNING", {"silence_count": len(analysis_inputs.get("silences", []))})
+        await self._emit(
+            job_id,
+            "DETECTING_SCENES",
+            100,
+            "job.progress",
+            "Scene markers are ready for boundary-aware clipping.",
+            "Scene detection is ready.",
+            "RUNNING",
+            {"scene_count": len(analysis_inputs.get("scenes", []))},
+        )
+        await self._emit(
+            job_id,
+            "DETECTING_SILENCE",
+            100,
+            "job.progress",
+            "Silence markers are ready for natural boundary adjustments.",
+            "Silence detection is ready.",
+            "RUNNING",
+            {"silence_count": len(analysis_inputs.get("silences", []))},
+        )
 
         output_summary = await workflow.execute_activity(
             analyze_phase2_candidates,
@@ -75,13 +273,76 @@ class FoundationAutoClippingWorkflow:
         )
         candidate_count = int(output_summary["candidate_count"])
 
-        await self._emit(job_id, "ANALYZING_CLIP_CANDIDATES", 100, "job.progress", "Generated structured clip candidates from transcript, scene, and silence inputs.", "Clip candidates are ready.", "RUNNING", {"candidate_count": candidate_count})
-        await self._emit(job_id, "NORMALIZING_BOUNDARIES", 100, "job.progress", "Adjusted candidate boundaries toward natural pauses and nearby scene edges.", "Clip boundaries were normalized.", "RUNNING", {"candidate_count": candidate_count})
-        await self._emit(job_id, "RANKING_AND_DEDUPLICATING", 100, "job.progress", "Ranked candidates by viral score and removed heavy overlaps.", "Candidates were ranked.", "RUNNING", {"candidate_count": candidate_count})
-        await self._emit(job_id, "GENERATING_PREVIEWS", 100, "job.progress", "Prepared preview-ready candidate metadata for the review surface.", "Preview metadata is ready.", "RUNNING", {"candidate_count": candidate_count})
-        await self._emit(job_id, "GENERATING_METADATA", 100, "job.progress", "Generated titles, captions, CTAs, hashtags, and score breakdowns.", "Clip metadata is ready.", "RUNNING", {"candidate_count": candidate_count})
-        await self._emit(job_id, "UPLOADING_OUTPUTS", 100, "job.progress", "Stored MVP output summary for the completed job.", "Results were attached to the job.", "RUNNING", {"output_summary": output_summary})
-        await self._emit(job_id, "UPLOADING_OUTPUTS", 100, "job.completed", "Phase 2 MVP analysis completed successfully.", "Auto-clipping analysis is complete.", "COMPLETED", {"output_summary": output_summary})
+        await self._emit(
+            job_id,
+            "ANALYZING_CLIP_CANDIDATES",
+            100,
+            "job.progress",
+            "Generated structured clip candidates from transcript, scene, and silence inputs.",
+            "Clip candidates are ready.",
+            "RUNNING",
+            {"candidate_count": candidate_count},
+        )
+        await self._emit(
+            job_id,
+            "NORMALIZING_BOUNDARIES",
+            100,
+            "job.progress",
+            "Adjusted candidate boundaries toward natural pauses and nearby scene edges.",
+            "Clip boundaries were normalized.",
+            "RUNNING",
+            {"candidate_count": candidate_count},
+        )
+        await self._emit(
+            job_id,
+            "RANKING_AND_DEDUPLICATING",
+            100,
+            "job.progress",
+            "Ranked candidates by viral score and removed heavy overlaps.",
+            "Candidates were ranked.",
+            "RUNNING",
+            {"candidate_count": candidate_count},
+        )
+        await self._emit(
+            job_id,
+            "GENERATING_PREVIEWS",
+            100,
+            "job.progress",
+            "Prepared preview-ready candidate metadata for the review surface.",
+            "Preview metadata is ready.",
+            "RUNNING",
+            {"candidate_count": candidate_count},
+        )
+        await self._emit(
+            job_id,
+            "GENERATING_METADATA",
+            100,
+            "job.progress",
+            "Generated titles, captions, CTAs, hashtags, and score breakdowns.",
+            "Clip metadata is ready.",
+            "RUNNING",
+            {"candidate_count": candidate_count},
+        )
+        await self._emit(
+            job_id,
+            "UPLOADING_OUTPUTS",
+            100,
+            "job.progress",
+            "Stored MVP output summary for the completed job.",
+            "Results were attached to the job.",
+            "RUNNING",
+            {"output_summary": output_summary},
+        )
+        await self._emit(
+            job_id,
+            "UPLOADING_OUTPUTS",
+            100,
+            "job.completed",
+            "Phase 2 MVP analysis completed successfully.",
+            "Auto-clipping analysis is complete.",
+            "COMPLETED",
+            {"output_summary": output_summary},
+        )
         return {
             "job_id": job_id,
             "status": "COMPLETED",
@@ -121,3 +382,13 @@ class FoundationAutoClippingWorkflow:
             start_to_close_timeout=timedelta(seconds=20),
             retry_policy=ACTIVITY_RETRY,
         )
+
+
+def _extract_media_asset_id(input_snapshot: dict[str, Any]) -> str | None:
+    source = input_snapshot.get("source")
+    if not isinstance(source, dict):
+        return None
+    media_asset_id = source.get("media_asset_id")
+    if isinstance(media_asset_id, str) and media_asset_id:
+        return media_asset_id
+    return None

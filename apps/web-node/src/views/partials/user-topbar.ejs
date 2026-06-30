@@ -1,0 +1,31 @@
+<header class="workspace-topbar">
+  <div class="workspace-topbar__inner">
+    <a class="workspace-brand" href="/app/dashboard">
+      <span class="workspace-brand__mark">AI</span>
+      <span class="workspace-brand__text"><%= appName %></span>
+    </a>
+
+    <nav class="workspace-nav">
+      <a class="workspace-nav__link <%= path === '/app/dashboard' ? 'active' : '' %>" href="/app/dashboard">Dashboard</a>
+      <a class="workspace-nav__link <%= path.includes('/app/tools') ? 'active' : '' %>" href="/app/tools/auto-clipping">Tools AI</a>
+      <a class="workspace-nav__link <%= path.startsWith('/app/jobs') ? 'active' : '' %>" href="/app/jobs">Hasil Clipping</a>
+      <a class="workspace-nav__link <%= path.startsWith('/app/media') ? 'active' : '' %>" href="/app/media">Media</a>
+      <a class="workspace-nav__link <%= path.startsWith('/app/presets') ? 'active' : '' %>" href="/app/presets">Templates</a>
+      <a class="workspace-nav__link <%= path.startsWith('/app/settings') ? 'active' : '' %>" href="/app/settings">Settings</a>
+      <% if (identity?.permissions?.has('admin.dashboard.view')) { %>
+        <a class="workspace-nav__link workspace-nav__link--admin <%= path.startsWith('/admin') ? 'active' : '' %>" href="/admin/dashboard">Admin</a>
+      <% } %>
+    </nav>
+
+    <div class="workspace-account">
+      <div class="workspace-account__meta">
+        <strong><%= currentUser?.displayName ?? 'Workspace User' %></strong>
+        <span><%= currentUser?.email ?? '' %></span>
+      </div>
+      <% if (impersonation) { %>
+        <button class="btn btn-sm btn-outline-warning" data-api-action="/api/v1/admin/impersonation/stop">Stop View As</button>
+      <% } %>
+      <button class="btn btn-sm btn-outline-light" data-api-action="/api/v1/auth/logout">Logout</button>
+    </div>
+  </div>
+</header>

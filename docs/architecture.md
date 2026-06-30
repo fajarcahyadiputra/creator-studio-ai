@@ -59,6 +59,12 @@ Python activities call a service-authenticated internal endpoint. Node atomicall
 
 This avoids treating Redis as durable storage and prevents Temporal history from becoming the only UI data source.
 
+## Media validation boundary
+
+Uploaded media lands in object storage first. The Node upload flow only validates request-shape concerns such as ownership, MIME/extension, size, and multipart integrity. Deeper media inspection such as FFprobe-derived duration, resolution, codecs, frame rate, rotation, and audio-stream presence belongs to Python workers. Python then reports the validation result back to Node through a service-authenticated internal endpoint so PostgreSQL remains the source of truth for `MediaAsset` readiness.
+
+The same boundary now extends into the early Phase 2 auto-clipping pipeline. When a job does not include precomputed `analysis_inputs`, the Python workflow can fetch a validated media asset context, extract a stable WAV audio artifact, run transcription, and derive minimal transcript-first analysis inputs before candidate ranking begins.
+
 ## Multi-tenancy
 
 The initial model uses a shared database and schema. Every tenant-owned query includes `userId` or traverses a tenant-owned aggregate. Signed media URLs are generated only after an ownership or admin-permission check.

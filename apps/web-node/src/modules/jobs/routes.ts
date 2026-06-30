@@ -6,7 +6,8 @@ import { routeParam } from "../../shared/http/route-param.js";
 import { requireAuth } from "../auth/identity-middleware.js";
 import { writeAudit } from "../audit/audit-service.js";
 import { autoClipJobSchema, clipCandidateSelectionSchema, retryJobSchema } from "./schemas.js";
-import { assertIdempotencyKey, JobService, serializeJob } from "./job-service.js";
+import { AppError } from "../../shared/errors/app-error.js";
+import { assertIdempotencyKey, type ClipOutputArtifact, JobService, serializeJob } from "./job-service.js";
 import type { JobEventBus } from "./job-event-bus.js";
 
 function serializeClipOutput(output: {
@@ -26,7 +27,52 @@ function serializeClipOutput(output: {
   height: number | null;
   createdAt: Date;
   updatedAt: Date;
+  subtitles?: Array<{
+    id: string;
+    format: string;
+    language: string;
+    objectKey: string;
+    isBurnedIn: boolean;
+    createdAt: Date;
+  }>;
 }) {
+  const renderSettings =
+    output.renderSettings && typeof output.renderSettings === "object" && !Array.isArray(output.renderSettings)
+      ? (output.renderSettings as Record<string, unknown>)
+      : {};
+  const qualityReport =
+    output.qualityReport && typeof output.qualityReport === "object" && !Array.isArray(output.qualityReport)
+      ? (output.qualityReport as Record<string, unknown>)
+      : {};
+  const visual =
+    renderSettings.visual && typeof renderSettings.visual === "object" && !Array.isArray(renderSettings.visual)
+      ? (renderSettings.visual as Record<string, unknown>)
+      : {};
+  const strategy =
+    renderSettings.strategy && typeof renderSettings.strategy === "object" && !Array.isArray(renderSettings.strategy)
+      ? (renderSettings.strategy as Record<string, unknown>)
+      : {};
+  const subtitle =
+    qualityReport.subtitle && typeof qualityReport.subtitle === "object" && !Array.isArray(qualityReport.subtitle)
+      ? (qualityReport.subtitle as Record<string, unknown>)
+      : {};
+  const candidate =
+    qualityReport.candidate && typeof qualityReport.candidate === "object" && !Array.isArray(qualityReport.candidate)
+      ? (qualityReport.candidate as Record<string, unknown>)
+      : {};
+  const metadata =
+    qualityReport.metadata && typeof qualityReport.metadata === "object" && !Array.isArray(qualityReport.metadata)
+      ? (qualityReport.metadata as Record<string, unknown>)
+      : {};
+  const validation =
+    qualityReport.validation && typeof qualityReport.validation === "object" && !Array.isArray(qualityReport.validation)
+      ? (qualityReport.validation as Record<string, unknown>)
+      : {};
+  const validationChecks =
+    validation.checks && typeof validation.checks === "object" && !Array.isArray(validation.checks)
+      ? (validation.checks as Record<string, unknown>)
+      : {};
+
   return {
     id: output.id,
     candidate_id: output.candidateId,
@@ -42,6 +88,42 @@ function serializeClipOutput(output: {
     duration_ms: output.durationMs?.toString() ?? null,
     width: output.width,
     height: output.height,
+    output_summary: {
+      aspect_ratio: typeof visual.aspect_ratio === "string" ? visual.aspect_ratio : null,
+      target_platform: typeof strategy.target_platform === "string" ? strategy.target_platform : null,
+      objective: typeof strategy.objective === "string" ? strategy.objective : null,
+      renderer: typeof qualityReport.renderer === "string" ? qualityReport.renderer : null,
+      render_status: typeof qualityReport.status === "string" ? qualityReport.status : null,
+      candidate_title: typeof candidate.title === "string" ? candidate.title : null,
+      clip_start_ms: typeof candidate.start_ms === "string" ? candidate.start_ms : null,
+      clip_end_ms: typeof candidate.end_ms === "string" ? candidate.end_ms : null,
+      suggested_caption: typeof metadata.suggested_caption === "string" ? metadata.suggested_caption : null,
+      suggested_hashtags: Array.isArray(metadata.suggested_hashtags)
+        ? metadata.suggested_hashtags.filter((value): value is string => typeof value === "string")
+        : [],
+      retention_level: typeof metadata.retention_level === "string" ? metadata.retention_level : null,
+      validation_status: typeof validation.status === "string" ? validation.status : null,
+      output_playable: typeof validationChecks.playable === "boolean" ? validationChecks.playable : null,
+      resolution_matches_target:
+        typeof validationChecks.resolution_matches_target === "boolean"
+          ? validationChecks.resolution_matches_target
+          : null,
+      audio_present: typeof validationChecks.audio_present === "boolean" ? validationChecks.audio_present : null,
+      subtitle_format: typeof subtitle.format === "string" ? subtitle.format : null,
+      subtitle_language: typeof subtitle.language === "string" ? subtitle.language : null,
+      subtitle_burned_in: typeof subtitle.burned_in === "boolean" ? subtitle.burned_in : null
+    },
+    subtitles: Array.isArray(output.subtitles)
+      ? output.subtitles.map((subtitleAsset) => ({
+          id: subtitleAsset.id,
+          format: subtitleAsset.format,
+          language: subtitleAsset.language,
+          object_key: subtitleAsset.objectKey,
+          is_burned_in: subtitleAsset.isBurnedIn,
+          artifact: `subtitle_${subtitleAsset.format.toLowerCase()}`,
+          created_at: subtitleAsset.createdAt.toISOString()
+        }))
+      : [],
     created_at: output.createdAt.toISOString(),
     updated_at: output.updatedAt.toISOString()
   };
@@ -49,6 +131,7 @@ function serializeClipOutput(output: {
 
 function serializeClipCandidate(candidate: {
   id: string;
+  transcriptId: string | null;
   candidateExternalId: string;
   startMs: bigint;
   endMs: bigint;
@@ -75,6 +158,7 @@ function serializeClipCandidate(candidate: {
 }) {
   return {
     id: candidate.id,
+    transcript_id: candidate.transcriptId,
     candidate_id: candidate.candidateExternalId,
     start_ms: candidate.startMs.toString(),
     end_ms: candidate.endMs.toString(),
@@ -201,6 +285,82 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
         request
       });
       response.status(202).json({ data: serializeJob(job) });
+    })
+  );
+
+  router.get(
+    "/app/jobs/:jobId/export-index",
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      const exportIndex = await jobService.createJobOutputsExportIndex(
+        request.identity!.effectiveUserId,
+        routeParam(request.params.jobId, "jobId")
+      );
+      response.setHeader("Content-Type", "application/json");
+      response.setHeader(
+        "Content-Disposition",
+        `attachment; filename="job-${exportIndex.jobId.slice(0, 8)}-outputs-export-index.json"`
+      );
+      response.json({
+        data: {
+          job_id: exportIndex.jobId,
+          status: exportIndex.status,
+          clip_outputs: exportIndex.clipOutputs.map((clipOutput) => ({
+            clip_output_id: clipOutput.clipOutputId,
+            candidate_id: clipOutput.candidateId,
+            quality_status: clipOutput.qualityStatus,
+            artifacts: clipOutput.artifacts.map((artifact) => ({
+              artifact: artifact.artifact,
+              label: artifact.label,
+              url: artifact.url
+            }))
+          }))
+        }
+      });
+    })
+  );
+
+  router.get(
+    "/app/jobs/:jobId/outputs/:clipOutputId/download",
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      const url = await jobService.createClipOutputArtifactUrl(
+        request.identity!.effectiveUserId,
+        routeParam(request.params.jobId, "jobId"),
+        routeParam(request.params.clipOutputId, "clipOutputId"),
+        parseClipOutputArtifact(request.query.artifact)
+      );
+      response.redirect(url);
+    })
+  );
+
+  router.get(
+    "/app/jobs/:jobId/outputs/:clipOutputId/export-index",
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      const exportIndex = await jobService.createClipOutputExportIndex(
+        request.identity!.effectiveUserId,
+        routeParam(request.params.jobId, "jobId"),
+        routeParam(request.params.clipOutputId, "clipOutputId")
+      );
+      response.setHeader("Content-Type", "application/json");
+      response.setHeader(
+        "Content-Disposition",
+        `attachment; filename="clip-output-${exportIndex.clipOutputId.slice(0, 8)}-export-index.json"`
+      );
+      response.json({
+        data: {
+          clip_output_id: exportIndex.clipOutputId,
+          job_id: exportIndex.jobId,
+          candidate_id: exportIndex.candidateId,
+          quality_status: exportIndex.qualityStatus,
+          artifacts: exportIndex.artifacts.map((artifact) => ({
+            artifact: artifact.artifact,
+            label: artifact.label,
+            url: artifact.url
+          }))
+        }
+      });
     })
   );
 
@@ -340,7 +500,8 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
         metadata: {
           selected_candidate_count: result.selectedCount,
           created_clip_output_count: result.createdCount,
-          existing_clip_output_count: result.existingCount
+          existing_clip_output_count: result.existingCount,
+          started_render_workflow_count: result.startedWorkflowCount
         },
         request
       });
@@ -350,10 +511,44 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
           selected_candidate_count: result.selectedCount,
           created_clip_output_count: result.createdCount,
           existing_clip_output_count: result.existingCount,
+          started_render_workflow_count: result.startedWorkflowCount,
           message:
             result.createdCount > 0
               ? `Queued ${result.createdCount} selected candidate(s) for render preparation.`
               : "All selected candidates already have pending clip outputs."
+        }
+      });
+    })
+  );
+
+  router.post(
+    "/api/v1/jobs/:jobId/outputs/:clipOutputId/rerender",
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      const jobId = routeParam(request.params.jobId, "jobId");
+      const clipOutputId = routeParam(request.params.clipOutputId, "clipOutputId");
+      const result = await jobService.rerenderClipOutput({
+        userId: request.identity!.effectiveUserId,
+        jobId,
+        clipOutputId
+      });
+      await writeAudit({
+        actorUserId: request.identity!.actorUserId,
+        targetUserId: request.identity!.effectiveUserId,
+        action: "CLIP_OUTPUT_RERENDER_REQUESTED",
+        resourceType: "ClipOutput",
+        resourceId: clipOutputId,
+        metadata: {
+          job_id: jobId,
+          quality_status: result.qualityStatus
+        },
+        request
+      });
+      response.status(202).json({
+        data: {
+          clip_output_id: result.clipOutputId,
+          quality_status: result.qualityStatus,
+          message: "Clip output rerender queued."
         }
       });
     })
@@ -426,4 +621,26 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
   );
 
   return router;
+}
+
+function parseClipOutputArtifact(value: unknown): ClipOutputArtifact {
+  if (
+    value === "preview"
+    || value === "final"
+    || value === "metadata"
+    || value === "thumbnail"
+    || value === "subtitle"
+    || value === "subtitle_srt"
+    || value === "subtitle_ass"
+    || value === "subtitle_vtt"
+    || value === "subtitle_json"
+  ) {
+    return value;
+  }
+
+  throw new AppError({
+    code: "INVALID_CLIP_OUTPUT_ARTIFACT",
+    message: "A valid clip output artifact is required.",
+    statusCode: 400
+  });
 }

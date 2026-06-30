@@ -1,0 +1,64 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<div class="app-shell"><%- include('../partials/admin-sidebar') %><main class="content-area">
+  <header class="page-header">
+    <div>
+      <span class="eyebrow">Runtime health</span>
+      <h1>Workers & Queue Health</h1>
+      <p>Operational snapshot of core dependencies, queue pressure, job backlog, and provider health metadata.</p>
+    </div>
+    <a class="btn btn-outline-primary" href="/admin/dashboard">Back to dashboard</a>
+  </header>
+
+  <section class="stat-grid">
+    <% services.forEach((service) => { %>
+      <article class="stat-card">
+        <span><%= service.name %></span>
+        <strong><%= service.status %></strong>
+        <small><%= service.detail %></small>
+      </article>
+    <% }) %>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Job backlog</h2>
+        <p>Current aggregate job counts across all statuses.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="row g-3">
+        <% Object.entries(jobBacklog).forEach(([status, count]) => { %>
+          <div class="col-md-3"><div class="border rounded-4 p-3"><strong><%= status %></strong><br><span><%= count %></span></div></div>
+        <% }) %>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Provider health snapshot</h2>
+        <p>Derived from admin-managed provider metadata and credential counts.</p>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table align-middle">
+        <thead><tr><th>Provider</th><th>Status</th><th>Enabled</th><th>Models</th><th>Credentials</th><th>Timeout</th></tr></thead>
+        <tbody>
+          <% providers.forEach((provider) => { %>
+            <tr>
+              <td><strong><%= provider.displayName %></strong><br><small><%= provider.code %></small></td>
+              <td><%= provider.healthStatus %></td>
+              <td><%= provider.enabled ? 'true' : 'false' %></td>
+              <td><%= provider._count.models %></td>
+              <td><%= provider._count.credentials %></td>
+              <td><%= provider.timeoutMs %> ms</td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main></div>
+<%- include('../partials/footer') %>
