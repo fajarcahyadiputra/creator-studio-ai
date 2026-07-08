@@ -1,12 +1,28 @@
 import { Router } from "express";
+import { z } from "zod";
+import { env } from "../../config/env.js";
 import { JobStatus, JobType } from "../../generated/prisma/enums.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
+import { createPublicSignedObjectReadUrl } from "../../infrastructure/storage/s3.js";
 import { asyncHandler } from "../../shared/http/async-handler.js";
+import { validateBody } from "../../shared/http/validate.js";
 import { requireAuth, requirePermission } from "../auth/identity-middleware.js";
+import { listLocalTtsModels } from "../tts/local-tts-model-registry.js";
 
 export const dashboardRouter = Router();
 
 const DASHBOARD_DAYS = 7;
+const ttsModelPreviewSchema = z.object({
+  model_key: z.string().trim().min(1).max(200),
+  text: z.string().trim().min(1).max(500).optional()
+});
+const TERMINAL_JOB_DISPLAY_STAGE: Partial<Record<JobStatus, string>> = {
+  COMPLETED: "COMPLETED",
+  FAILED: "FAILED",
+  CANCELED: "CANCELED",
+  PARTIALLY_COMPLETED: "PARTIALLY_COMPLETED",
+  NEEDS_REVIEW: "NEEDS_REVIEW"
+};
 
 dashboardRouter.get(
   "/app/dashboard",
@@ -196,7 +212,9 @@ dashboardRouter.get(
       where: { id: jobId, userId: request.identity!.effectiveUserId, deletedAt: null },
       include: {
         project: { select: { name: true } },
-        sourceMediaAsset: { select: { displayName: true, durationMs: true } },
+        sourceMediaAsset: { select: { displayName: true, durationMs: true, objectKey: true, mimeType: true } },
+        autoClipRequest: true,
+        ttsRequest: true,
         attempts: { orderBy: { attemptNumber: "desc" } },
         errors: { orderBy: { occurredAt: "desc" } },
         stages: { orderBy: { createdAt: "asc" } },
@@ -224,7 +242,8 @@ dashboardRouter.get(
           sourceSummary: null,
           analysisVersion: null,
           candidateCount: 0,
-          analyzer: null
+          analyzer: null,
+          requestSnapshot: null
         },
         csrfToken: request.session.csrfToken
       });
@@ -240,60 +259,25 @@ dashboardRouter.get(
       job.outputSummary && typeof job.outputSummary === "object" && !Array.isArray(job.outputSummary)
         ? (job.outputSummary as Record<string, unknown>)
         : null;
+    const progressView = resolveJobProgressView(job.status, job.progressPercent, job.currentStage);
     const analyzer =
       outputSummary?.analyzer && typeof outputSummary.analyzer === "object" && !Array.isArray(outputSummary.analyzer)
         ? (outputSummary.analyzer as Record<string, unknown>)
         : null;
-    const candidates = job.clipCandidates.map((candidate) => {
-      const scoreBreakdown =
-        candidate.scoreBreakdown && typeof candidate.scoreBreakdown === "object" && !Array.isArray(candidate.scoreBreakdown)
-          ? (candidate.scoreBreakdown as Record<string, unknown>)
-          : {};
-      const metadataSuggestions =
-        candidate.metadataSuggestions &&
-        typeof candidate.metadataSuggestions === "object" &&
-        !Array.isArray(candidate.metadataSuggestions)
-          ? (candidate.metadataSuggestions as Record<string, unknown>)
-          : {};
-      const hashtags = Array.isArray(metadataSuggestions.suggested_hashtags)
-        ? metadataSuggestions.suggested_hashtags.filter((tag): tag is string => typeof tag === "string")
-        : [];
-
-      return {
-        id: candidate.id,
-        candidateId: candidate.candidateExternalId,
-        title: candidate.title,
-        hookText: candidate.hookText,
-        summary: candidate.summary,
-        contentCategory: candidate.contentCategory,
-        finalViralScore: Number(candidate.finalViralScore),
-        startSeconds: Number(candidate.startMs) / 1000,
-        endSeconds: Number(candidate.endMs) / 1000,
-        durationSeconds: Number(candidate.durationMs) / 1000,
-        hashtags,
-        rank: candidate.rank,
-        selected: candidate.selected,
-        suggestedCaption: typeof metadataSuggestions.suggested_caption === "string" ? metadataSuggestions.suggested_caption : null,
-        hookSecond: typeof metadataSuggestions.hook_second === "number" ? metadataSuggestions.hook_second : null,
-        mainPointSecond:
-          typeof metadataSuggestions.main_point_second === "number" ? metadataSuggestions.main_point_second : null,
-        punchlineSecond:
-          typeof metadataSuggestions.punchline_second === "number" ? metadataSuggestions.punchline_second : null,
-        retentionLevel:
-          typeof metadataSuggestions.retention_level === "string" ? metadataSuggestions.retention_level : null,
-        requiresContext:
-          typeof metadataSuggestions.requires_context === "boolean" ? metadataSuggestions.requires_context : null,
-        canStandalone:
-          typeof metadataSuggestions.can_standalone === "boolean" ? metadataSuggestions.can_standalone : null
-      };
-    });
-
-    response.render("app/job-detail", {
-      title: `Job ${job.id.slice(0, 8)}`,
-      job,
-      events,
-      candidates,
-      clipOutputs: job.clipOutputs.map((output) => {
+    const sourceMediaPlaybackUrl = job.sourceMediaAsset?.objectKey
+      ? await createPublicSignedObjectReadUrl(job.sourceMediaAsset.objectKey)
+      : null;
+    const strategyConfig = toJsonRecord(job.autoClipRequest?.strategyConfig);
+    const visualConfig = toJsonRecord(job.autoClipRequest?.visualConfig);
+    const subtitleConfig = toJsonRecord(job.autoClipRequest?.subtitleConfig);
+    const providerConfig = toJsonRecord(job.autoClipRequest?.providerConfigSnapshot);
+    const ttsOutputConfig = toJsonRecord(job.ttsRequest?.outputConfig);
+    const ttsInputSnapshot = toJsonRecord(job.inputSnapshot);
+    const ttsSummary =
+      outputSummary?.tts && typeof outputSummary.tts === "object" && !Array.isArray(outputSummary.tts)
+        ? (outputSummary.tts as Record<string, unknown>)
+        : null;
+    const clipOutputs = await Promise.all(job.clipOutputs.map(async (output) => {
         const renderSettings =
           output.renderSettings && typeof output.renderSettings === "object" && !Array.isArray(output.renderSettings)
             ? (output.renderSettings as Record<string, unknown>)
@@ -345,6 +329,15 @@ dashboardRouter.get(
         const validationWarnings = Array.isArray(qualityValidation.warnings)
           ? qualityValidation.warnings.filter((warning): warning is string => typeof warning === "string" && warning.trim().length > 0)
           : [];
+        const previewPlaybackUrl = output.previewObjectKey
+          ? await createPublicSignedObjectReadUrl(output.previewObjectKey)
+          : null;
+        const finalPlaybackUrl = output.finalObjectKey
+          ? await createPublicSignedObjectReadUrl(output.finalObjectKey)
+          : null;
+        const thumbnailPlaybackUrl = output.thumbnailObjectKey
+          ? await createPublicSignedObjectReadUrl(output.thumbnailObjectKey)
+          : null;
 
         return {
           id: output.id,
@@ -433,9 +426,94 @@ dashboardRouter.get(
           retentionLevel:
             typeof metadata.retention_level === "string" ? metadata.retention_level : null,
           suggestedCaption:
-            typeof metadata.suggested_caption === "string" ? metadata.suggested_caption : null
+            typeof metadata.suggested_caption === "string" ? metadata.suggested_caption : null,
+          thumbnailPlaybackUrl,
+          previewPlaybackUrl,
+          finalPlaybackUrl
         };
-      }),
+      }));
+    const clipOutputByCandidateId = new Map(clipOutputs.map((output) => [output.candidateId, output]));
+    const candidates = job.clipCandidates.map((candidate) => {
+      const scoreBreakdown =
+        candidate.scoreBreakdown && typeof candidate.scoreBreakdown === "object" && !Array.isArray(candidate.scoreBreakdown)
+          ? (candidate.scoreBreakdown as Record<string, unknown>)
+          : {};
+      const whyItWorks =
+        Array.isArray(candidate.whyItWorks)
+          ? candidate.whyItWorks.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+          : [];
+      const metadataSuggestions =
+        candidate.metadataSuggestions &&
+        typeof candidate.metadataSuggestions === "object" &&
+        !Array.isArray(candidate.metadataSuggestions)
+          ? (candidate.metadataSuggestions as Record<string, unknown>)
+          : {};
+      const safetyNotes = Array.isArray(candidate.safetyNotes)
+        ? candidate.safetyNotes.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        : [];
+      const hashtags = Array.isArray(metadataSuggestions.suggested_hashtags)
+        ? metadataSuggestions.suggested_hashtags.filter((tag): tag is string => typeof tag === "string")
+        : [];
+      const linkedClipOutput = clipOutputByCandidateId.get(candidate.id);
+      const previewUsesSourceTimeline = !linkedClipOutput?.previewPlaybackUrl && !linkedClipOutput?.finalPlaybackUrl;
+
+      return {
+        id: candidate.id,
+        candidateId: candidate.candidateExternalId,
+        title: candidate.title,
+        hookText: candidate.hookText,
+        endingText: candidate.endingText,
+        summary: candidate.summary,
+        whyItWorks,
+        contentCategory: candidate.contentCategory,
+        contextComplete: candidate.contextComplete,
+        finalViralScore: Number(candidate.finalViralScore),
+        startSeconds: Number(candidate.startMs) / 1000,
+        endSeconds: Number(candidate.endMs) / 1000,
+        durationSeconds: Number(candidate.durationMs) / 1000,
+        hashtags,
+        rank: candidate.rank,
+        selected: candidate.selected,
+        safetyNotes,
+        scoreSummary: {
+          hookStrength: toOptionalNumber(scoreBreakdown.hook_strength),
+          shareability: toOptionalNumber(scoreBreakdown.shareability),
+          emotionalPull: toOptionalNumber(scoreBreakdown.emotional_pull),
+          clarity: toOptionalNumber(scoreBreakdown.clarity)
+        },
+        suggestedCaption: typeof metadataSuggestions.suggested_caption === "string" ? metadataSuggestions.suggested_caption : null,
+        hookSecond: typeof metadataSuggestions.hook_second === "number" ? metadataSuggestions.hook_second : null,
+        mainPointSecond:
+          typeof metadataSuggestions.main_point_second === "number" ? metadataSuggestions.main_point_second : null,
+        punchlineSecond:
+          typeof metadataSuggestions.punchline_second === "number" ? metadataSuggestions.punchline_second : null,
+        retentionLevel:
+          typeof metadataSuggestions.retention_level === "string" ? metadataSuggestions.retention_level : null,
+        requiresContext:
+          typeof metadataSuggestions.requires_context === "boolean" ? metadataSuggestions.requires_context : null,
+        canStandalone:
+          typeof metadataSuggestions.can_standalone === "boolean" ? metadataSuggestions.can_standalone : null,
+        previewVideoUrl: linkedClipOutput?.previewPlaybackUrl ?? linkedClipOutput?.finalPlaybackUrl ?? sourceMediaPlaybackUrl,
+        previewMimeType:
+          linkedClipOutput?.previewPlaybackUrl || linkedClipOutput?.finalPlaybackUrl
+            ? "video/mp4"
+            : (job.sourceMediaAsset?.mimeType ?? null),
+        previewUsesSourceTimeline,
+        previewLabel: previewUsesSourceTimeline ? "Source preview" : "Rendered clip preview",
+        previewActionLabel: previewUsesSourceTimeline ? "Open source video" : "Open rendered clip"
+      };
+    });
+
+    response.render("app/job-detail", {
+      title: `Job ${job.id.slice(0, 8)}`,
+      job: {
+        ...job,
+        progressPercent: progressView.percent,
+        currentStage: progressView.stage
+      },
+      events,
+      candidates,
+      clipOutputs,
       outputSummary: {
         sourceSummary: typeof outputSummary?.source_summary === "string" ? outputSummary.source_summary : null,
         analysisVersion: typeof outputSummary?.analysis_version === "string" ? outputSummary.analysis_version : null,
@@ -456,10 +534,245 @@ dashboardRouter.get(
               latencyMs: typeof analyzer.latency_ms === "number" ? analyzer.latency_ms : null,
               fallbackReason: typeof analyzer.fallback_reason === "string" ? analyzer.fallback_reason : null
             }
+          : null,
+        tts: ttsSummary
+          ? {
+              segmentCount: typeof ttsSummary.segment_count === "number" ? ttsSummary.segment_count : 0,
+              totalPauseMs: typeof ttsSummary.total_pause_ms === "number" ? ttsSummary.total_pause_ms : 0,
+              previewSegments: Array.isArray(ttsSummary.preview_segments)
+                ? ttsSummary.preview_segments
+                    .filter((segment): segment is Record<string, unknown> => Boolean(segment && typeof segment === "object"))
+                    .slice(0, 5)
+                    .map((segment) => ({
+                      id: typeof segment.id === "number" ? segment.id : null,
+                      text: typeof segment.text === "string" ? segment.text : "",
+                      pauseAfter: typeof segment.pause_after === "number" ? segment.pause_after : null,
+                      emotion: typeof segment.emotion === "string" ? segment.emotion : null,
+                      speed: typeof segment.speed === "string" ? segment.speed : null,
+                      emphasis: typeof segment.emphasis === "string" ? segment.emphasis : null
+                    }))
+                : [],
+              metadata:
+                ttsSummary.metadata && typeof ttsSummary.metadata === "object" && !Array.isArray(ttsSummary.metadata)
+                  ? (ttsSummary.metadata as Record<string, unknown>)
+                  : null
+            }
+          : null,
+        requestSnapshot: job.autoClipRequest
+          ? {
+              sourceType: job.autoClipRequest.sourceType,
+              sourceLanguage: job.autoClipRequest.sourceLanguage ?? null,
+              speakerCount: job.autoClipRequest.speakerCount ?? null,
+              topic: job.autoClipRequest.topic ?? null,
+              contentTitle: job.autoClipRequest.contentTitle ?? null,
+              contentContext: job.autoClipRequest.contentContext ?? null,
+              customVocabulary: toStringArray(job.autoClipRequest.customVocabulary),
+              strategy: {
+                targetPlatform: toOptionalString(strategyConfig.target_platform),
+                objective: toOptionalString(strategyConfig.objective),
+                tones: toStringArray(strategyConfig.tones),
+                desiredClipCount: toOptionalNumber(strategyConfig.desired_clip_count),
+                candidatePoolCount: toOptionalNumber(strategyConfig.candidate_pool_count),
+                minimumDurationSeconds: toOptionalNumber(strategyConfig.minimum_duration_seconds),
+                maximumDurationSeconds: toOptionalNumber(strategyConfig.maximum_duration_seconds),
+                minimumViralScore: toOptionalNumber(strategyConfig.minimum_viral_score),
+                preferredTopics: toStringArray(strategyConfig.preferred_topics),
+                topicsToAvoid: toStringArray(strategyConfig.topics_to_avoid),
+                sensitiveTopics: toStringArray(strategyConfig.sensitive_topics),
+                clipStyleTags: toStringArray(strategyConfig.clip_style_tags),
+                viralityPriorities: toStringArray(strategyConfig.virality_priorities),
+                selectionBrief: toOptionalString(strategyConfig.selection_brief),
+                avoidanceBrief: toOptionalString(strategyConfig.avoidance_brief),
+                packagingBrief: toOptionalString(strategyConfig.packaging_brief),
+                hookStyle: toOptionalString(strategyConfig.hook_style),
+                ctaPreference: toOptionalString(strategyConfig.cta_preference),
+                standalonePriority: toOptionalString(strategyConfig.standalone_priority),
+                requireSpokenAudio: toOptionalBoolean(strategyConfig.require_spoken_audio),
+                profanityHandling: toOptionalString(strategyConfig.profanity_handling)
+              },
+              visual: {
+                aspectRatio: toOptionalString(visualConfig.aspect_ratio),
+                cropStrategy: toOptionalString(visualConfig.crop_strategy)
+              },
+              subtitle: {
+                language: toOptionalString(subtitleConfig.language),
+                burnIn: toOptionalBoolean(subtitleConfig.burn_in),
+                exportFormats: toStringArray(subtitleConfig.export_formats),
+                style: toOptionalString(toJsonRecord(subtitleConfig.settings).style),
+                fontFamily: toOptionalString(toJsonRecord(subtitleConfig.settings).font_family),
+                position: toOptionalString(toJsonRecord(subtitleConfig.settings).position),
+                maxLines: toOptionalNumber(toJsonRecord(subtitleConfig.settings).max_lines)
+              },
+              provider: {
+                credentialMode: toOptionalString(providerConfig.credential_mode),
+                providerId: toOptionalString(providerConfig.provider_id),
+                analysisModelId: toOptionalString(providerConfig.analysis_model_id)
+              }
+            }
+          : null,
+        ttsRequestSnapshot: job.ttsRequest
+          ? {
+              language: job.ttsRequest.language,
+              localModelKey:
+                toOptionalString(ttsInputSnapshot.local_model_key) ??
+                toOptionalString(ttsOutputConfig.local_model_key) ??
+                null,
+              voiceIdentifier: job.ttsRequest.voiceIdentifier ?? null,
+              speakingStyle: job.ttsRequest.speakingStyle ?? null,
+              emotion: job.ttsRequest.emotion ?? null,
+              speakingSpeed: job.ttsRequest.speakingSpeed ? Number(job.ttsRequest.speakingSpeed) : null,
+              pitch: job.ttsRequest.pitch ? Number(job.ttsRequest.pitch) : null,
+              pauseIntensity: job.ttsRequest.pauseIntensity ? Number(job.ttsRequest.pauseIntensity) : null,
+              targetDurationMs: job.ttsRequest.targetDurationMs ? Number(job.ttsRequest.targetDurationMs) : null,
+              preferredFormat: toOptionalString(ttsOutputConfig.preferred_format),
+              sampleRate: toOptionalNumber(ttsOutputConfig.sample_rate),
+              channels: toOptionalNumber(ttsOutputConfig.channels),
+              userPreferences:
+                ttsOutputConfig.user_preferences && typeof ttsOutputConfig.user_preferences === "object" && !Array.isArray(ttsOutputConfig.user_preferences)
+                  ? {
+                      toneNotes: toOptionalString((ttsOutputConfig.user_preferences as Record<string, unknown>).tone_notes),
+                      deliveryGoal: toOptionalString((ttsOutputConfig.user_preferences as Record<string, unknown>).delivery_goal),
+                      segmentLengthPreference: toOptionalString((ttsOutputConfig.user_preferences as Record<string, unknown>).segment_length_preference),
+                      breathingStyle: toOptionalString((ttsOutputConfig.user_preferences as Record<string, unknown>).breathing_style)
+                    }
+                  : null
+            }
           : null
       },
       csrfToken: request.session.csrfToken
     });
+  })
+);
+
+dashboardRouter.get(
+  "/app/tools/text-to-speech",
+  requireAuth,
+  asyncHandler(async (request, response) => {
+    const userId = request.identity!.effectiveUserId;
+    const [user, ttsPresets, localTtsModels] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          setting: {
+            select: {
+              defaultContentNiche: true,
+              defaultAudience: true
+            }
+          }
+        }
+      }),
+      prisma.preset.findMany({
+        where: { userId, type: "TTS", deletedAt: null },
+        orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }]
+      }),
+      listLocalTtsModels()
+    ]);
+
+    const selectedPreset = ttsPresets.find((preset) => preset.isDefault) ?? ttsPresets[0] ?? null;
+    const presetConfig = toJsonRecord(selectedPreset?.config);
+    const defaultLocalModel =
+      localTtsModels.find((model) => model.languageCode.toLowerCase().startsWith("id_")) ??
+      localTtsModels[0] ??
+      null;
+    const selectedLocalModelKey =
+      toOptionalString(presetConfig.local_model_key) ??
+      toOptionalString(presetConfig.voice_identifier) ??
+      defaultLocalModel?.key ??
+      "";
+    const selectedLocalModel =
+      localTtsModels.find((model) => model.key === selectedLocalModelKey) ?? defaultLocalModel;
+    response.render("app/text-to-speech", {
+      title: "Text to Speech",
+      ttsPresets: ttsPresets.map((preset) => ({
+        id: preset.id,
+        name: preset.name,
+        description: preset.description,
+        isDefault: preset.isDefault,
+        config: toJsonRecord(preset.config)
+      })),
+      localTtsModels: localTtsModels.map((model) => ({
+        key: model.key,
+        displayName: model.displayName,
+        languageCode: model.languageCode,
+        localeGroup: model.localeGroup,
+        voiceName: model.voiceName,
+        quality: model.quality,
+        sampleRate: model.sampleRate,
+        speakerCount: model.speakerCount,
+        phonemeType: model.phonemeType,
+        dataset: model.dataset,
+        defaultSampleText: model.defaultSampleText
+      })),
+      selectedPresetId: selectedPreset?.id ?? "",
+      formDefaults: {
+        language: toOptionalString(presetConfig.language) ?? "id",
+        localModelKey: selectedLocalModelKey,
+        voiceIdentifier: toOptionalString(presetConfig.voice_identifier) ?? "",
+        speakingStyle: toOptionalString(presetConfig.speaking_style) ?? "documentary",
+        emotion: toOptionalString(presetConfig.emotion) ?? "serious",
+        speakingSpeed: toOptionalNumber(presetConfig.speaking_speed) ?? 1,
+        pitch: toOptionalNumber(presetConfig.pitch) ?? 0,
+        pauseIntensity: toOptionalNumber(presetConfig.pause_intensity) ?? 1,
+        targetDurationMs: toOptionalNumber(presetConfig.target_duration_ms) ?? "",
+        preferredFormat: toOptionalString(presetConfig.preferred_format) ?? "WAV",
+        sampleRate: toOptionalNumber(presetConfig.sample_rate) ?? 24000,
+        channels: toOptionalNumber(presetConfig.channels) ?? 1,
+        toneNotes: toOptionalString(presetConfig.tone_notes) ?? "",
+        deliveryGoal: toOptionalString(presetConfig.delivery_goal) ?? "",
+        segmentLengthPreference: toOptionalString(presetConfig.segment_length_preference) ?? "BALANCED",
+        breathingStyle: toOptionalString(presetConfig.breathing_style) ?? "NATURAL",
+        samplePreviewText:
+          toOptionalString(presetConfig.sample_preview_text) ??
+          selectedLocalModel?.defaultSampleText ??
+          "Halo, ini adalah sample suara untuk preview model TTS.",
+        audienceHint: user?.setting?.defaultAudience ?? "",
+        nicheHint: user?.setting?.defaultContentNiche ?? ""
+      },
+      csrfToken: request.session.csrfToken
+    });
+  })
+);
+
+dashboardRouter.post(
+  "/api/v1/tts/local-model-preview",
+  requireAuth,
+  validateBody(ttsModelPreviewSchema),
+  asyncHandler(async (request, response) => {
+    const body = request.validatedBody as {
+      model_key: string;
+      text?: string;
+    };
+    const sampleText = typeof body.text === "string" && body.text.trim().length > 0 ? body.text.trim() : undefined;
+    const previewUrl = new URL(
+      `/internal/v1/tts/models/${encodeURIComponent(body.model_key)}/preview`,
+      env.AI_MEDIA_PYTHON_INTERNAL_BASE_URL
+    );
+    if (sampleText) {
+      previewUrl.searchParams.set("text", sampleText);
+    }
+
+    const previewResponse = await fetch(previewUrl, {
+      headers: {
+        authorization: `Bearer ${env.INTERNAL_SERVICE_TOKEN}`
+      }
+    });
+
+    if (!previewResponse.ok) {
+      const detail = await previewResponse.text();
+      response.status(previewResponse.status).json({
+        error: {
+          code: "TTS_PREVIEW_FAILED",
+          message: detail || "Preview suara model lokal tidak bisa dibuat saat ini."
+        }
+      });
+      return;
+    }
+
+    const contentType = previewResponse.headers.get("content-type") || "audio/wav";
+    const audioBuffer = Buffer.from(await previewResponse.arrayBuffer());
+    response.setHeader("content-type", contentType);
+    response.setHeader("cache-control", "no-store");
+    response.send(audioBuffer);
   })
 );
 
@@ -543,6 +856,34 @@ function countBy<T>(items: T[], keySelector: (item: T) => string): Array<[string
   return [...counts.entries()];
 }
 
+function resolveJobProgressView(status: JobStatus, progressPercent: number, currentStage: string | null) {
+  if (status === "COMPLETED") {
+    return {
+      percent: 100,
+      stage: TERMINAL_JOB_DISPLAY_STAGE[status] ?? currentStage ?? status
+    };
+  }
+
+  if (status === "FAILED" || status === "CANCELED" || status === "NEEDS_REVIEW") {
+    return {
+      percent: Math.min(Math.max(progressPercent, 0), 99),
+      stage: TERMINAL_JOB_DISPLAY_STAGE[status] ?? currentStage ?? status
+    };
+  }
+
+  if (status === "PARTIALLY_COMPLETED") {
+    return {
+      percent: Math.max(progressPercent, 100),
+      stage: TERMINAL_JOB_DISPLAY_STAGE[status] ?? currentStage ?? status
+    };
+  }
+
+  return {
+    percent: Math.max(0, Math.min(100, progressPercent)),
+    stage: currentStage
+  };
+}
+
 function buildDailyTrend(dates: Date[], start: Date, days: number) {
   const buckets = Array.from({ length: days }, (_, index) => {
     const date = new Date(start);
@@ -604,20 +945,51 @@ function buildAutoClipFormDefaults(defaultContentNiche?: string | null, defaultA
     primaryTone: "EDUCATIONAL",
     secondaryTone: "CONFIDENT",
     clipCount: 5,
+    candidatePoolCount: 10,
     minDuration: 30,
     maxDuration: 55,
     minimumViralScore: 7.5,
     hookStyle: "QUESTION",
     ctaPreference: "COMMENT",
+    clipStyleTags: "storytelling, edukasi, shocking, jawaban_tajam",
+    viralityPriorities: "hook 0-2 detik, konflik, opini nendang, ending memancing komentar",
+    selectionBrief: [
+      "Prioritaskan momen yang langsung masuk ke inti masalah tanpa basa-basi.",
+      "Cari jawaban yang quotable, opini tajam, cerita dengan payoff jelas, atau konflik yang cepat dimengerti.",
+      "Kalau ada beberapa pilihan kuat, utamakan yang paling singkat tetapi tetap utuh dan terasa viral."
+    ].join(" "),
+    avoidanceBrief: [
+      "Hindari intro panjang, filler berulang, kalimat menggantung tanpa payoff, dan potongan yang baru menarik setelah setup terlalu lama.",
+      "Jangan pilih momen yang butuh konteks panjang, terlalu internal, atau terlalu bergantung ke visual kalau spoken value-nya lemah."
+    ].join(" "),
+    packagingBrief: [
+      "Hook text harus pendek, tajam, dan memancing rasa penasaran.",
+      "Utamakan caption yang mudah dipahami audience Indonesia dan hashtag yang relevan, natural, dan tidak spammy."
+    ].join(" "),
+    standalonePriority: "PREFERRED",
+    requireSpokenAudio: true,
     profanityHandling: "KEEP",
     preferredTopics: "hook 3 detik pertama, audience retention, storytelling, CTA komentar",
     topicsToAvoid: "politik partisan, SARA, klaim medis berisiko",
-    contentContext:
-      "Cari potongan yang langsung masuk ke masalah utama, punya payoff jelas, dan bisa berdiri sendiri tanpa konteks panjang. Prioritaskan momen dengan hook kuat di 1-3 detik pertama, insight praktis, bahasa natural, dan ending yang mendorong komentar atau save. Hindari pembuka yang terlalu lama, filler berulang, atau referensi internal yang membingungkan.",
+    contentContext: [
+      "Anda adalah editor short video Indonesia untuk TikTok, Reels, dan YouTube Shorts.",
+      "Cari momen paling potensial viral, bukan sekadar potongan rapi.",
+      "Pilih potongan yang paling cepat menarik perhatian, paling mudah dipahami tanpa konteks panjang, dan punya alasan kuat untuk ditonton sampai akhir.",
+      "Prioritaskan momen dengan hook kuat di 1-3 detik pertama, konflik atau rasa penasaran yang jelas, insight praktis, bahasa natural, dan payoff yang selesai dengan rapi.",
+      "Utamakan opini nendang, cerita pengalaman pribadi, perdebatan, jawaban tajam, insight yang shareable, dan ending yang memancing komentar.",
+      "Jika ada beberapa kandidat, utamakan yang durasinya paling pendek tetapi tetap utuh secara makna.",
+      "Hindari opening yang masih basa-basi, filler berulang, jeda kosong, transisi yang tidak penting, atau bagian yang baru menarik setelah terlalu lama setup.",
+      "Jangan pilih momen hanya karena keyword. Pilih karena ada emosi, konflik, ironi, insight, atau curiosity gap yang jelas.",
+      "Cari ending yang bisa memicu komentar, share, save, atau diskusi, bukan ending yang menggantung tanpa payoff.",
+      "Kalau sumber videonya edukatif, pilih bagian yang menyederhanakan ide rumit menjadi kalimat yang tajam dan mudah dipotong menjadi clip mandiri.",
+      "Kalau ada istilah teknis, utamakan bagian yang paling jelas, paling quotable, dan paling relevan untuk audience Indonesia."
+    ].join(" "),
     sensitiveTopics: "klaim medis, saran legal, data pribadi",
     aspectRatio: "9:16",
     cropStrategy: "AUTO_REFRAME",
     subtitleLanguage: "id",
+    subtitlePrimaryFormat: "ASS",
+    subtitleBurnIn: true,
     subtitleStyle: "Bold Clean",
     subtitleFontFamily: "Montserrat",
     subtitlePosition: "BOTTOM",
@@ -647,16 +1019,43 @@ function mergeAutoClipDefaults(
     platform: toStringValue(presetConfig.target_platform) ?? baseDefaults.platform,
     objective: toStringValue(presetConfig.objective) ?? baseDefaults.objective,
     clipCount: toNumberValue(presetConfig.desired_clip_count) ?? baseDefaults.clipCount,
+    candidatePoolCount: toNumberValue(presetConfig.candidate_pool_count) ?? baseDefaults.candidatePoolCount,
     minDuration: toNumberValue(durations.min_seconds) ?? baseDefaults.minDuration,
     maxDuration: toNumberValue(durations.max_seconds) ?? baseDefaults.maxDuration,
     minimumViralScore: toNumberValue(presetConfig.minimum_viral_score) ?? baseDefaults.minimumViralScore,
     hookStyle: toStringValue(presetConfig.hook_style) ?? baseDefaults.hookStyle,
     ctaPreference: toStringValue(presetConfig.cta_preference) ?? baseDefaults.ctaPreference,
+    clipStyleTags: toCommaListValue(presetConfig.clip_style_tags) ?? baseDefaults.clipStyleTags,
+    viralityPriorities: toCommaListValue(presetConfig.virality_priorities) ?? baseDefaults.viralityPriorities,
+    selectionBrief:
+      toStringValue(presetConfig.selection_brief)
+      ?? toStringValue(presetConfig.clip_selection_brief)
+      ?? baseDefaults.selectionBrief,
+    avoidanceBrief:
+      toStringValue(presetConfig.avoidance_brief)
+      ?? toStringValue(presetConfig.clip_avoidance_brief)
+      ?? baseDefaults.avoidanceBrief,
+    packagingBrief:
+      toStringValue(presetConfig.packaging_brief)
+      ?? toStringValue(presetConfig.packaging_brief_long)
+      ?? baseDefaults.packagingBrief,
+    standalonePriority: toStringValue(presetConfig.standalone_priority) ?? baseDefaults.standalonePriority,
+    requireSpokenAudio: toOptionalBoolean(presetConfig.require_spoken_audio) ?? baseDefaults.requireSpokenAudio,
     aspectRatio: toStringValue(presetConfig.aspect_ratio) ?? baseDefaults.aspectRatio,
     preferredTopics: toCommaListValue(presetConfig.preferred_topics) ?? baseDefaults.preferredTopics,
     topicsToAvoid: toCommaListValue(presetConfig.topics_to_avoid) ?? baseDefaults.topicsToAvoid,
+    contentContext:
+      toStringValue(presetConfig.content_context)
+      ?? toStringValue(presetConfig.analysis_brief)
+      ?? toStringValue(presetConfig.editor_brief)
+      ?? baseDefaults.contentContext,
     sensitiveTopics: toCommaListValue(presetConfig.sensitive_topics) ?? baseDefaults.sensitiveTopics,
     subtitleLanguage: toStringValue(subtitleConfig.language) ?? baseDefaults.subtitleLanguage,
+    subtitlePrimaryFormat:
+      toStringValue(subtitleConfig.format)
+      ?? toStringArray(subtitleConfig.export_formats)[0]
+      ?? baseDefaults.subtitlePrimaryFormat,
+    subtitleBurnIn: toOptionalBoolean(subtitleConfig.burn_in) ?? baseDefaults.subtitleBurnIn,
     subtitleStyle: toStringValue(subtitleConfig.style) ?? baseDefaults.subtitleStyle,
     subtitleFontFamily:
       toStringValue(subtitleConfig.font_family) ?? toStringValue(fontConfig.primary) ?? baseDefaults.subtitleFontFamily,
@@ -687,6 +1086,24 @@ function toCommaListValue(value: unknown): string | undefined {
   if (!Array.isArray(value)) return undefined;
   const items = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
   return items.length > 0 ? items.join(", ") : undefined;
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
+function toOptionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function toOptionalNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function toOptionalBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }
 
 function isJobStatus(value: string | undefined): value is JobStatus {

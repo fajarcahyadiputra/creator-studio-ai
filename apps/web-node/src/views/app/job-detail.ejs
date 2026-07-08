@@ -8,6 +8,73 @@
         <a class="btn btn-outline-primary" href="/app/jobs">Back to jobs</a>
       </header>
     <% } else { %>
+      <% const latestFailureEvent = events.find((event) => event.eventType === 'job.failed' || event.eventType === 'job.needs_review') ?? null; %>
+      <% const latestWarningEvent = events.find((event) => event.eventType === 'job.warning') ?? null; %>
+      <% 
+        const displayProgressPercent =
+          job.status === 'COMPLETED' || job.status === 'PARTIALLY_COMPLETED'
+            ? 100
+            : ['FAILED', 'CANCELED', 'NEEDS_REVIEW'].includes(job.status)
+              ? Math.min(Math.max(job.progressPercent ?? 0, 0), 99)
+              : Math.max(0, Math.min(100, job.progressPercent ?? 0));
+        const stageGroups = {
+          TTS_VALIDATION: 'Script validation',
+          TTS_SEGMENTATION: 'Speech segmentation',
+          SOURCE_PREP: 'Source preparation',
+          AUDIO_TRANSCRIPT: 'Audio and transcript',
+          CANDIDATE_ANALYSIS: 'Candidate analysis',
+          RESULT_PREP: 'Result packaging',
+          FINAL_RENDER: 'Final render',
+          FINAL_REVIEW: 'Output validation',
+          DELIVERY: 'Saving outputs'
+        };
+        const stageGroupKey = (name) => {
+          if (name === 'VALIDATING_SCRIPT') return 'TTS_VALIDATION';
+          if (name === 'GENERATING_SEGMENTS') return 'TTS_SEGMENTATION';
+          if (name === 'SAVING_OUTPUTS') return 'DELIVERY';
+          if (name === 'VALIDATING_SOURCE' || name === 'PROBING_MEDIA') return 'SOURCE_PREP';
+          if (name === 'EXTRACTING_AUDIO' || name === 'TRANSCRIBING') return 'AUDIO_TRANSCRIPT';
+          if (name === 'DETECTING_SCENES' || name === 'DETECTING_SILENCE' || name === 'ANALYZING_CLIP_CANDIDATES' || name === 'NORMALIZING_BOUNDARIES' || name === 'RANKING_AND_DEDUPLICATING') return 'CANDIDATE_ANALYSIS';
+          if (name === 'GENERATING_PREVIEWS' || name === 'GENERATING_METADATA') return 'RESULT_PREP';
+          if (name === 'REFRAMING' || name === 'GENERATING_SUBTITLES' || name === 'RENDERING_FINAL_CLIPS') return 'FINAL_RENDER';
+          if (name === 'QUALITY_CHECK') return 'FINAL_REVIEW';
+          if (name === 'UPLOADING_OUTPUTS') return 'DELIVERY';
+          return name;
+        };
+        const stageGroupLabel = (name) => stageGroups[stageGroupKey(name)] ?? name;
+        const stageStatusPriority = { FAILED: 5, NEEDS_REVIEW: 4, RUNNING: 3, PAUSED: 2, PENDING: 1, COMPLETED: 0 };
+        const groupedStagesMap = new Map();
+        for (const stage of job.stages) {
+          const key = stageGroupKey(stage.name);
+          const existing = groupedStagesMap.get(key);
+          if (!existing) {
+            groupedStagesMap.set(key, {
+              key,
+              label: stageGroupLabel(stage.name),
+              status: stage.status,
+              progressPercent: stage.progressPercent,
+              progressWeight: Number(stage.progressWeight),
+              weightedProgress: stage.progressPercent * Number(stage.progressWeight)
+            });
+            continue;
+          }
+          const currentStatusPriority = stageStatusPriority[stage.status] ?? -1;
+          const existingStatusPriority = stageStatusPriority[existing.status] ?? -1;
+          existing.progressWeight += Number(stage.progressWeight);
+          existing.weightedProgress += stage.progressPercent * Number(stage.progressWeight);
+          existing.progressPercent = Math.round(existing.weightedProgress / Math.max(1, existing.progressWeight));
+          if (currentStatusPriority > existingStatusPriority) {
+            existing.status = stage.status;
+          } else if (currentStatusPriority === existingStatusPriority && stage.progressPercent > existing.progressPercent) {
+            existing.status = stage.status;
+          }
+        }
+        const groupedStages = Array.from(groupedStagesMap.values());
+        const displayStageLabel =
+          ['COMPLETED', 'FAILED', 'CANCELED', 'PARTIALLY_COMPLETED', 'NEEDS_REVIEW'].includes(job.status)
+            ? job.status
+            : stageGroupLabel(job.currentStage ?? 'Unknown');
+      %>
       <header class="page-header">
         <div>
           <span class="eyebrow">Async Job</span>
@@ -38,21 +105,21 @@
         <div class="job-hero-panel__top">
           <div>
             <span class="status status-<%= job.status.toLowerCase() %>" data-job-status><%= job.status %></span>
-            <div class="text-muted small mt-2">Current stage: <strong data-job-stage><%= job.currentStage ?? 'Unknown' %></strong></div>
+            <div class="text-muted small mt-2">Current stage: <strong data-job-stage><%= displayStageLabel %></strong></div>
           </div>
           <div class="job-hero-panel__meta">
             <article><span>Attempts</span><strong><%= job.attempts.length %></strong></article>
-            <article><span>Candidates</span><strong><%= outputSummary.candidateCount %></strong></article>
+            <article><span><%= job.type === 'TEXT_TO_SPEECH' ? 'Segments' : 'Candidates' %></span><strong><%= job.type === 'TEXT_TO_SPEECH' ? (outputSummary.tts?.segmentCount ?? 0) : outputSummary.candidateCount %></strong></article>
             <article><span>Created</span><strong><%= job.createdAt.toLocaleString() %></strong></article>
           </div>
         </div>
         <div class="job-hero-progress">
           <div class="d-flex justify-content-between align-items-center gap-3 mb-2">
             <strong>Progress</strong>
-            <strong data-job-progress-value-inline><%= job.progressPercent %>%</strong>
+            <strong data-job-progress-value-inline><%= displayProgressPercent %>%</strong>
           </div>
           <div class="progress progress-lg">
-            <div class="progress-bar progress-bar-job" data-job-progress-bar style="width:<%= job.progressPercent %>%"></div>
+            <div class="progress-bar progress-bar-job" data-job-progress-bar style="width:<%= displayProgressPercent %>%"></div>
           </div>
         </div>
       </section>
@@ -65,14 +132,18 @@
           <div class="p-4">
             <div class="result-status-box">
               <strong>
-                <% if (!clipOutputs.length && !candidates.length) { %>
+                <% if (job.type === 'TEXT_TO_SPEECH') { %>
+                  <%= outputSummary.tts?.segmentCount ?? 0 %> segmen narasi tersimpan
+                <% } else if (!clipOutputs.length && !candidates.length) { %>
                   Memuat hasil...
                 <% } else { %>
                   <%= clipOutputs.length %> output clip, <%= candidates.length %> kandidat tersimpan
                 <% } %>
               </strong>
               <span>
-                <% if (outputSummary.analysisVersion) { %>
+                <% if (job.type === 'TEXT_TO_SPEECH') { %>
+                  Segment plan TTS
+                <% } else if (outputSummary.analysisVersion) { %>
                   Analyzer <%= outputSummary.analysisVersion %>
                 <% } else { %>
                   Menunggu hasil pipeline
@@ -81,13 +152,53 @@
             </div>
 
             <div class="job-summary-grid mt-3">
-              <article class="job-summary-card"><span>Source duration</span><strong><%= outputSummary.estimatedUsage.sourceDurationSeconds ? `${outputSummary.estimatedUsage.sourceDurationSeconds}s` : '-' %></strong></article>
-              <article class="job-summary-card"><span>Selected candidates</span><strong><%= outputSummary.estimatedUsage.selectedCandidates %></strong></article>
-              <article class="job-summary-card"><span>Clip outputs</span><strong><%= outputSummary.estimatedUsage.clipOutputs %></strong></article>
+              <% if (job.type === 'TEXT_TO_SPEECH') { %>
+              <article class="job-summary-card"><span>Segments</span><strong><%= outputSummary.tts?.segmentCount ?? 0 %></strong></article>
+              <article class="job-summary-card"><span>Total pauses</span><strong><%= outputSummary.tts?.totalPauseMs ? `${outputSummary.tts.totalPauseMs} ms` : '-' %></strong></article>
+              <article class="job-summary-card"><span>Voice</span><strong><%= outputSummary.ttsRequestSnapshot?.localModelKey ?? outputSummary.ttsRequestSnapshot?.voiceIdentifier ?? outputSummary.ttsRequestSnapshot?.speakingStyle ?? '-' %></strong></article>
+              <% } else { %>
+                <article class="job-summary-card"><span>Source duration</span><strong><%= outputSummary.estimatedUsage.sourceDurationSeconds ? `${outputSummary.estimatedUsage.sourceDurationSeconds}s` : '-' %></strong></article>
+                <article class="job-summary-card"><span>Selected candidates</span><strong><%= outputSummary.estimatedUsage.selectedCandidates %></strong></article>
+                <article class="job-summary-card"><span>Clip outputs</span><strong><%= outputSummary.estimatedUsage.clipOutputs %></strong></article>
+              <% } %>
               <article class="job-summary-card"><span>Workflow</span><strong><%= job.workflowId ?? '-' %></strong></article>
             </div>
           </div>
-          <% if (outputSummary.sourceSummary) { %>
+          <div class="px-4 pb-4" data-job-issue-panel>
+            <% if (job.status === 'FAILED' && job.errors.length) { %>
+              <div class="clip-output-warning-box mt-3" data-job-issue-box data-issue-kind="failure">
+                <strong>Latest failure</strong>
+                <ul>
+                  <li><strong>Code:</strong> <%= job.errors[0].code %></li>
+                  <li><strong>Category:</strong> <%= job.errors[0].category %></li>
+                  <li><strong>User message:</strong> <%= job.errors[0].userMessage %></li>
+                  <li><strong>Technical message:</strong> <%= job.errors[0].message %></li>
+                  <li><strong>Occurred at:</strong> <%= job.errors[0].occurredAt.toLocaleString() %></li>
+                </ul>
+              </div>
+            <% } else if (['FAILED', 'NEEDS_REVIEW'].includes(job.status) && latestFailureEvent) { %>
+              <div class="clip-output-warning-box mt-3" data-job-issue-box data-issue-kind="workflow">
+                <strong>Latest workflow issue</strong>
+                <ul>
+                  <li><strong>Type:</strong> <%= latestFailureEvent.eventType %></li>
+                  <li><strong>Message:</strong> <%= latestFailureEvent.userMessage ?? latestFailureEvent.message %></li>
+                  <li><strong>Technical detail:</strong> <%= latestFailureEvent.message %></li>
+                  <li><strong>Occurred at:</strong> <%= latestFailureEvent.occurredAt.toLocaleString() %></li>
+                </ul>
+              </div>
+            <% } else if (latestWarningEvent) { %>
+              <div class="clip-output-warning-box mt-3" data-job-issue-box data-issue-kind="warning">
+                <strong>Latest pipeline warning</strong>
+                <ul>
+                  <li><strong>Type:</strong> <%= latestWarningEvent.eventType %></li>
+                  <li><strong>Message:</strong> <%= latestWarningEvent.userMessage ?? latestWarningEvent.message %></li>
+                  <li><strong>Technical detail:</strong> <%= latestWarningEvent.message %></li>
+                  <li><strong>Occurred at:</strong> <%= latestWarningEvent.occurredAt.toLocaleString() %></li>
+                </ul>
+              </div>
+            <% } %>
+          </div>
+          <% if (job.type === 'AUTO_CLIPPING' && outputSummary.sourceSummary) { %>
             <div class="analyzer-summary pt-0">
               <h3>Source summary</h3>
               <p><%= outputSummary.sourceSummary %></p>
@@ -114,6 +225,58 @@
         </aside>
       </section>
 
+      <% if (job.type === 'TEXT_TO_SPEECH') { %>
+        <section class="panel mt-4">
+          <div class="panel-heading">
+            <div><h2>TTS segmentation</h2><p>Speech segment plan yang dihasilkan workflow untuk synthesis berikutnya.</p></div>
+          </div>
+          <div class="p-4">
+            <div class="job-summary-grid mb-3">
+              <article class="job-summary-card"><span>Language</span><strong><%= outputSummary.ttsRequestSnapshot?.language ?? '-' %></strong></article>
+              <article class="job-summary-card"><span>Local model</span><strong><%= outputSummary.ttsRequestSnapshot?.localModelKey ?? '-' %></strong></article>
+              <article class="job-summary-card"><span>Style</span><strong><%= outputSummary.ttsRequestSnapshot?.speakingStyle ?? '-' %></strong></article>
+              <article class="job-summary-card"><span>Emotion</span><strong><%= outputSummary.ttsRequestSnapshot?.emotion ?? '-' %></strong></article>
+              <article class="job-summary-card"><span>Target duration</span><strong><%= outputSummary.ttsRequestSnapshot?.targetDurationMs ? `${outputSummary.ttsRequestSnapshot.targetDurationMs} ms` : '-' %></strong></article>
+              <article class="job-summary-card"><span>Format</span><strong><%= outputSummary.ttsRequestSnapshot?.preferredFormat ?? '-' %></strong></article>
+              <article class="job-summary-card"><span>Sample rate</span><strong><%= outputSummary.ttsRequestSnapshot?.sampleRate ?? '-' %></strong></article>
+            </div>
+
+            <% if (outputSummary.ttsRequestSnapshot?.userPreferences?.deliveryGoal) { %>
+              <div class="candidate-caption-box mb-3">
+                <strong>Delivery goal</strong>
+                <p><%= outputSummary.ttsRequestSnapshot.userPreferences.deliveryGoal %></p>
+              </div>
+            <% } %>
+            <% if (outputSummary.ttsRequestSnapshot?.userPreferences?.toneNotes) { %>
+              <div class="candidate-caption-box mb-3">
+                <strong>Tone notes</strong>
+                <p><%= outputSummary.ttsRequestSnapshot.userPreferences.toneNotes %></p>
+              </div>
+            <% } %>
+
+            <% if (outputSummary.tts?.previewSegments?.length) { %>
+              <div class="candidate-grid candidate-grid--single">
+                <% outputSummary.tts.previewSegments.forEach((segment) => { %>
+                  <article class="candidate-card candidate-card--result">
+                    <div class="candidate-result-header">
+                      <div>
+                        <h3>Segment #<%= segment.id ?? '-' %></h3>
+                        <div class="text-muted small"><%= segment.emotion ?? '-' %> · <%= segment.speed ?? '-' %> · <%= segment.emphasis ?? '-' %></div>
+                      </div>
+                      <div class="candidate-score-badge"><%= segment.pauseAfter ? `${segment.pauseAfter} ms pause` : 'Pause -' %></div>
+                    </div>
+                    <p class="candidate-summary mb-0"><%= segment.text %></p>
+                  </article>
+                <% }) %>
+              </div>
+            <% } else { %>
+              <div class="empty-cell">Belum ada segment plan yang tersimpan untuk job ini.</div>
+            <% } %>
+          </div>
+        </section>
+      <% } %>
+
+      <% if (job.type === 'AUTO_CLIPPING') { %>
       <section class="panel mt-4">
         <div class="panel-heading">
           <div><h2>Analyzer run</h2><p>Metadata analisis dari pipeline clipping.</p></div>
@@ -128,57 +291,230 @@
         </div>
       </section>
 
+      <% if (outputSummary.requestSnapshot) { %>
+        <section class="panel mt-4">
+          <div class="panel-heading">
+            <div><h2>Strategy snapshot</h2><p>Brief, target, dan pengaturan yang benar-benar dipakai saat job ini dibuat.</p></div>
+          </div>
+          <div class="p-4">
+            <div class="job-summary-grid mb-3">
+              <article class="job-summary-card"><span>Platform</span><strong><%= outputSummary.requestSnapshot.strategy.targetPlatform ?? '-' %></strong></article>
+              <article class="job-summary-card"><span>Objective</span><strong><%= outputSummary.requestSnapshot.strategy.objective ?? '-' %></strong></article>
+              <article class="job-summary-card"><span>Duration</span><strong><%= outputSummary.requestSnapshot.strategy.minimumDurationSeconds && outputSummary.requestSnapshot.strategy.maximumDurationSeconds ? `${outputSummary.requestSnapshot.strategy.minimumDurationSeconds}-${outputSummary.requestSnapshot.strategy.maximumDurationSeconds}s` : '-' %></strong></article>
+              <article class="job-summary-card"><span>Visual</span><strong><%= outputSummary.requestSnapshot.visual.aspectRatio ?? '-' %> / <%= outputSummary.requestSnapshot.visual.cropStrategy ?? '-' %></strong></article>
+              <article class="job-summary-card"><span>Candidate pool</span><strong><%= outputSummary.requestSnapshot.strategy.candidatePoolCount ?? '-' %></strong></article>
+              <article class="job-summary-card"><span>Standalone</span><strong><%= outputSummary.requestSnapshot.strategy.standalonePriority ?? '-' %></strong></article>
+            </div>
+
+            <% if (outputSummary.requestSnapshot.contentTitle || outputSummary.requestSnapshot.topic) { %>
+              <div class="candidate-caption-box mb-3">
+                <% if (outputSummary.requestSnapshot.contentTitle) { %><p><strong>Title:</strong> <%= outputSummary.requestSnapshot.contentTitle %></p><% } %>
+                <% if (outputSummary.requestSnapshot.topic) { %><p class="mb-0"><strong>Topic:</strong> <%= outputSummary.requestSnapshot.topic %></p><% } %>
+              </div>
+            <% } %>
+
+            <% if (outputSummary.requestSnapshot.contentContext) { %>
+              <div class="candidate-caption-box mb-3">
+                <strong>Analysis brief</strong>
+                <p><%= outputSummary.requestSnapshot.contentContext %></p>
+              </div>
+            <% } %>
+
+            <div class="clip-output-review-grid">
+              <article class="clip-output-review-card">
+                <span>Preferred topics</span>
+                <strong><%= outputSummary.requestSnapshot.strategy.preferredTopics.length %> item</strong>
+                <p><%= outputSummary.requestSnapshot.strategy.preferredTopics.length ? outputSummary.requestSnapshot.strategy.preferredTopics.join(', ') : 'Tidak ada topic boost khusus.' %></p>
+              </article>
+              <article class="clip-output-review-card">
+                <span>Topics to avoid</span>
+                <strong><%= outputSummary.requestSnapshot.strategy.topicsToAvoid.length %> item</strong>
+                <p><%= outputSummary.requestSnapshot.strategy.topicsToAvoid.length ? outputSummary.requestSnapshot.strategy.topicsToAvoid.join(', ') : 'Tidak ada area avoid khusus.' %></p>
+              </article>
+              <article class="clip-output-review-card">
+                <span>Sensitive topics</span>
+                <strong><%= outputSummary.requestSnapshot.strategy.sensitiveTopics.length %> item</strong>
+                <p><%= outputSummary.requestSnapshot.strategy.sensitiveTopics.length ? outputSummary.requestSnapshot.strategy.sensitiveTopics.join(', ') : 'Tidak ada label sensitif tambahan.' %></p>
+              </article>
+              <article class="clip-output-review-card">
+                <span>Clip styles</span>
+                <strong><%= outputSummary.requestSnapshot.strategy.clipStyleTags.length %> item</strong>
+                <p><%= outputSummary.requestSnapshot.strategy.clipStyleTags.length ? outputSummary.requestSnapshot.strategy.clipStyleTags.join(', ') : 'Tidak ada style khusus.' %></p>
+              </article>
+              <article class="clip-output-review-card">
+                <span>Virality priorities</span>
+                <strong><%= outputSummary.requestSnapshot.strategy.viralityPriorities.length %> item</strong>
+                <p><%= outputSummary.requestSnapshot.strategy.viralityPriorities.length ? outputSummary.requestSnapshot.strategy.viralityPriorities.join(', ') : 'Pakai heuristik viral default.' %></p>
+              </article>
+              <article class="clip-output-review-card">
+                <span>Subtitle plan</span>
+                <strong><%= outputSummary.requestSnapshot.subtitle.language ?? '-' %></strong>
+                <p><%= outputSummary.requestSnapshot.subtitle.exportFormats.length ? outputSummary.requestSnapshot.subtitle.exportFormats.join(', ') : 'Format subtitle belum diset.' %></p>
+              </article>
+            </div>
+
+            <% if (outputSummary.requestSnapshot.strategy.selectionBrief) { %>
+              <div class="candidate-caption-box mt-3">
+                <strong>Selection brief</strong>
+                <p><%= outputSummary.requestSnapshot.strategy.selectionBrief %></p>
+              </div>
+            <% } %>
+            <% if (outputSummary.requestSnapshot.strategy.avoidanceBrief) { %>
+              <div class="candidate-caption-box mt-3">
+                <strong>Avoidance brief</strong>
+                <p><%= outputSummary.requestSnapshot.strategy.avoidanceBrief %></p>
+              </div>
+            <% } %>
+            <% if (outputSummary.requestSnapshot.strategy.packagingBrief) { %>
+              <div class="candidate-caption-box mt-3">
+                <strong>Packaging brief</strong>
+                <p><%= outputSummary.requestSnapshot.strategy.packagingBrief %></p>
+              </div>
+            <% } %>
+
+            <% if (outputSummary.requestSnapshot.customVocabulary.length) { %>
+              <div class="candidate-tags mt-3">
+                <% outputSummary.requestSnapshot.customVocabulary.forEach((term) => { %>
+                  <span><%= term %></span>
+                <% }) %>
+              </div>
+            <% } %>
+          </div>
+        </section>
+      <% } %>
+
       <section class="panel mt-4">
         <div class="panel-heading">
-          <div><h2>Candidate review</h2><p>Pilih kandidat terbaik sebelum dikirim ke render output.</p></div>
-          <form data-api-form action="/api/v1/jobs/<%= job.id %>/render-queue" method="post">
-            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-            <button class="btn btn-primary" type="submit">Queue selected for render</button>
-          </form>
+          <div><h2>Candidate review</h2><p>Pilih kandidat terbaik. Kandidat yang dipilih akan otomatis masuk proses render tanpa tombol queue tambahan.</p></div>
         </div>
-        <div class="form-message"></div>
-        <% if (!candidates.length) { %>
-          <div class="empty-cell">No persisted clip candidates are available for this job yet.</div>
-        <% } else { %>
-          <div class="candidate-grid candidate-grid--single">
-            <% candidates.forEach((candidate, index) => { %>
-              <article class="candidate-card candidate-card--result">
-                <div class="candidate-result-header">
-                  <div>
-                    <h3>#<%= index + 1 %> - <%= candidate.title ?? 'Untitled candidate' %></h3>
-                    <div class="text-muted small"><%= candidate.contentCategory ?? 'candidate' %> | <%= candidate.durationSeconds ?? 0 %> detik</div>
+        <details class="candidate-review-details mt-3">
+          <summary class="candidate-review-toggle">Lihat Candidate Review</summary>
+          <div class="candidate-review-content">
+            <div class="form-message mt-3"></div>
+            <% if (!candidates.length) { %>
+              <div class="empty-cell mt-3">No persisted clip candidates are available for this job yet.</div>
+            <% } else { %>
+              <div class="candidate-grid candidate-grid--single mt-3">
+                <% candidates.forEach((candidate, index) => { %>
+                  <article class="candidate-card candidate-card--result">
+                  <div class="candidate-result-header">
+                    <div>
+                      <h3>#<%= index + 1 %> - <%= candidate.title ?? 'Untitled candidate' %></h3>
+                      <div class="text-muted small"><%= candidate.contentCategory ?? 'candidate' %> | <%= candidate.durationSeconds ?? 0 %> detik</div>
+                    </div>
+                    <div class="candidate-score-badge">Potensi Viral <%= Number(candidate.finalViralScore ?? 0).toFixed(1) %>/10</div>
                   </div>
-                  <div class="candidate-score-badge">Potensi Viral <%= Number(candidate.finalViralScore ?? 0).toFixed(1) %>/10</div>
-                </div>
-                <p class="candidate-summary mb-2"><strong>Hook:</strong> <%= candidate.hookText ?? 'No hook text available.' %></p>
-                <p class="candidate-summary"><%= candidate.summary ?? '' %></p>
-                <% if (candidate.suggestedCaption) { %>
-                  <div class="candidate-caption-box">
-                    <strong>Caption rekomendasi:</strong>
-                    <p><%= candidate.suggestedCaption %></p>
+                  <div class="candidate-tags mb-3">
+                    <span><%= candidate.contextComplete ? 'Standalone-ready' : 'Needs more context' %></span>
+                    <span><%= candidate.canStandalone ? 'Can stand alone' : 'Context sensitive' %></span>
+                    <% if (candidate.retentionLevel) { %><span>Retention <%= candidate.retentionLevel %></span><% } %>
+                    <% if (candidate.rank) { %><span>Rank <%= candidate.rank %></span><% } %>
                   </div>
-                <% } %>
-                <% if (Array.isArray(candidate.hashtags) && candidate.hashtags.length) { %>
-                  <div class="candidate-tags">
-                    <% candidate.hashtags.forEach((tag) => { %>
-                      <span><%= tag %></span>
-                    <% }) %>
+                  <p class="candidate-summary mb-2"><strong>Hook:</strong> <%= candidate.hookText ?? 'No hook text available.' %></p>
+                  <p class="candidate-summary"><%= candidate.summary ?? '' %></p>
+                  <% if (candidate.previewVideoUrl) { %>
+                    <div class="candidate-caption-box mb-3">
+                      <strong><%= candidate.previewLabel ?? 'Preview clip' %></strong>
+                      <video
+                        <% if (candidate.previewUsesSourceTimeline) { %>data-clip-preview<% } %>
+                        <% if (candidate.previewUsesSourceTimeline) { %>data-preview-start="<%= candidate.startSeconds.toFixed(2) %>"<% } %>
+                        <% if (candidate.previewUsesSourceTimeline) { %>data-preview-end="<%= candidate.endSeconds.toFixed(2) %>"<% } %>
+                        class="candidate-preview-video"
+                        controls
+                        muted
+                        preload="metadata"
+                        playsinline
+                        src="<%= candidate.previewVideoUrl %>"></video>
+                      <p class="mt-2 mb-0 text-muted small">
+                        <% if (candidate.previewUsesSourceTimeline) { %>
+                          Memutar source video pada range kandidat ini: <%= candidate.startSeconds.toFixed(1) %>s - <%= candidate.endSeconds.toFixed(1) %>s.
+                        <% } else { %>
+                          Player memakai artifact preview hasil render agar review kandidat lebih akurat.
+                        <% } %>
+                      </p>
+                      <div class="mt-2">
+                        <a class="btn btn-sm btn-outline-secondary" href="<%= candidate.previewVideoUrl %>" target="_blank" rel="noreferrer"><%= candidate.previewActionLabel ?? 'Open preview' %></a>
+                      </div>
+                    </div>
+                  <% } %>
+                  <% if (candidate.endingText) { %>
+                    <div class="candidate-caption-box">
+                      <strong>Ending / payoff</strong>
+                      <p><%= candidate.endingText %></p>
+                    </div>
+                  <% } %>
+                  <div class="clip-output-review-grid mt-3 mb-3">
+                    <article class="clip-output-review-card">
+                      <span>Timeline</span>
+                      <strong><%= candidate.startSeconds.toFixed(1) %>s - <%= candidate.endSeconds.toFixed(1) %>s</strong>
+                      <p>Durasi <%= candidate.durationSeconds.toFixed(1) %> detik</p>
+                    </article>
+                    <article class="clip-output-review-card">
+                      <span>Hook point</span>
+                      <strong><%= candidate.hookSecond !== null ? `${candidate.hookSecond.toFixed(1)}s` : '-' %></strong>
+                      <p>Main point <%= candidate.mainPointSecond !== null ? `${candidate.mainPointSecond.toFixed(1)}s` : 'belum tersedia' %></p>
+                    </article>
+                    <article class="clip-output-review-card">
+                      <span>Punchline</span>
+                      <strong><%= candidate.punchlineSecond !== null ? `${candidate.punchlineSecond.toFixed(1)}s` : '-' %></strong>
+                      <p><%= candidate.requiresContext ? 'Masih butuh konteks tambahan' : 'Lebih mudah berdiri sendiri' %></p>
+                    </article>
+                    <article class="clip-output-review-card">
+                      <span>Score cues</span>
+                      <strong><%= candidate.scoreSummary.hookStrength !== null ? `Hook ${candidate.scoreSummary.hookStrength}` : 'Score detail terbatas' %></strong>
+                      <p><%= candidate.scoreSummary.shareability !== null ? `Shareability ${candidate.scoreSummary.shareability}` : 'Gunakan score total untuk review' %></p>
+                    </article>
                   </div>
-                <% } %>
-                <div class="d-flex flex-wrap gap-2 mt-3">
-                  <form data-api-form action="/api/v1/jobs/<%= job.id %>/candidates/<%= candidate.id %>/selection" method="post">
-                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                    <input type="hidden" name="selected" value="<%= candidate.selected ? 'false' : 'true' %>">
-                    <button class="btn <%= candidate.selected ? 'btn-outline-primary' : 'btn-primary' %>" type="submit">
-                      <%= candidate.selected ? 'Remove from selected' : 'Select candidate' %>
-                    </button>
-                  </form>
-                </div>
-              </article>
-            <% }) %>
+                  <% if (candidate.whyItWorks.length) { %>
+                    <div class="clip-output-warning-box mb-3">
+                      <strong>Kenapa kandidat ini kuat</strong>
+                      <ul>
+                        <% candidate.whyItWorks.forEach((reason) => { %>
+                          <li><%= reason %></li>
+                        <% }) %>
+                      </ul>
+                    </div>
+                  <% } %>
+                  <% if (candidate.safetyNotes.length) { %>
+                    <div class="clip-output-warning-box mb-3">
+                      <strong>Safety / review notes</strong>
+                      <ul>
+                        <% candidate.safetyNotes.forEach((note) => { %>
+                          <li><%= note %></li>
+                        <% }) %>
+                      </ul>
+                    </div>
+                  <% } %>
+                  <% if (candidate.suggestedCaption) { %>
+                    <div class="candidate-caption-box">
+                      <strong>Caption rekomendasi:</strong>
+                      <p><%= candidate.suggestedCaption %></p>
+                    </div>
+                  <% } %>
+                  <% if (Array.isArray(candidate.hashtags) && candidate.hashtags.length) { %>
+                    <div class="candidate-tags">
+                      <% candidate.hashtags.forEach((tag) => { %>
+                        <span><%= tag %></span>
+                      <% }) %>
+                    </div>
+                  <% } %>
+                  <div class="d-flex flex-wrap gap-2 mt-3">
+                    <form data-api-form action="/api/v1/jobs/<%= job.id %>/candidates/<%= candidate.id %>/selection" method="post">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <input type="hidden" name="selected" value="<%= candidate.selected ? 'false' : 'true' %>">
+                      <button class="btn <%= candidate.selected ? 'btn-outline-primary' : 'btn-primary' %>" type="submit">
+                        <%= candidate.selected ? 'Remove from selected' : 'Select candidate' %>
+                      </button>
+                    </form>
+                  </div>
+                  </article>
+                <% }) %>
+              </div>
+            <% } %>
           </div>
-        <% } %>
+        </details>
       </section>
+      <% } %>
 
       <section class="panel mt-4">
         <div class="panel-heading">
@@ -188,22 +524,112 @@
           <% } %>
         </div>
         <div class="clip-output-stack">
+          <% if (clipOutputs.length) { %>
+            <% 
+              const finalReadyCount = clipOutputs.filter((output) => output.finalAvailable).length;
+              const subtitleReadyCount = clipOutputs.filter((output) => output.subtitleAvailable).length;
+              const warningCount = clipOutputs.filter((output) => output.validationWarnings.length > 0).length;
+              const playableCount = clipOutputs.filter((output) => output.outputPlayable === true).length;
+              const featuredOutput =
+                clipOutputs.find((output) => output.finalAvailable && output.outputPlayable === true)
+                ?? clipOutputs.find((output) => output.finalAvailable)
+                ?? clipOutputs.find((output) => output.previewAvailable)
+                ?? clipOutputs[0];
+            %>
+            <div class="job-summary-grid">
+              <article class="job-summary-card"><span>Total outputs</span><strong><%= clipOutputs.length %></strong></article>
+              <article class="job-summary-card"><span>Playable</span><strong><%= playableCount %></strong></article>
+              <article class="job-summary-card"><span>Final videos</span><strong><%= finalReadyCount %></strong></article>
+              <article class="job-summary-card"><span>Subtitle ready</span><strong><%= subtitleReadyCount %></strong></article>
+            </div>
+            <% if (warningCount > 0) { %>
+              <div class="clip-output-warning-box">
+                <strong>Output warnings</strong>
+                <ul>
+                  <li><%= warningCount %> clip output masih punya warning validation/render yang perlu direview.</li>
+                </ul>
+              </div>
+            <% } %>
+            <% if (featuredOutput) { %>
+              <div class="publish-actions-card" data-featured-output-summary>
+                <div class="clip-output-featured-header">
+                  <div>
+                    <strong>Best output saat ini</strong>
+                    <p>
+                      <%= featuredOutput.candidateTitle ?? `Clip Output ${featuredOutput.id.slice(0, 8)}` %>
+                      <% if (featuredOutput.aspectRatio) { %>| <%= featuredOutput.aspectRatio %><% } %>
+                      <% if (featuredOutput.durationMs) { %>| <%= Number(featuredOutput.durationMs) / 1000 %> detik<% } %>
+                    </p>
+                  </div>
+                  <span class="status status-<%= String(featuredOutput.qualityStatus).toLowerCase() %>"><%= featuredOutput.qualityStatus %></span>
+                </div>
+                <div class="d-flex flex-wrap gap-2">
+                  <% if (featuredOutput.finalPlaybackUrl) { %>
+                    <a class="btn btn-primary" href="<%= featuredOutput.finalPlaybackUrl %>" target="_blank" rel="noreferrer">Open best video</a>
+                  <% } else if (featuredOutput.previewPlaybackUrl) { %>
+                    <a class="btn btn-primary" href="<%= featuredOutput.previewPlaybackUrl %>" target="_blank" rel="noreferrer">Open best preview</a>
+                  <% } %>
+                  <% if (featuredOutput.finalAvailable) { %>
+                    <a class="btn btn-success" href="/app/jobs/<%= job.id %>/outputs/<%= featuredOutput.id %>/download?artifact=final">Download best video</a>
+                  <% } %>
+                  <% if (featuredOutput.subtitleAvailable && featuredOutput.subtitleDownloads.length) { %>
+                    <a class="btn btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= featuredOutput.id %>/download?artifact=<%= featuredOutput.subtitleDownloads[0].artifact %>">Download main subtitle</a>
+                  <% } %>
+                  <a class="btn btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= featuredOutput.id %>/export-index">Export best output index</a>
+                </div>
+              </div>
+            <% } %>
+          <% } %>
           <% if (!clipOutputs.length) { %>
             <div class="empty-cell">No rendered clip outputs have been stored yet.</div>
           <% } %>
           <% clipOutputs.forEach((output, index) => { %>
-            <article class="clip-output-card">
+            <article
+              class="clip-output-card <%= featuredOutput && featuredOutput.id === output.id ? 'clip-output-card--featured' : '' %>"
+              <% if (featuredOutput && featuredOutput.id === output.id) { %>data-featured-clip-output tabindex="-1"<% } %>>
               <div class="clip-output-card__header">
                 <div>
                   <h3>#<%= index + 1 %> - <%= output.candidateTitle ?? `Clip Output ${output.id.slice(0, 8)}` %></h3>
                   <div class="text-muted small"><%= output.aspectRatio ?? '-' %> | <%= output.width && output.height ? `${output.width}x${output.height}` : 'Pending dimensions' %> | <%= output.durationMs ? `${Number(output.durationMs) / 1000} detik` : '-' %></div>
                 </div>
-                <span class="status status-<%= String(output.qualityStatus).toLowerCase() %>"><%= output.qualityStatus %></span>
+                <div class="d-flex flex-wrap gap-2 align-items-center">
+                  <% if (featuredOutput && featuredOutput.id === output.id) { %>
+                    <span class="clip-output-featured-badge">Best output</span>
+                  <% } %>
+                  <span class="status status-<%= String(output.qualityStatus).toLowerCase() %>"><%= output.qualityStatus %></span>
+                </div>
               </div>
               <% if (output.suggestedCaption) { %>
                 <div class="candidate-caption-box">
                   <strong>Caption rekomendasi:</strong>
                   <p><%= output.suggestedCaption %></p>
+                </div>
+              <% } %>
+              <% if (output.thumbnailPlaybackUrl) { %>
+                <div class="candidate-caption-box mb-3">
+                  <strong>Thumbnail preview</strong>
+                  <img
+                    class="clip-output-thumbnail-preview"
+                    src="<%= output.thumbnailPlaybackUrl %>"
+                    alt="Thumbnail preview for <%= output.candidateTitle ?? `Clip Output ${output.id.slice(0, 8)}` %>">
+                </div>
+              <% } %>
+              <% if (output.previewPlaybackUrl || output.finalPlaybackUrl) { %>
+                <div class="candidate-caption-box mb-3">
+                  <strong>Video preview</strong>
+                  <video
+                    class="clip-output-preview-video"
+                    controls
+                    preload="metadata"
+                    playsinline
+                    src="<%= output.previewPlaybackUrl ?? output.finalPlaybackUrl %>"></video>
+                  <p class="mt-2 mb-0 text-muted small">
+                    <% if (output.previewPlaybackUrl) { %>
+                      Player memakai artifact preview agar review lebih cepat.
+                    <% } else { %>
+                      Player memakai final output karena preview belum tersedia.
+                    <% } %>
+                  </p>
                 </div>
               <% } %>
               <% if (output.retentionLevel) { %>
@@ -226,7 +652,13 @@
                 <article class="clip-output-review-card">
                   <span>Playback</span>
                   <strong><%= output.outputPlayable === true ? 'Playable' : output.outputPlayable === false ? 'Check needed' : 'Unknown' %></strong>
-                  <p>Preview <%= output.previewPlayable === true ? 'ready' : output.previewPlayable === false ? 'needs review' : 'pending' %></p>
+                  <p>
+                    <% if (output.previewAvailable) { %>
+                      Preview <%= output.previewPlayable === true ? 'ready' : output.previewPlayable === false ? 'needs review' : 'pending' %>
+                    <% } else { %>
+                      Preview video terpisah dilewati untuk menghemat storage.
+                    <% } %>
+                  </p>
                 </article>
                 <article class="clip-output-review-card">
                   <span>Codec</span>
@@ -256,48 +688,56 @@
                   </ul>
                 </div>
               <% } %>
-              <div class="d-flex flex-wrap gap-2">
+              <div class="clip-output-action-groups">
+                <div class="clip-output-action-group">
+                  <span>Video</span>
+                  <div class="d-flex flex-wrap gap-2">
+                <% if (output.finalPlaybackUrl) { %>
+                  <a class="btn btn-sm btn-primary" href="<%= output.finalPlaybackUrl %>" target="_blank" rel="noreferrer">Open video</a>
+                <% } else if (output.previewPlaybackUrl) { %>
+                  <a class="btn btn-sm btn-primary" href="<%= output.previewPlaybackUrl %>" target="_blank" rel="noreferrer">Open preview</a>
+                <% } %>
                 <% if (output.previewAvailable) { %>
                   <a class="btn btn-sm btn-outline-primary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=preview">Preview</a>
                 <% } %>
                 <% if (output.finalAvailable) { %>
                   <a class="btn btn-sm btn-success" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=final">Download video</a>
                 <% } %>
+                  </div>
+                </div>
                 <% if (output.subtitleAvailable) { %>
+                  <div class="clip-output-action-group">
+                    <span>Subtitle</span>
+                    <div class="d-flex flex-wrap gap-2">
                   <% output.subtitleDownloads.forEach((subtitle) => { %>
                     <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=<%= subtitle.artifact %>">
                       Subtitle <%= subtitle.label %>
                     </a>
                   <% }) %>
+                    </div>
+                  </div>
                 <% } %>
-                <% if (output.metadataAvailable) { %>
-                  <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=metadata">Metadata</a>
-                <% } %>
-                <% if (output.thumbnailAvailable) { %>
-                  <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=thumbnail">Thumbnail</a>
-                <% } %>
-                <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/export-index">Export index</a>
-                <form data-api-form action="/api/v1/jobs/<%= job.id %>/outputs/<%= output.id %>/rerender" method="post">
-                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                  <button class="btn btn-sm btn-outline-warning" type="submit">Rerender</button>
-                </form>
+                <div class="clip-output-action-group">
+                  <span>Assets</span>
+                  <div class="d-flex flex-wrap gap-2">
+                    <% if (output.metadataAvailable) { %>
+                      <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=metadata">Metadata</a>
+                    <% } %>
+                    <% if (output.thumbnailAvailable) { %>
+                      <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=thumbnail">Thumbnail</a>
+                    <% } %>
+                    <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/export-index">Export index</a>
+                    <form data-api-form action="/api/v1/jobs/<%= job.id %>/outputs/<%= output.id %>/rerender" method="post">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <button class="btn btn-sm btn-outline-warning" type="submit">Rerender</button>
+                    </form>
+                  </div>
+                </div>
               </div>
               <div class="publish-actions-card mt-3">
                 <div>
-                  <strong>Publish / Upload</strong>
-                  <p>Gunakan file final ini untuk upload ke platform. Integrasi publish otomatis akan memakai credential user dari Settings saat workflow publish sudah aktif.</p>
-                </div>
-                <div class="d-flex flex-wrap gap-2">
-                  <a class="btn btn-sm btn-outline-secondary" href="/app/settings">Setup Credentials</a>
-                  <% if (output.finalAvailable) { %>
-                    <a class="btn btn-sm btn-outline-success" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=final">Upload ke Facebook</a>
-                    <a class="btn btn-sm btn-outline-dark" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=final">Upload ke TikTok</a>
-                    <a class="btn btn-sm btn-danger" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=final">Upload ke YouTube Shorts</a>
-                  <% } else { %>
-                    <button class="btn btn-sm btn-outline-secondary" type="button" disabled>Upload ke Facebook</button>
-                    <button class="btn btn-sm btn-outline-secondary" type="button" disabled>Upload ke TikTok</button>
-                    <button class="btn btn-sm btn-outline-secondary" type="button" disabled>Upload ke YouTube Shorts</button>
-                  <% } %>
+                  <strong>Download siap pakai</strong>
+                  <p>Untuk sekarang output difokuskan ke render final, subtitle, dan metadata agar storage lebih hemat. Publish otomatis ke platform akan diaktifkan terpisah setelah integrasi kredensial selesai.</p>
                 </div>
               </div>
               <% if (output.subtitleAvailable) { %>
@@ -313,26 +753,29 @@
 
       <section class="panel mt-4">
         <div class="panel-heading">
-          <div><h2>Stages</h2><p>Authoritative stage projection from PostgreSQL.</p></div>
+          <div><h2>Technical stages</h2><p>Detail teknis pipeline disembunyikan default supaya halaman user lebih ringkas.</p></div>
         </div>
-        <div class="table-responsive">
-          <table class="table align-middle">
-            <thead><tr><th>Stage</th><th>Status</th><th>Progress</th><th>Weight</th></tr></thead>
-            <tbody>
-              <% if (!job.stages.length) { %>
-                <tr><td colspan="4" class="empty-cell">No stage projection yet.</td></tr>
-              <% } %>
-              <% job.stages.forEach((stage) => { %>
-                <tr data-stage-row="<%= stage.name %>">
-                  <td><strong><%= stage.name %></strong></td>
-                  <td><span class="status status-<%= stage.status.toLowerCase() %>" data-stage-status><%= stage.status %></span></td>
-                  <td data-stage-progress><%= stage.progressPercent %>%</td>
-                  <td><%= Number(stage.progressWeight).toString() %></td>
-                </tr>
-              <% }) %>
-            </tbody>
-          </table>
-        </div>
+        <details>
+          <summary>Lihat fase pipeline</summary>
+          <div class="table-responsive mt-3">
+            <table class="table align-middle">
+              <thead><tr><th>Phase</th><th>Status</th><th>Progress</th><th>Weight</th></tr></thead>
+              <tbody>
+                <% if (!groupedStages.length) { %>
+                  <tr><td colspan="4" class="empty-cell">No stage projection yet.</td></tr>
+                <% } %>
+                <% groupedStages.forEach((stage) => { %>
+                  <tr data-stage-row="<%= stage.key %>">
+                    <td><strong><%= stage.label %></strong></td>
+                    <td><span class="status status-<%= stage.status.toLowerCase() %>" data-stage-status><%= stage.status %></span></td>
+                    <td data-stage-progress><%= stage.progressPercent %>%</td>
+                    <td><%= Number(stage.progressWeight).toString() %></td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          </div>
+        </details>
       </section>
 
     <% } %>

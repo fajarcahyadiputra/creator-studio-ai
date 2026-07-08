@@ -194,6 +194,10 @@ class CandidateAnalysis(BaseModel):
 
 ClipQualityStatus = Literal["PENDING", "PASSED", "NEEDS_REVIEW", "FAILED"]
 MediaValidationStatus = Literal["READY", "FAILED"]
+TtsSpeechEmotion = Literal["neutral", "curious", "serious", "dramatic", "hopeful", "sad", "surprised", "calm"]
+TtsSpeechSpeed = Literal["slow", "normal", "fast"]
+TtsSpeechEmphasis = Literal["low", "medium", "high"]
+TtsSpeechVolume = Literal["low", "normal", "high"]
 
 
 class ClipRenderCandidate(BaseModel):
@@ -206,6 +210,46 @@ class ClipRenderCandidate(BaseModel):
     start_ms: str = Field(pattern=r"^\d+$")
     end_ms: str = Field(pattern=r"^\d+$")
     duration_ms: str = Field(pattern=r"^\d+$")
+
+
+class TtsRequestPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str = Field(min_length=36, max_length=64)
+    script: str = Field(min_length=1, max_length=100_000)
+    language: str = Field(min_length=2, max_length=20, default="id")
+    local_model_key: str | None = Field(default=None, max_length=200)
+    voice_identifier: str | None = Field(default=None, max_length=200)
+    speaking_style: str | None = Field(default=None, max_length=80)
+    emotion: str | None = Field(default=None, max_length=80)
+    speaking_speed: float | None = Field(default=None, gt=0, le=3)
+    pitch: float | None = Field(default=None, ge=-20, le=20)
+    pause_intensity: float | None = Field(default=None, ge=0, le=3)
+    target_duration_ms: int | None = Field(default=None, gt=0, le=14_400_000)
+    pronunciation_dictionary: dict[str, str] = Field(default_factory=dict)
+    output_config: dict[str, Any] = Field(default_factory=dict)
+
+
+class TtsSpeechSegment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int = Field(ge=1, le=10_000)
+    text: str = Field(min_length=1, max_length=2_000)
+    pause_after: Literal[250, 400, 600, 800, 1000, 1200, 1500, 1800, 2200]
+    emotion: TtsSpeechEmotion
+    speed: TtsSpeechSpeed
+    emphasis: TtsSpeechEmphasis
+    volume: TtsSpeechVolume = "normal"
+    breath_before: bool = False
+    breath_after: bool = False
+    fade_in_ms: int = Field(default=0, ge=0, le=5_000)
+    fade_out_ms: int = Field(default=80, ge=0, le=5_000)
+
+
+class TtsSpeechSegmentsDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    segments: list[TtsSpeechSegment] = Field(min_length=1, max_length=10_000)
 
 
 class ClipOutputTargets(BaseModel):
@@ -325,10 +369,28 @@ class MediaAssetValidationContext(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ExternalSourceImportContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_asset_id: str = Field(min_length=1, max_length=64)
+    job_id: str = Field(min_length=1, max_length=64)
+    user_id: str = Field(min_length=1, max_length=64)
+    project_id: str | None = Field(default=None, max_length=64)
+    source_url: HttpUrl
+    object_key: str = Field(min_length=1, max_length=1000)
+    upload_url: HttpUrl
+    read_url: HttpUrl
+    display_name: str = Field(min_length=1, max_length=255)
+    original_file_name: str = Field(min_length=1, max_length=255)
+    mime_type: str = Field(min_length=1, max_length=160)
+    extension: str = Field(min_length=1, max_length=20)
+
+
 class AudioExtractionPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     media_asset_id: str = Field(min_length=1, max_length=64)
+    job_id: str | None = Field(default=None, min_length=1, max_length=64)
     user_id: str = Field(min_length=1, max_length=64)
     object_key: str = Field(min_length=1, max_length=1000)
     source_url: HttpUrl

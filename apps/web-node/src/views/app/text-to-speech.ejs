@@ -1,0 +1,202 @@
+<%- include('../partials/head', { title, csrfToken }) %>
+<div class="workspace-shell"><%- include('../partials/user-topbar') %><main class="workspace-main content-area">
+  <header class="page-header">
+    <div>
+      <span class="eyebrow">Tools</span>
+      <h1>Text to Speech</h1>
+      <p>Buat segment plan narasi yang natural untuk workflow TTS. Tahap ini sudah menghasilkan durable job dan menyimpan hasil segmentasi script ke detail job.</p>
+    </div>
+  </header>
+
+  <div class="alert alert-info">Versi saat ini fokus ke script segmentation dulu. Audio synthesis final akan disambungkan di backlog berikutnya.</div>
+  <div class="form-message"></div>
+
+  <form id="tts-form" class="wizard-panel">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <script type="application/json" id="tts-presets-json"><%- JSON.stringify(ttsPresets) %></script>
+    <script type="application/json" id="tts-local-models-json"><%- JSON.stringify(localTtsModels) %></script>
+
+    <section class="wizard-step">
+      <div class="step-number">1</div>
+      <div class="step-body">
+        <h2>Preset, engine, dan voice direction</h2>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">TTS preset</label>
+            <select class="form-select" name="tts_preset_id" data-tts-preset-selector>
+              <option value="">Manual defaults</option>
+              <% ttsPresets.forEach((preset) => { %>
+                <option value="<%= preset.id %>" <%= selectedPresetId === preset.id ? 'selected' : '' %>><%= preset.name %><%= preset.isDefault ? ' (default)' : '' %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Local Piper model</label>
+            <select class="form-select" name="local_model_key" data-tts-local-model-selector>
+              <option value="">Choose local model</option>
+              <% localTtsModels.forEach((model) => { %>
+                <option value="<%= model.key %>" <%= formDefaults.localModelKey === model.key ? 'selected' : '' %>><%= model.displayName %></option>
+              <% }) %>
+            </select>
+            <div class="form-text">Model diambil dari folder lokal <code>model_tts</code> dan akan dipakai untuk test suara Piper.</div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Language</label>
+            <input class="form-control" name="language" value="<%= formDefaults.language %>">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Voice identifier</label>
+            <input class="form-control" name="voice_identifier" value="<%= formDefaults.voiceIdentifier %>" placeholder="alloy-id-female-01">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Speaking style</label>
+            <input class="form-control" name="speaking_style" value="<%= formDefaults.speakingStyle %>" placeholder="documentary, calm, assertive">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Emotion baseline</label>
+            <select class="form-select" name="emotion">
+              <% ['neutral','curious','serious','dramatic','hopeful','sad','surprised','calm'].forEach((emotion) => { %>
+                <option value="<%= emotion %>" <%= formDefaults.emotion === emotion ? 'selected' : '' %>><%= emotion %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Target duration ms</label>
+            <input class="form-control" name="target_duration_ms" type="number" min="1" max="14400000" value="<%= formDefaults.targetDurationMs %>" placeholder="Optional">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Speaking speed</label>
+            <input class="form-control" name="speaking_speed" type="number" min="0.5" max="3" step="0.1" value="<%= formDefaults.speakingSpeed %>">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Pitch</label>
+            <input class="form-control" name="pitch" type="number" min="-20" max="20" step="0.5" value="<%= formDefaults.pitch %>">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Pause intensity</label>
+            <input class="form-control" name="pause_intensity" type="number" min="0" max="3" step="0.1" value="<%= formDefaults.pauseIntensity %>">
+          </div>
+        </div>
+
+        <div class="candidate-caption-box mt-3">
+          <div class="tts-model-preview-header">
+            <div>
+              <strong>Test suara model lokal</strong>
+              <p class="mb-0">Pilih model lalu generate sample audio seperti preview di halaman sample Piper.</p>
+            </div>
+            <div class="tts-model-badges" data-tts-model-badges>
+              <span>Belum ada model dipilih</span>
+            </div>
+          </div>
+          <div class="row g-3 mt-1">
+            <div class="col-12">
+              <label class="form-label">Sample preview text</label>
+              <textarea class="form-control" name="sample_preview_text" rows="3" maxlength="500" data-tts-preview-text><%= formDefaults.samplePreviewText %></textarea>
+            </div>
+            <div class="col-12">
+              <div class="tts-preview-actions">
+                <button class="btn btn-outline-primary" type="button" data-tts-preview-button>Generate test voice</button>
+                <span class="text-muted small" data-tts-preview-status>Preview audio belum dibuat.</span>
+              </div>
+              <audio class="tts-preview-audio" controls preload="none" data-tts-preview-audio></audio>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="wizard-step">
+      <div class="step-number">2</div>
+      <div class="step-body">
+        <h2>Script dan arahan editor</h2>
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label">Narration script</label>
+            <textarea class="form-control" name="script" rows="12" maxlength="100000" placeholder="Masukkan script narasi lengkap di sini..." required></textarea>
+            <div class="form-text">Prompt TTS akan menjaga wording tetap sama. Model hanya boleh membagi script menjadi segmen narasi alami.</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Delivery goal</label>
+            <textarea class="form-control" name="delivery_goal" rows="4" maxlength="4000" placeholder="Contoh: terdengar seperti narrator dokumenter Indonesia yang tenang, tajam, dan kredibel."><%= formDefaults.deliveryGoal %></textarea>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Tone notes</label>
+            <textarea class="form-control" name="tone_notes" rows="4" maxlength="4000" placeholder="Contoh: jangan terlalu teatrikal, tetap jelas, beri penekanan di fakta penting."><%= formDefaults.toneNotes %></textarea>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Segment length preference</label>
+            <select class="form-select" name="segment_length_preference">
+              <% ['SHORT','BALANCED','LONG'].forEach((option) => { %>
+                <option value="<%= option %>" <%= formDefaults.segmentLengthPreference === option ? 'selected' : '' %>><%= option %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Breathing style</label>
+            <select class="form-select" name="breathing_style">
+              <% ['MINIMAL','NATURAL','DRAMATIC'].forEach((option) => { %>
+                <option value="<%= option %>" <%= formDefaults.breathingStyle === option ? 'selected' : '' %>><%= option %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Pronunciation dictionary</label>
+            <textarea class="form-control" name="pronunciation_dictionary" rows="3" placeholder="contoh&#10;Prabowo=Pra-bo-wo&#10;APBN=A Pe Be En"></textarea>
+            <div class="form-text">Format satu baris per item: <code>term=pelafalan</code>.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="wizard-step">
+      <div class="step-number">3</div>
+      <div class="step-body">
+        <h2>Output config</h2>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label">Preferred format</label>
+            <select class="form-select" name="preferred_format">
+              <% ['WAV','MP3','OGG'].forEach((format) => { %>
+                <option value="<%= format %>" <%= formDefaults.preferredFormat === format ? 'selected' : '' %>><%= format %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Sample rate</label>
+            <input class="form-control" name="sample_rate" type="number" min="8000" max="96000" value="<%= formDefaults.sampleRate %>">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Channels</label>
+            <input class="form-control" name="channels" type="number" min="1" max="2" value="<%= formDefaults.channels %>">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="wizard-step">
+      <div class="step-number">4</div>
+      <div class="step-body">
+        <h2>Review dan submit</h2>
+        <div class="job-summary-grid">
+          <article class="job-summary-card">
+            <span>Audience hint</span>
+            <strong><%= formDefaults.audienceHint || '-' %></strong>
+            <p class="mb-0 mt-1 text-secondary small">Diambil dari setting user bila tersedia.</p>
+          </article>
+          <article class="job-summary-card">
+            <span>Niche hint</span>
+            <strong><%= formDefaults.nicheHint || '-' %></strong>
+            <p class="mb-0 mt-1 text-secondary small">Bisa dipakai saat menulis script narasi.</p>
+          </article>
+          <article class="job-summary-card">
+            <span>Workflow output</span>
+            <strong>Speech segments JSON</strong>
+            <p class="mb-0 mt-1 text-secondary small">Hasil awal masuk ke detail job sebagai segment plan.</p>
+          </article>
+        </div>
+        <button class="btn btn-primary mt-3" type="submit">Create TTS job</button>
+      </div>
+    </section>
+  </form>
+</main></div>
+<%- include('../partials/footer') %>

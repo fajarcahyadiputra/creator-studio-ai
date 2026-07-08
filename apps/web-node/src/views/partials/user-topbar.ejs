@@ -7,7 +7,13 @@
 
     <nav class="workspace-nav">
       <a class="workspace-nav__link <%= path === '/app/dashboard' ? 'active' : '' %>" href="/app/dashboard">Dashboard</a>
-      <a class="workspace-nav__link <%= path.includes('/app/tools') ? 'active' : '' %>" href="/app/tools/auto-clipping">Tools AI</a>
+      <details class="workspace-nav__dropdown <%= path.includes('/app/tools') ? 'workspace-nav__dropdown--active' : '' %>">
+        <summary class="workspace-nav__link">Tools AI</summary>
+        <div class="workspace-nav__menu">
+          <a class="workspace-nav__menu-link <%= path.startsWith('/app/tools/auto-clipping') ? 'active' : '' %>" href="/app/tools/auto-clipping">Auto Clipping</a>
+          <a class="workspace-nav__menu-link <%= path.startsWith('/app/tools/text-to-speech') ? 'active' : '' %>" href="/app/tools/text-to-speech">Narration TTS</a>
+        </div>
+      </details>
       <a class="workspace-nav__link <%= path.startsWith('/app/jobs') ? 'active' : '' %>" href="/app/jobs">Hasil Clipping</a>
       <a class="workspace-nav__link <%= path.startsWith('/app/media') ? 'active' : '' %>" href="/app/media">Media</a>
       <a class="workspace-nav__link <%= path.startsWith('/app/presets') ? 'active' : '' %>" href="/app/presets">Templates</a>

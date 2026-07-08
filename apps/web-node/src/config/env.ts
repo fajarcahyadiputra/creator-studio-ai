@@ -36,12 +36,15 @@ const schema = z.object({
   SIGNED_URL_TTL_SECONDS: z.coerce.number().int().positive().max(3600).default(900),
   UPLOAD_MAX_SIZE_BYTES: z.coerce.number().int().positive().default(10 * 1024 ** 3),
   UPLOAD_PART_SIZE_BYTES: z.coerce.number().int().min(5 * 1024 ** 2).default(16 * 1024 ** 2),
+  HTTP_JSON_BODY_LIMIT_MB: z.coerce.number().positive().max(64).default(8),
 
   TEMPORAL_ADDRESS: z.string().min(1),
   TEMPORAL_NAMESPACE: z.string().min(1).default("default"),
   TEMPORAL_AUTO_CLIP_TASK_QUEUE: z.string().min(1).default("auto-clipping"),
   WEB_INTERNAL_BASE_URL: z.url().default("http://web-node:3000"),
   MEDIA_INGESTION_INTERNAL_BASE_URL: z.url().default("http://media-ingestion-node:3100"),
+  AI_MEDIA_PYTHON_INTERNAL_BASE_URL: z.url().default("http://ai-media-python-api:8000"),
+  TTS_MODEL_DIR: z.string().min(1).default("/models/tts"),
 
   SMTP_HOST: z.string().min(1),
   SMTP_PORT: z.coerce.number().int().positive(),

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { JobStatus } from "../../generated/prisma/enums.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
 import { validateExternalSourceUrl } from "../../infrastructure/ingestion/client.js";
-import { createInternalSignedObjectReadUrl } from "../../infrastructure/storage/s3.js";
+import { createPublicSignedObjectReadUrl } from "../../infrastructure/storage/s3.js";
 import { temporalClient } from "../../infrastructure/temporal/client.js";
 import { env } from "../../config/env.js";
 import { AppError, ConflictError, NotFoundError } from "../../shared/errors/app-error.js";
@@ -26,6 +26,28 @@ interface CreateAutoClipInput {
   visual: Record<string, unknown>;
   subtitle: Record<string, unknown>;
   ai: Record<string, unknown>;
+}
+
+interface CreateTtsInput {
+  project_id?: string;
+  script: string;
+  language: string;
+  local_model_key?: string;
+  voice_identifier?: string;
+  speaking_style?: string;
+  emotion?: string;
+  speaking_speed?: number;
+  pitch?: number;
+  pause_intensity?: number;
+  target_duration_ms?: number;
+  pronunciation_dictionary: Record<string, string>;
+  output_config: Record<string, unknown>;
+  user_preferences: Record<string, unknown>;
+  ai: {
+    credential_mode: "PLATFORM" | "USER_OWNED";
+    provider_id?: string;
+    model_id?: string;
+  };
 }
 
 interface UpdateClipCandidateSelectionInput {
@@ -107,6 +129,125 @@ interface RenderSettingsSource {
 }
 
 export class JobService {
+  public async createTextToSpeechJob(params: {
+    userId: string;
+    idempotencyKey: string;
+    input: CreateTtsInput;
+  }) {
+    const existing = await prisma.job.findUnique({
+      where: {
+        userId_operationKey_idempotencyKey: {
+          userId: params.userId,
+          operationKey: "CREATE_TTS_JOB",
+          idempotencyKey: params.idempotencyKey
+        }
+      }
+    });
+    if (existing) return existing;
+
+    const normalizedInput = prepareTtsInput(params.input);
+    const workflowId = `${randomUUID()}:attempt:1`;
+    const job = await prisma.$transaction(async (tx) => {
+      return tx.job.create({
+        data: {
+          userId: params.userId,
+          projectId: normalizedInput.project_id,
+          type: "TEXT_TO_SPEECH",
+          status: "QUEUED",
+          currentStage: "VALIDATING_SCRIPT",
+          idempotencyKey: params.idempotencyKey,
+          operationKey: "CREATE_TTS_JOB",
+          workflowId,
+          inputSnapshot: normalizedInput as never,
+          attempts: {
+            create: {
+              attemptNumber: 1,
+              status: "CREATED",
+              operationKey: "CREATE_TTS_JOB_ATTEMPT",
+              idempotencyKey: params.idempotencyKey,
+              workflowId
+            }
+          },
+          ttsRequest: {
+            create: {
+              script: normalizedInput.script,
+              language: normalizedInput.language,
+              providerId: normalizedInput.ai.provider_id ?? null,
+              modelId: normalizedInput.ai.model_id ?? null,
+              voiceIdentifier: normalizedInput.voice_identifier ?? null,
+              speakingStyle: normalizedInput.speaking_style ?? null,
+              emotion: normalizedInput.emotion ?? null,
+              speakingSpeed:
+                typeof normalizedInput.speaking_speed === "number" ? normalizedInput.speaking_speed : null,
+              pitch: typeof normalizedInput.pitch === "number" ? normalizedInput.pitch : null,
+              pauseIntensity:
+                typeof normalizedInput.pause_intensity === "number" ? normalizedInput.pause_intensity : null,
+              targetDurationMs:
+                typeof normalizedInput.target_duration_ms === "number"
+                  ? BigInt(normalizedInput.target_duration_ms)
+                  : null,
+              pronunciationDictionary: normalizedInput.pronunciation_dictionary as never,
+              outputConfig: {
+                ...normalizedInput.output_config,
+                user_preferences: normalizedInput.user_preferences
+              } as never
+            }
+          }
+        }
+      });
+    });
+
+    try {
+      const client = await temporalClient();
+      const handle = await client.workflow.start(resolveFoundationWorkflowName("TEXT_TO_SPEECH"), {
+        taskQueue: env.TEMPORAL_AUTO_CLIP_TASK_QUEUE,
+        workflowId,
+        args: [
+          {
+            job_id: job.id,
+            user_id: params.userId,
+            job_type: "TEXT_TO_SPEECH",
+            input_snapshot: normalizedInput,
+            callback_base_url: env.WEB_INTERNAL_BASE_URL,
+            attempt_number: 1
+          }
+        ]
+      });
+      await prisma.$transaction([
+        prisma.job.update({ where: { id: job.id }, data: { workflowRunId: handle.firstExecutionRunId } }),
+        prisma.jobAttempt.update({
+          where: { jobId_attemptNumber: { jobId: job.id, attemptNumber: 1 } },
+          data: { status: "RUNNING", workflowRunId: handle.firstExecutionRunId, startedAt: new Date() }
+        })
+      ]);
+      return prisma.job.findUniqueOrThrow({ where: { id: job.id } });
+    } catch (error) {
+      const technicalErrorId = randomUUID();
+      await prisma.$transaction([
+        prisma.job.update({ where: { id: job.id }, data: { status: "FAILED" } }),
+        prisma.jobError.create({
+          data: {
+            jobId: job.id,
+            technicalErrorId,
+            code: "TEMPORAL_START_FAILED",
+            category: "INFRASTRUCTURE_TEMPORARY",
+            retryable: true,
+            message: error instanceof Error ? error.message : String(error),
+            userMessage: "The TTS workflow could not be started. Retry the job when Temporal is available."
+          }
+        })
+      ]);
+      throw new AppError({
+        code: "TEMPORAL_START_FAILED",
+        message: "The TTS workflow could not be started.",
+        statusCode: 503,
+        retryable: true,
+        details: { technical_error_id: technicalErrorId },
+        cause: error
+      });
+    }
+  }
+
   public async createAutoClippingJob(params: {
     userId: string;
     idempotencyKey: string;
@@ -184,7 +325,7 @@ export class JobService {
 
     try {
       const client = await temporalClient();
-      const handle = await client.workflow.start("FoundationAutoClippingWorkflow", {
+      const handle = await client.workflow.start(resolveFoundationWorkflowName("AUTO_CLIPPING"), {
         taskQueue: env.TEMPORAL_AUTO_CLIP_TASK_QUEUE,
         workflowId,
         args: [
@@ -257,7 +398,10 @@ export class JobService {
   }) {
     const job = await prisma.job.findFirst({
       where: { id: params.jobId, userId: params.userId, deletedAt: null },
-      include: { attempts: { orderBy: { attemptNumber: "desc" }, take: 1 } }
+      include: {
+        attempts: { orderBy: { attemptNumber: "desc" }, take: 1 },
+        autoClipRequest: true
+      }
     });
     if (!job) throw new NotFoundError("Job");
 
@@ -278,6 +422,7 @@ export class JobService {
       throw new ConflictError("JOB_NOT_RETRYABLE", "Only failed jobs can be retried.");
     }
 
+    const retryInputSnapshot = restoreExternalSourceSnapshot(job.inputSnapshot, job.autoClipRequest);
     const attemptNumber = (job.attempts[0]?.attemptNumber ?? 0) + 1;
     const workflowId = `${job.id}:attempt:${attemptNumber}`;
     await prisma.$transaction([
@@ -290,6 +435,7 @@ export class JobService {
           workflowRunId: null,
           progressPercent: 0,
           completedAt: null,
+          inputSnapshot: retryInputSnapshot as never,
           version: { increment: 1 }
         }
       }),
@@ -309,7 +455,7 @@ export class JobService {
 
     try {
       const client = await temporalClient();
-      const handle = await client.workflow.start("FoundationAutoClippingWorkflow", {
+      const handle = await client.workflow.start(resolveFoundationWorkflowName(job.type), {
         taskQueue: env.TEMPORAL_AUTO_CLIP_TASK_QUEUE,
         workflowId,
         args: [
@@ -317,7 +463,7 @@ export class JobService {
             job_id: job.id,
             user_id: params.userId,
             job_type: job.type,
-            input_snapshot: job.inputSnapshot,
+            input_snapshot: retryInputSnapshot,
             callback_base_url: env.WEB_INTERNAL_BASE_URL,
             attempt_number: attemptNumber,
             resume_from_stage: params.stage
@@ -364,12 +510,15 @@ export class JobService {
   }
 
   public async duplicate(userId: string, jobId: string, idempotencyKey: string) {
-    const job = await prisma.job.findFirst({ where: { id: jobId, userId, deletedAt: null } });
+    const job = await prisma.job.findFirst({
+      where: { id: jobId, userId, deletedAt: null },
+      include: { autoClipRequest: true }
+    });
     if (!job || job.type !== "AUTO_CLIPPING") throw new NotFoundError("Auto clipping job");
     return this.createAutoClippingJob({
       userId,
       idempotencyKey,
-      input: job.inputSnapshot as unknown as CreateAutoClipInput
+      input: restoreExternalSourceSnapshot(job.inputSnapshot, job.autoClipRequest) as unknown as CreateAutoClipInput
     });
   }
 
@@ -590,7 +739,7 @@ export class JobService {
       );
     }
 
-    return createInternalSignedObjectReadUrl(objectKey);
+    return createPublicSignedObjectReadUrl(objectKey);
   }
 
   public async createClipOutputExportIndex(
@@ -634,7 +783,7 @@ export class JobService {
       artifacts.push({
         artifact,
         label: artifactLabel(artifact),
-        url: await createInternalSignedObjectReadUrl(objectKey)
+        url: await createPublicSignedObjectReadUrl(objectKey)
       });
     }
 
@@ -691,7 +840,7 @@ export class JobService {
         artifacts.push({
           artifact,
           label: artifactLabel(artifact),
-          url: await createInternalSignedObjectReadUrl(objectKey)
+          url: await createPublicSignedObjectReadUrl(objectKey)
         });
       }
 
@@ -711,6 +860,35 @@ export class JobService {
   }
 }
 
+function prepareTtsInput(input: CreateTtsInput): CreateTtsInput {
+  return {
+    project_id: input.project_id,
+    script: input.script.trim(),
+    language: input.language.trim() || "id",
+    local_model_key: input.local_model_key?.trim() || undefined,
+    voice_identifier: input.voice_identifier?.trim() || undefined,
+    speaking_style: input.speaking_style?.trim() || undefined,
+    emotion: input.emotion?.trim() || undefined,
+    speaking_speed: input.speaking_speed,
+    pitch: input.pitch,
+    pause_intensity: input.pause_intensity,
+    target_duration_ms: input.target_duration_ms,
+    pronunciation_dictionary: input.pronunciation_dictionary ?? {},
+    output_config: input.output_config ?? {},
+    user_preferences: input.user_preferences ?? {},
+    ai: {
+      credential_mode: input.ai.credential_mode,
+      provider_id: input.ai.provider_id,
+      model_id: input.ai.model_id
+    }
+  };
+}
+
+function resolveFoundationWorkflowName(jobType: string): string {
+  if (jobType === "TEXT_TO_SPEECH") return "FoundationTextToSpeechWorkflow";
+  return "FoundationAutoClippingWorkflow";
+}
+
 export async function prepareAutoClippingInput(input: CreateAutoClipInput): Promise<CreateAutoClipInput> {
   if (input.source.type !== "EXTERNAL_URL" || !input.source.url) {
     return input;
@@ -726,6 +904,43 @@ export async function prepareAutoClippingInput(input: CreateAutoClipInput): Prom
   };
 }
 
+function restoreExternalSourceSnapshot(
+  inputSnapshot: unknown,
+  autoClipRequest:
+    | {
+        sourceType: string;
+        sourceUrl: string | null;
+      }
+    | null
+    | undefined
+): Record<string, unknown> {
+  const snapshot =
+    inputSnapshot && typeof inputSnapshot === "object" && !Array.isArray(inputSnapshot)
+      ? { ...(inputSnapshot as Record<string, unknown>) }
+      : {};
+  const source =
+    snapshot.source && typeof snapshot.source === "object" && !Array.isArray(snapshot.source)
+      ? { ...(snapshot.source as Record<string, unknown>) }
+      : {};
+
+  if (autoClipRequest?.sourceType !== "EXTERNAL_URL" || !autoClipRequest.sourceUrl) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    source: {
+      ...source,
+      type: "EXTERNAL_URL",
+      url: autoClipRequest.sourceUrl,
+      media_asset_id:
+        typeof source.media_asset_id === "string" && source.media_asset_id.trim().length > 0
+          ? source.media_asset_id
+          : undefined
+    }
+  };
+}
+
 interface ClipOutputArtifactSource {
   previewObjectKey: string | null;
   finalObjectKey: string | null;
@@ -733,6 +948,8 @@ interface ClipOutputArtifactSource {
   thumbnailObjectKey: string | null;
   subtitles: Array<{ format: string; objectKey: string }>;
 }
+
+const SUPPORTED_SUBTITLE_FORMATS = new Set(["srt", "ass", "vtt", "json"]);
 
 export function assertIdempotencyKey(value: string | undefined): string {
   if (!value || value.length < 8 || value.length > 160) {
@@ -778,10 +995,11 @@ export function buildRenderSettings(source: RenderSettingsSource): Record<string
     !Array.isArray(source.candidate.analyzerMetadata)
       ? (source.candidate.analyzerMetadata as Record<string, unknown>)
       : {};
+  const normalizedSubtitle = normalizeSubtitleRenderSettings(subtitle);
 
   return {
     visual,
-    subtitle,
+    subtitle: normalizedSubtitle,
     strategy: {
       target_platform: strategy.target_platform ?? null,
       objective: strategy.objective ?? null
@@ -819,6 +1037,34 @@ export function buildRenderSettings(source: RenderSettingsSource): Record<string
       provider: typeof analyzerMetadata.provider === "string" ? analyzerMetadata.provider : null,
       model: typeof analyzerMetadata.model === "string" ? analyzerMetadata.model : null
     }
+  };
+}
+
+function normalizeSubtitleRenderSettings(subtitle: Record<string, unknown>) {
+  const requestedFormat =
+    typeof subtitle.format === "string" && SUPPORTED_SUBTITLE_FORMATS.has(subtitle.format.trim().toLowerCase())
+      ? subtitle.format.trim().toLowerCase()
+      : null;
+  const exportFormats = Array.isArray(subtitle.export_formats)
+    ? subtitle.export_formats
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim().toUpperCase())
+        .filter((value) => SUPPORTED_SUBTITLE_FORMATS.has(value.toLowerCase()))
+    : [];
+  const primaryFormat = requestedFormat ?? exportFormats[0]?.toLowerCase() ?? "srt";
+  const burnedIn =
+    typeof subtitle.burned_in === "boolean"
+      ? subtitle.burned_in
+      : typeof subtitle.burn_in === "boolean"
+        ? subtitle.burn_in
+        : false;
+
+  return {
+    ...subtitle,
+    format: primaryFormat,
+    burn_in: burnedIn,
+    burned_in: burnedIn,
+    export_formats: exportFormats.length > 0 ? exportFormats : ["SRT"]
   };
 }
 

@@ -18,3 +18,5 @@ apps/web-node/src/generated/prisma/
 apps/web-node/prisma/dev.db
 storage/
 tmp/
+.tmp/
+model_tts

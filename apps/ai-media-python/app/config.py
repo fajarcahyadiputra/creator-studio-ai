@@ -18,7 +18,8 @@ class Settings(BaseSettings):
     CALLBACK_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0, le=60)
     MEDIA_PROBE_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0, le=180)
     AUDIO_EXTRACTION_TIMEOUT_SECONDS: float = Field(default=120.0, gt=0, le=900)
-    TRANSCRIPTION_TIMEOUT_SECONDS: float = Field(default=600.0, gt=0, le=3600)
+    TRANSCRIPTION_TIMEOUT_SECONDS: float = Field(default=600.0, gt=0, le=14400)
+    RENDER_OUTPUT_TIMEOUT_SECONDS: float = Field(default=900.0, gt=0, le=14400)
     FASTER_WHISPER_MODEL_SIZE: str = "small"
     FASTER_WHISPER_DEVICE: str = "cpu"
     FASTER_WHISPER_COMPUTE_TYPE: str = "int8"
@@ -28,6 +29,9 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = None
     OPENAI_BASE_URL: HttpUrl = HttpUrl("https://api.openai.com/v1")
     OPENAI_TIMEOUT_SECONDS: float = Field(default=45.0, gt=0, le=120)
+    TTS_MODEL_DIR: str = "/models/tts"
+    PIPER_COMMAND: str = "piper"
+    TTS_SAMPLE_TEXT: str = "Halo, ini adalah sample suara untuk preview model TTS."
 
 
 @lru_cache

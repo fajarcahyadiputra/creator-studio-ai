@@ -127,6 +127,8 @@ services:
       context: .
       dockerfile: apps/web-node/Dockerfile
     env_file: .env
+    volumes:
+      - ./model_tts:/models/tts:ro
     depends_on:
       seed:
         condition: service_completed_successfully
@@ -172,7 +174,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 20
-    networks: [internal]
+    networks: [public, internal]
 
   ai-media-python:
     image: creator-studio-ai-ai-media-python:dev
@@ -180,6 +182,8 @@ services:
       context: .
       dockerfile: apps/ai-media-python/Dockerfile
     env_file: .env
+    volumes:
+      - ./model_tts:/models/tts:ro
     depends_on:
       temporal:
         condition: service_healthy
@@ -191,12 +195,14 @@ services:
       interval: 15s
       timeout: 5s
       retries: 20
-    networks: [internal]
+    networks: [public, internal]
 
   ai-media-python-api:
     image: creator-studio-ai-ai-media-python:dev
     pull_policy: never
     env_file: .env
+    volumes:
+      - ./model_tts:/models/tts:ro
     command: ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]

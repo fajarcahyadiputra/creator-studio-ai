@@ -5,6 +5,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from app.activities.audio_pipeline import execute_audio_extraction, prepare_audio_extraction
+from app.activities.external_source_materialization import materialize_external_source
 from app.activities.media_validation import (
     prepare_media_asset_validation,
     probe_media_asset_validation,
@@ -22,6 +23,7 @@ from app.activities.render_outputs import (
     prepare_clip_output_render,
     submit_clip_output_result,
 )
+from app.activities.tts_segmentation import execute_tts_segmentation, submit_tts_segmentation_result
 from app.activities.transcription_pipeline import (
     execute_transcription,
     prepare_transcription,
@@ -30,6 +32,7 @@ from app.activities.transcription_pipeline import (
 from app.config import get_settings
 from app.observability.logging import configure_logging
 from app.workflows.foundation_auto_clipping import FoundationAutoClippingWorkflow
+from app.workflows.foundation_text_to_speech import FoundationTextToSpeechWorkflow
 from app.workflows.clip_output_render import ClipOutputRenderWorkflow
 from app.workflows.media_asset_validation import MediaAssetValidationWorkflow
 
@@ -45,7 +48,7 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=settings.TEMPORAL_AUTO_CLIP_TASK_QUEUE,
-        workflows=[FoundationAutoClippingWorkflow, MediaAssetValidationWorkflow, ClipOutputRenderWorkflow],
+        workflows=[FoundationAutoClippingWorkflow, FoundationTextToSpeechWorkflow, MediaAssetValidationWorkflow, ClipOutputRenderWorkflow],
         activities=[
             validate_foundation_request,
             emit_progress,
@@ -56,6 +59,7 @@ async def main() -> None:
             prepare_media_asset_validation,
             probe_media_asset_validation,
             submit_media_asset_validation_result,
+            materialize_external_source,
             prepare_audio_extraction,
             execute_audio_extraction,
             prepare_transcription,
@@ -64,6 +68,8 @@ async def main() -> None:
             prepare_clip_output_render,
             execute_clip_output_render,
             submit_clip_output_result,
+            execute_tts_segmentation,
+            submit_tts_segmentation_result,
         ],
         max_concurrent_activities=20,
     )

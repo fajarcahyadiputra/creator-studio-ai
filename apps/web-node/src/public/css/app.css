@@ -19,6 +19,14 @@ a { color: var(--primary); text-decoration: none; }
 .workspace-nav__link { color: rgba(255,255,255,0.72); padding: 10px 12px; border-radius: 12px; font-size: .95rem; font-weight: 600; white-space: nowrap; }
 .workspace-nav__link:hover, .workspace-nav__link.active { color: #fff; background: rgba(255,255,255,0.1); }
 .workspace-nav__link--admin { color: #ffdb75; }
+.workspace-nav__dropdown { position: relative; }
+.workspace-nav__dropdown summary { list-style: none; cursor: pointer; }
+.workspace-nav__dropdown summary::-webkit-details-marker { display: none; }
+.workspace-nav__dropdown[open] .workspace-nav__link,
+.workspace-nav__dropdown--active .workspace-nav__link { color: #fff; background: rgba(255,255,255,0.1); }
+.workspace-nav__menu { position: absolute; top: calc(100% + 10px); left: 0; min-width: 220px; display: grid; gap: 4px; padding: 10px; border-radius: 16px; background: rgba(8, 14, 27, 0.96); border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 20px 42px rgba(11, 18, 32, 0.28); }
+.workspace-nav__menu-link { color: rgba(255,255,255,0.82); padding: 10px 12px; border-radius: 12px; font-size: .92rem; font-weight: 600; }
+.workspace-nav__menu-link:hover, .workspace-nav__menu-link.active { color: #fff; background: rgba(255,255,255,0.1); }
 .workspace-account { display: flex; align-items: center; gap: 12px; }
 .workspace-account__meta { display: flex; flex-direction: column; text-align: right; color: #fff; line-height: 1.1; }
 .workspace-account__meta span { color: rgba(255,255,255,0.6); font-size: .78rem; }
@@ -68,6 +76,12 @@ a { color: var(--primary); text-decoration: none; }
 .candidate-card h3 { margin: 0 0 10px; font-size: 1.05rem; }
 .candidate-hook { font-weight: 600; margin-bottom: 12px; }
 .candidate-summary { color: var(--muted); margin-bottom: 14px; }
+.candidate-review-details { padding: 0 24px 24px; }
+.candidate-review-toggle { display: inline-flex; align-items: center; gap: 10px; padding: 10px 16px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--text); font-weight: 700; cursor: pointer; list-style: none; user-select: none; box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06); }
+.candidate-review-toggle::-webkit-details-marker { display: none; }
+.candidate-review-toggle::after { content: "Show"; color: var(--muted); font-size: .82rem; font-weight: 600; }
+.candidate-review-details[open] .candidate-review-toggle::after { content: "Hide"; }
+.candidate-review-content { padding-top: 16px; }
 .candidate-meta { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin: 0 0 14px; }
 .candidate-meta dt { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 4px; }
 .candidate-meta dd { margin: 0; }
@@ -111,10 +125,22 @@ a { color: var(--primary); text-decoration: none; }
 .candidate-score-badge { white-space: nowrap; padding: 9px 12px; border-radius: 999px; background: #e9f8ef; color: #18794e; font-weight: 800; font-size: .84rem; }
 .candidate-caption-box { margin-top: 12px; padding: 14px 16px; border-radius: 16px; background: #fff8ea; border: 1px solid #f4d79b; }
 .candidate-caption-box p { margin: 8px 0 0; color: #344054; }
+.tts-model-preview-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.tts-model-badges { display: flex; flex-wrap: wrap; gap: 8px; }
+.tts-model-badges span { display: inline-flex; align-items: center; min-height: 30px; padding: 6px 10px; border-radius: 999px; background: #fff; color: #344054; font-size: .8rem; font-weight: 700; border: 1px solid #f4d79b; }
+.tts-preview-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.tts-preview-audio { display: block; width: min(100%, 560px); margin-top: 12px; }
+.candidate-preview-video,
+.clip-output-preview-video { display: block; width: min(100%, 360px); max-height: 640px; aspect-ratio: 9 / 16; margin-top: 10px; border-radius: 18px; background: #10131a; object-fit: contain; box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12); }
+.clip-output-thumbnail-preview { display: block; width: min(100%, 220px); margin-top: 10px; border-radius: 16px; border: 1px solid var(--line); background: #fff; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); }
+.candidate-card--result .clip-output-review-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .clip-output-stack { padding: 20px 24px 24px; display: grid; gap: 16px; }
 .clip-output-card { border: 1px solid var(--line); border-radius: 18px; padding: 18px; background: #fbfcfe; }
+.clip-output-card--featured { border-color: #e5b93c; box-shadow: 0 16px 34px rgba(229, 185, 60, 0.14); background: linear-gradient(180deg, #fffdf4, #fbfcfe 28%); }
+.clip-output-card--featured:focus { outline: 3px solid rgba(229, 185, 60, 0.28); outline-offset: 2px; }
 .clip-output-card__header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 12px; }
 .clip-output-card__header h3 { margin: 0 0 6px; font-size: 1.05rem; }
+.clip-output-featured-badge { display: inline-flex; align-items: center; min-height: 30px; padding: 6px 10px; border-radius: 999px; background: #fff3c4; color: #8a5a00; font-size: .76rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
 .clip-output-review-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .clip-output-review-card { border: 1px solid #dbe4f3; border-radius: 16px; padding: 14px 15px; background: linear-gradient(180deg, #ffffff, #f7faff); }
 .clip-output-review-card span { display: block; color: var(--muted); font-size: .76rem; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .06em; }
@@ -125,6 +151,10 @@ a { color: var(--primary); text-decoration: none; }
 .clip-output-warning-box ul { margin: 0; padding-left: 18px; color: #6a4a11; display: grid; gap: 6px; }
 .publish-actions-card { border: 1px solid #d9e1f2; border-radius: 16px; padding: 16px; background: linear-gradient(135deg, #f8fbff, #eef5ff); display: grid; gap: 12px; }
 .publish-actions-card p { margin: 6px 0 0; color: #526077; font-size: .92rem; }
+.clip-output-featured-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.clip-output-action-groups { display: grid; gap: 12px; }
+.clip-output-action-group { display: grid; gap: 8px; }
+.clip-output-action-group > span { font-size: .76rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; }
 .jobs-table td { vertical-align: middle; }
 .auto-clip-preset-preview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 2px; }
 .auto-clip-preview-card { background: linear-gradient(135deg, #fcfdff, #f7f9ff); border: 1px solid var(--line); border-radius: 18px; padding: 18px; box-shadow: 0 10px 24px rgba(16,24,40,.04); }
@@ -168,6 +198,6 @@ a { color: var(--primary); text-decoration: none; }
 .marketing-card h3 { margin: 0 0 10px; font-size: 1.12rem; letter-spacing: -.03em; }
 .marketing-card p { margin: 0; color: #475467; }
 @media (max-width: 1050px) { .stat-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
-@media (max-width: 1180px) { .workspace-topbar__inner { flex-wrap: wrap; } .workspace-nav { order: 3; width: 100%; overflow-x: auto; padding-bottom: 4px; } .workspace-account { margin-left: auto; } .marketing-hero__content, .marketing-grid--wide, .workspace-highlight-grid, .job-primary-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 1180px) { .workspace-topbar__inner { flex-wrap: wrap; } .workspace-nav { order: 3; width: 100%; overflow-x: auto; padding-bottom: 4px; } .workspace-nav__menu { position: fixed; left: 16px; right: 16px; top: 92px; min-width: 0; } .workspace-account { margin-left: auto; } .marketing-hero__content, .marketing-grid--wide, .workspace-highlight-grid, .job-primary-grid { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 900px) { .candidate-grid, .detail-stats, .candidate-meta, .analyzer-grid, .analyzer-meta, .auto-clip-preset-preview-grid, .clip-output-review-grid { grid-template-columns: 1fr; } }
-@media (max-width: 760px) { .app-shell { display:block; }.sidebar { position:relative; height:auto; }.sidebar-footer { margin-top:20px; }.content-area { padding:22px 16px; }.page-header { flex-direction:column; }.stat-grid { grid-template-columns:1fr 1fr; }.wizard-panel { padding:0 18px; }.wizard-step { grid-template-columns:1fr; } .event-line { flex-direction: column; } .workspace-topbar { padding: 12px 12px 0; } .workspace-topbar__inner { border-radius: 18px; } .workspace-account { width: 100%; justify-content: space-between; } .workspace-account__meta { text-align: left; } .marketing-nav, .marketing-hero__content, .marketing-grid, .marketing-grid--wide, .marketing-preview-metrics, .workspace-highlight-grid, .job-primary-grid, .job-summary-grid, .job-hero-panel__meta { grid-template-columns: 1fr; display: grid; } .marketing-nav { display: flex; flex-direction: column; align-items: stretch; } .marketing-nav__actions, .marketing-hero__cta { flex-direction: column; } .job-hero-panel__top, .candidate-result-header, .clip-output-card__header, .result-status-box { flex-direction: column; } }
+@media (max-width: 760px) { .app-shell { display:block; }.sidebar { position:relative; height:auto; }.sidebar-footer { margin-top:20px; }.content-area { padding:22px 16px; }.page-header { flex-direction:column; }.stat-grid { grid-template-columns:1fr 1fr; }.wizard-panel { padding:0 18px; }.wizard-step { grid-template-columns:1fr; } .event-line { flex-direction: column; } .workspace-topbar { padding: 12px 12px 0; } .workspace-topbar__inner { border-radius: 18px; } .workspace-account { width: 100%; justify-content: space-between; } .workspace-account__meta { text-align: left; } .marketing-nav, .marketing-hero__content, .marketing-grid, .marketing-grid--wide, .marketing-preview-metrics, .workspace-highlight-grid, .job-primary-grid, .job-summary-grid, .job-hero-panel__meta { grid-template-columns: 1fr; display: grid; } .marketing-nav { display: flex; flex-direction: column; align-items: stretch; } .marketing-nav__actions, .marketing-hero__cta, .tts-model-preview-header, .tts-preview-actions { flex-direction: column; align-items: stretch; } .job-hero-panel__top, .candidate-result-header, .clip-output-card__header, .result-status-box, .clip-output-featured-header { flex-direction: column; } .candidate-preview-video, .clip-output-preview-video { width: min(100%, 280px); margin-left: auto; margin-right: auto; } .candidate-review-details { padding: 0 18px 18px; } .candidate-review-toggle { width: 100%; justify-content: space-between; } }

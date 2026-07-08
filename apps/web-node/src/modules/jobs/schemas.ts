@@ -43,7 +43,7 @@ export const autoClipJobSchema = z.object({
   ),
   content: z.object({
     title: z.string().trim().max(255).optional(),
-    context: z.string().trim().max(5000).optional(),
+    context: z.string().trim().max(20000).optional(),
     topic: z.string().trim().max(255).optional(),
     niche: z.string().trim().max(120).optional(),
     target_audience: z.string().trim().max(255).optional(),
@@ -57,19 +57,29 @@ export const autoClipJobSchema = z.object({
     objective: z.enum(["ENGAGEMENT", "EDUCATION", "CONTROVERSY", "STORYTELLING", "PRODUCT_AWARENESS", "LEAD_GENERATION"]),
     tones: z.array(z.string().min(1).max(50)).min(1).max(5),
     desired_clip_count: z.number().int().min(1).max(30),
+    candidate_pool_count: z.number().int().min(1).max(30).default(10),
     minimum_duration_seconds: z.number().int().min(10).max(180),
     maximum_duration_seconds: z.number().int().min(15).max(180),
     minimum_viral_score: z.number().min(0).max(10).default(7),
     preferred_topics: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
     topics_to_avoid: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
     sensitive_topics: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
+    clip_style_tags: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+    virality_priorities: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+    selection_brief: z.string().trim().max(12000).optional(),
+    avoidance_brief: z.string().trim().max(12000).optional(),
+    packaging_brief: z.string().trim().max(12000).optional(),
     hook_style: z.string().trim().max(80).optional(),
     cta_preference: z.string().trim().max(120).optional(),
+    standalone_priority: z.enum(["REQUIRED", "PREFERRED", "FLEXIBLE"]).default("PREFERRED"),
+    require_spoken_audio: z.boolean().default(true),
     profanity_handling: z.enum(["KEEP", "MUTE", "BLEEP", "SUBTITLE_CENSOR"]).default("KEEP"),
     remove_long_silence: z.boolean().default(true),
     remove_filler_words: z.boolean().default(false)
   }).refine((value) => value.maximum_duration_seconds >= value.minimum_duration_seconds, {
     message: "Maximum duration must be greater than or equal to minimum duration."
+  }).refine((value) => value.candidate_pool_count >= value.desired_clip_count, {
+    message: "Candidate pool count must be greater than or equal to desired clip count."
   }),
   visual: z.object({
     aspect_ratio: z.enum(["9:16", "1:1", "4:5", "16:9", "CUSTOM"]),
@@ -80,6 +90,7 @@ export const autoClipJobSchema = z.object({
     enabled: z.boolean(),
     language: z.string().max(20),
     burn_in: z.boolean(),
+    format: z.enum(["SRT", "VTT", "ASS", "JSON"]).optional(),
     export_formats: z.array(z.enum(["SRT", "VTT", "ASS", "JSON"])),
     settings: z.object({
       style: z.string().trim().max(80).optional(),
@@ -105,6 +116,37 @@ export const autoClipJobSchema = z.object({
     scenes: z.array(sceneSchema).max(5000).default([]),
     silences: z.array(silenceSchema).max(5000).default([])
   }).optional()
+});
+
+export const ttsJobSchema = z.object({
+  project_id: z.uuid().optional(),
+  script: z.string().trim().min(1).max(100000),
+  language: z.string().trim().min(2).max(20).default("id"),
+  local_model_key: z.string().trim().min(1).max(200).optional(),
+  voice_identifier: z.string().trim().max(200).optional(),
+  speaking_style: z.string().trim().max(80).optional(),
+  emotion: z.string().trim().max(80).optional(),
+  speaking_speed: z.number().min(0.5).max(3).optional(),
+  pitch: z.number().min(-20).max(20).optional(),
+  pause_intensity: z.number().min(0).max(3).optional(),
+  target_duration_ms: z.number().int().positive().max(14_400_000).optional(),
+  pronunciation_dictionary: z.record(z.string(), z.string()).default({}),
+  output_config: z.object({
+    preferred_format: z.enum(["WAV", "MP3", "OGG"]).default("WAV"),
+    sample_rate: z.number().int().min(8000).max(96000).optional(),
+    channels: z.number().int().min(1).max(2).optional()
+  }).catchall(z.unknown()).default({ preferred_format: "WAV" }),
+  user_preferences: z.object({
+    tone_notes: z.string().trim().max(4000).optional(),
+    delivery_goal: z.string().trim().max(4000).optional(),
+    segment_length_preference: z.enum(["SHORT", "BALANCED", "LONG"]).optional(),
+    breathing_style: z.enum(["MINIMAL", "NATURAL", "DRAMATIC"]).optional()
+  }).catchall(z.unknown()).default({}),
+  ai: z.object({
+    credential_mode: z.enum(["PLATFORM", "USER_OWNED"]),
+    provider_id: z.uuid().optional(),
+    model_id: z.uuid().optional()
+  }).default({ credential_mode: "PLATFORM" })
 });
 
 export const retryJobSchema = z.object({

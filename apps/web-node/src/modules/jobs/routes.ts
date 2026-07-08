@@ -5,7 +5,7 @@ import { validateBody } from "../../shared/http/validate.js";
 import { routeParam } from "../../shared/http/route-param.js";
 import { requireAuth } from "../auth/identity-middleware.js";
 import { writeAudit } from "../audit/audit-service.js";
-import { autoClipJobSchema, clipCandidateSelectionSchema, retryJobSchema } from "./schemas.js";
+import { autoClipJobSchema, clipCandidateSelectionSchema, retryJobSchema, ttsJobSchema } from "./schemas.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { assertIdempotencyKey, type ClipOutputArtifact, JobService, serializeJob } from "./job-service.js";
 import type { JobEventBus } from "./job-event-bus.js";
@@ -72,6 +72,21 @@ function serializeClipOutput(output: {
     validation.checks && typeof validation.checks === "object" && !Array.isArray(validation.checks)
       ? (validation.checks as Record<string, unknown>)
       : {};
+  const validationObserved =
+    validation.observed && typeof validation.observed === "object" && !Array.isArray(validation.observed)
+      ? (validation.observed as Record<string, unknown>)
+      : {};
+  const validationObservedFinal =
+    validationObserved.final && typeof validationObserved.final === "object" && !Array.isArray(validationObserved.final)
+      ? (validationObserved.final as Record<string, unknown>)
+      : {};
+  const validationObservedPreview =
+    validationObserved.preview && typeof validationObserved.preview === "object" && !Array.isArray(validationObserved.preview)
+      ? (validationObserved.preview as Record<string, unknown>)
+      : {};
+  const validationWarnings = Array.isArray(validation.warnings)
+    ? validation.warnings.filter((warning): warning is string => typeof warning === "string" && warning.trim().length > 0)
+    : [];
 
   return {
     id: output.id,
@@ -109,9 +124,40 @@ function serializeClipOutput(output: {
           ? validationChecks.resolution_matches_target
           : null,
       audio_present: typeof validationChecks.audio_present === "boolean" ? validationChecks.audio_present : null,
+      preview_playable:
+        output.previewObjectKey && typeof validationChecks.preview_playable === "boolean"
+          ? validationChecks.preview_playable
+          : null,
+      video_codec_matches_target:
+        typeof validationChecks.video_codec_matches_target === "boolean"
+          ? validationChecks.video_codec_matches_target
+          : null,
+      audio_codec_matches_target:
+        typeof validationChecks.audio_codec_matches_target === "boolean"
+          ? validationChecks.audio_codec_matches_target
+          : null,
+      duration_within_tolerance:
+        typeof validationChecks.duration_within_tolerance === "boolean"
+          ? validationChecks.duration_within_tolerance
+          : null,
+      subtitle_export_ready:
+        typeof validationChecks.subtitle_export_ready === "boolean"
+          ? validationChecks.subtitle_export_ready
+          : null,
+      subtitle_cue_count:
+        typeof validationObserved.subtitle_cue_count === "number" ? validationObserved.subtitle_cue_count : null,
+      final_duration_ms:
+        typeof validationObservedFinal.duration_ms === "number" ? validationObservedFinal.duration_ms : null,
+      final_video_codec:
+        typeof validationObservedFinal.codec_name === "string" ? validationObservedFinal.codec_name : null,
+      final_audio_codec:
+        typeof validationObservedFinal.audio_codec_name === "string" ? validationObservedFinal.audio_codec_name : null,
+      preview_duration_ms:
+        typeof validationObservedPreview.duration_ms === "number" ? validationObservedPreview.duration_ms : null,
       subtitle_format: typeof subtitle.format === "string" ? subtitle.format : null,
       subtitle_language: typeof subtitle.language === "string" ? subtitle.language : null,
-      subtitle_burned_in: typeof subtitle.burned_in === "boolean" ? subtitle.burned_in : null
+      subtitle_burned_in: typeof subtitle.burned_in === "boolean" ? subtitle.burned_in : null,
+      validation_warnings: validationWarnings
     },
     subtitles: Array.isArray(output.subtitles)
       ? output.subtitles.map((subtitleAsset) => ({
@@ -211,7 +257,39 @@ function serializeJobOutputs(job: Awaited<ReturnType<JobService["get"]>>) {
   };
 }
 
-function serializeEvent(event: {
+function serializeClipOutputExportIndex(exportIndex: Awaited<ReturnType<JobService["createClipOutputExportIndex"]>>) {
+  return {
+    clip_output_id: exportIndex.clipOutputId,
+    job_id: exportIndex.jobId,
+    candidate_id: exportIndex.candidateId,
+    quality_status: exportIndex.qualityStatus,
+    artifacts: exportIndex.artifacts.map((artifact) => ({
+      artifact: artifact.artifact,
+      label: artifact.label,
+      url: artifact.url
+    }))
+  };
+}
+
+function serializeJobOutputsExportIndex(exportIndex: Awaited<ReturnType<JobService["createJobOutputsExportIndex"]>>) {
+  return {
+    job_id: exportIndex.jobId,
+    status: exportIndex.status,
+    clip_outputs: exportIndex.clipOutputs.map((clipOutput) => ({
+      clip_output_id: clipOutput.clipOutputId,
+      candidate_id: clipOutput.candidateId,
+      quality_status: clipOutput.qualityStatus,
+      artifacts: clipOutput.artifacts.map((artifact) => ({
+        artifact: artifact.artifact,
+        label: artifact.label,
+        url: artifact.url
+      }))
+    }))
+  };
+}
+
+function serializeEvent(
+  event: {
   id: string;
   sequence: bigint;
   stage: string | null;
@@ -222,13 +300,33 @@ function serializeEvent(event: {
   userMessage: string | null;
   metadata: unknown;
   occurredAt: Date;
-}) {
+  },
+  fallbackStatus?: string | null
+) {
+  const metadataStatus =
+    event.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)
+      && typeof (event.metadata as Record<string, unknown>).status === "string"
+      ? String((event.metadata as Record<string, unknown>).status).trim().toUpperCase()
+      : null;
+  const eventTypeStatus =
+    event.eventType === "job.completed"
+      ? "COMPLETED"
+      : event.eventType === "job.failed"
+        ? "FAILED"
+        : event.eventType === "job.canceled"
+          ? "CANCELED"
+          : event.eventType === "job.needs_review"
+            ? "NEEDS_REVIEW"
+            : null;
+  const resolvedStatus = eventTypeStatus ?? metadataStatus ?? fallbackStatus ?? null;
+
   return {
     id: event.id,
     sequence: event.sequence.toString(),
     stage: event.stage,
     stage_progress: event.stageProgress,
     overall_progress: event.overallProgress,
+    status: resolvedStatus,
     event_type: event.eventType,
     message: event.message,
     user_message: event.userMessage,
@@ -239,6 +337,30 @@ function serializeEvent(event: {
 
 export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Router {
   const router = Router();
+
+  router.post(
+    "/api/v1/tts/jobs",
+    requireAuth,
+    validateBody(ttsJobSchema),
+    asyncHandler(async (request, response) => {
+      const idempotencyKey = assertIdempotencyKey(request.get("idempotency-key"));
+      const job = await jobService.createTextToSpeechJob({
+        userId: request.identity!.effectiveUserId,
+        idempotencyKey,
+        input: request.validatedBody as never
+      });
+      await writeAudit({
+        actorUserId: request.identity?.actorUserId,
+        targetUserId: request.identity?.effectiveUserId,
+        action: "TTS_JOB_CREATED",
+        resourceType: "Job",
+        resourceId: job.id,
+        request,
+        metadata: { status: job.status, type: job.type }
+      });
+      response.status(202).json({ data: serializeJob(job) });
+    })
+  );
 
   router.post(
     "/api/v1/auto-clipping/jobs",
@@ -301,22 +423,7 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
         "Content-Disposition",
         `attachment; filename="job-${exportIndex.jobId.slice(0, 8)}-outputs-export-index.json"`
       );
-      response.json({
-        data: {
-          job_id: exportIndex.jobId,
-          status: exportIndex.status,
-          clip_outputs: exportIndex.clipOutputs.map((clipOutput) => ({
-            clip_output_id: clipOutput.clipOutputId,
-            candidate_id: clipOutput.candidateId,
-            quality_status: clipOutput.qualityStatus,
-            artifacts: clipOutput.artifacts.map((artifact) => ({
-              artifact: artifact.artifact,
-              label: artifact.label,
-              url: artifact.url
-            }))
-          }))
-        }
-      });
+      response.json({ data: serializeJobOutputsExportIndex(exportIndex) });
     })
   );
 
@@ -348,19 +455,7 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
         "Content-Disposition",
         `attachment; filename="clip-output-${exportIndex.clipOutputId.slice(0, 8)}-export-index.json"`
       );
-      response.json({
-        data: {
-          clip_output_id: exportIndex.clipOutputId,
-          job_id: exportIndex.jobId,
-          candidate_id: exportIndex.candidateId,
-          quality_status: exportIndex.qualityStatus,
-          artifacts: exportIndex.artifacts.map((artifact) => ({
-            artifact: artifact.artifact,
-            label: artifact.label,
-            url: artifact.url
-          }))
-        }
-      });
+      response.json({ data: serializeClipOutputExportIndex(exportIndex) });
     })
   );
 
@@ -388,6 +483,31 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     asyncHandler(async (request, response) => {
       const job = await jobService.get(request.identity!.effectiveUserId, routeParam(request.params.jobId, "jobId"));
       response.json({ data: serializeJobOutputs(job) });
+    })
+  );
+
+  router.get(
+    "/api/v1/jobs/:jobId/export-index",
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      const exportIndex = await jobService.createJobOutputsExportIndex(
+        request.identity!.effectiveUserId,
+        routeParam(request.params.jobId, "jobId")
+      );
+      response.json({ data: serializeJobOutputsExportIndex(exportIndex) });
+    })
+  );
+
+  router.get(
+    "/api/v1/jobs/:jobId/outputs/:clipOutputId/export-index",
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      const exportIndex = await jobService.createClipOutputExportIndex(
+        request.identity!.effectiveUserId,
+        routeParam(request.params.jobId, "jobId"),
+        routeParam(request.params.clipOutputId, "clipOutputId")
+      );
+      response.json({ data: serializeClipOutputExportIndex(exportIndex) });
     })
   );
 
@@ -457,6 +577,12 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
         candidateId,
         selected: body.selected
       });
+      const renderQueueResult = body.selected
+        ? await jobService.queueSelectedClipOutputs({
+            userId: request.identity!.effectiveUserId,
+            jobId
+          })
+        : null;
       await writeAudit({
         actorUserId: request.identity!.actorUserId,
         targetUserId: request.identity!.effectiveUserId,
@@ -476,7 +602,19 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
           id: candidate.id,
           selected: candidate.selected,
           rank: candidate.rank,
-          message: candidate.selected ? "Candidate selected for downstream review." : "Candidate removed from the selected set."
+          render_queue: renderQueueResult
+            ? {
+                selected_candidate_count: renderQueueResult.selectedCount,
+                created_clip_output_count: renderQueueResult.createdCount,
+                existing_clip_output_count: renderQueueResult.existingCount,
+                started_render_workflow_count: renderQueueResult.startedWorkflowCount
+              }
+            : null,
+          message: candidate.selected
+            ? renderQueueResult && renderQueueResult.startedWorkflowCount > 0
+              ? "Candidate selected and auto-queued for render."
+              : "Candidate selected. Render output already exists for the selected set."
+            : "Candidate removed from the selected set."
         }
       });
     })
@@ -558,14 +696,14 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     "/api/v1/jobs/:jobId/events",
     requireAuth,
     asyncHandler(async (request, response) => {
-      await jobService.get(request.identity!.effectiveUserId, routeParam(request.params.jobId, "jobId"));
+      const job = await jobService.get(request.identity!.effectiveUserId, routeParam(request.params.jobId, "jobId"));
       const after = BigInt(String(request.query.after ?? "0"));
       const events = await prisma.jobEvent.findMany({
         where: { jobId: routeParam(request.params.jobId, "jobId"), sequence: { gt: after } },
         orderBy: { sequence: "asc" },
         take: 500
       });
-      response.json({ data: events.map(serializeEvent) });
+      response.json({ data: events.map((event) => serializeEvent(event, job.status)) });
     })
   );
 
@@ -589,6 +727,10 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
         if (fetching) return;
         fetching = true;
         try {
+          const currentJob = await prisma.job.findUnique({
+            where: { id: jobId },
+            select: { status: true }
+          });
           const events = await prisma.jobEvent.findMany({
             where: { jobId, sequence: { gt: cursor } },
             orderBy: { sequence: "asc" },
@@ -598,7 +740,7 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
             cursor = event.sequence;
             response.write(`id: ${event.sequence.toString()}\n`);
             response.write(`event: ${event.eventType}\n`);
-            response.write(`data: ${JSON.stringify(serializeEvent(event))}\n\n`);
+            response.write(`data: ${JSON.stringify(serializeEvent(event, currentJob?.status ?? null))}\n\n`);
           }
         } finally {
           fetching = false;
