@@ -7,6 +7,7 @@ from temporalio.common import RetryPolicy
 with workflow.unsafe.imports_passed_through():
     from app.activities.progress import emit_progress, validate_foundation_request
     from app.activities.tts_segmentation import execute_tts_segmentation, submit_tts_segmentation_result
+    from app.activities.tts_synthesis import execute_tts_audio_synthesis
 
 
 ACTIVITY_RETRY = RetryPolicy(
@@ -90,7 +91,7 @@ class FoundationTextToSpeechWorkflow:
             await self._emit(
                 job_id,
                 "SAVING_OUTPUTS",
-                50,
+                35,
                 "job.progress",
                 "Saving TTS segmentation metadata back to the application.",
                 "Menyimpan hasil segmentasi TTS.",
@@ -111,27 +112,67 @@ class FoundationTextToSpeechWorkflow:
 
             await self._emit(
                 job_id,
+                "GENERATING_AUDIO",
+                20,
+                "job.progress",
+                "Synthesizing narration audio with the selected local TTS model.",
+                "Membuat audio narasi dari segment plan.",
+                "RUNNING",
+                {"segment_count": segment_count},
+            )
+            synthesis_result = await workflow.execute_activity(
+                execute_tts_audio_synthesis,
+                {
+                    "job_id": job_id,
+                    "input_snapshot": validated["input_snapshot"],
+                    "document": document,
+                    "metadata": metadata,
+                },
+                start_to_close_timeout=timedelta(minutes=10),
+                heartbeat_timeout=timedelta(seconds=30),
+                retry_policy=ACTIVITY_RETRY,
+            )
+            await self._emit(
+                job_id,
+                "GENERATING_AUDIO",
+                100,
+                "job.progress",
+                "Narration audio was synthesized and uploaded successfully.",
+                "Audio narasi berhasil dibuat dan disimpan.",
+                "RUNNING",
+                {
+                    "segment_count": synthesis_result.get("segment_count"),
+                    "duration_ms": synthesis_result.get("duration_ms"),
+                },
+            )
+
+            await self._emit(
+                job_id,
                 "SAVING_OUTPUTS",
                 100,
                 "job.completed",
                 "Stored TTS segmentation plan for this job.",
-                "Job TTS selesai dan segment plan sudah tersimpan.",
+                "Job TTS selesai, segment plan dan audio output sudah tersimpan.",
                 "COMPLETED",
-                {"segment_count": segment_count},
+                {
+                    "segment_count": segment_count,
+                    "duration_ms": synthesis_result.get("duration_ms"),
+                },
             )
             return {
                 "job_id": job_id,
                 "status": "COMPLETED",
                 "segment_count": segment_count,
+                "duration_ms": synthesis_result.get("duration_ms"),
             }
         except Exception as error:
             await self._emit(
                 job_id,
-                "SAVING_OUTPUTS",
+                "GENERATING_AUDIO",
                 0,
                 "job.failed",
                 f"TTS workflow failed: {error}",
-                "Workflow TTS gagal sebelum segment plan selesai dibuat.",
+                "Workflow TTS gagal sebelum audio output selesai dibuat.",
                 "FAILED",
                 {},
             )
@@ -177,7 +218,9 @@ class FoundationTextToSpeechWorkflow:
         if stage == "VALIDATING_SCRIPT":
             return min(20, max(0, round(stage_progress * 0.2)))
         if stage == "GENERATING_SEGMENTS":
-            return min(85, 20 + max(0, round(stage_progress * 0.65)))
+            return min(55, 20 + max(0, round(stage_progress * 0.35)))
+        if stage == "GENERATING_AUDIO":
+            return min(90, 55 + max(0, round(stage_progress * 0.35)))
         if stage == "SAVING_OUTPUTS":
-            return min(99, 85 + max(0, round(stage_progress * 0.14)))
+            return min(99, 90 + max(0, round(stage_progress * 0.09)))
         return max(0, min(99, stage_progress))

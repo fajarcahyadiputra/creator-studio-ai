@@ -3,32 +3,62 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import httpx
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from app.config import get_settings
 from app.domain.contracts import AudioExtractionPlan, AudioExtractionResult, MediaAssetValidationContext
+from app.activities.warning_events import emit_retry_warning
 from app.media.ffmpeg import build_audio_extraction
 import asyncio
 
 
 @activity.defn
 async def prepare_audio_extraction(payload: dict[str, Any]) -> dict[str, Any]:
-    context = MediaAssetValidationContext.model_validate(payload)
+    context = MediaAssetValidationContext.model_validate(
+        {
+            key: payload.get(key)
+            for key in (
+                "media_asset_id",
+                "user_id",
+                "project_id",
+                "type",
+                "status",
+                "object_key",
+                "display_name",
+                "original_file_name",
+                "mime_type",
+                "extension",
+                "size_bytes",
+                "checksum_sha256",
+                "download_url",
+                "metadata",
+            )
+        }
+    )
+    job_id = str(payload["job_id"]) if isinstance(payload.get("job_id"), str) else None
     if context.status != "READY":
         raise ApplicationError(
             "media asset must be READY before audio extraction planning",
             non_retryable=True,
             type="InvalidInput",
         )
+    if not await _source_object_exists(str(context.download_url)):
+        raise ApplicationError(
+            "source media object could not be read from object storage",
+            non_retryable=True,
+            type="MissingSourceObject",
+        )
 
     settings = get_settings()
     working_directory = Path(settings.TEMP_WORKDIR) / context.user_id / context.media_asset_id
     output_audio_path = working_directory / "audio.wav"
-    command = build_audio_extraction(Path(str(context.download_url)), output_audio_path, sample_rate=16_000)
+    command = build_audio_extraction(str(context.download_url), output_audio_path, sample_rate=16_000)
 
     plan = AudioExtractionPlan(
         media_asset_id=context.media_asset_id,
+        job_id=job_id,
         user_id=context.user_id,
         object_key=context.object_key,
         source_url=context.download_url,
@@ -67,17 +97,73 @@ async def execute_audio_extraction(payload: dict[str, Any]) -> dict[str, Any]:
             process.communicate(),
             timeout=settings.AUDIO_EXTRACTION_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError as error:
         process.kill()
         await process.communicate()
-        raise TimeoutError("ffmpeg audio extraction timed out")
+        timeout_error = TimeoutError("ffmpeg audio extraction timed out")
+        await emit_retry_warning(
+            job_id=plan.job_id,
+            stage="EXTRACTING_AUDIO",
+            stage_progress=10,
+            error=timeout_error,
+            user_message="Audio extraction terlalu lama dan akan dicoba ulang otomatis.",
+            metadata={
+                "media_asset_id": plan.media_asset_id,
+                "output_audio_path": plan.output_audio_path,
+                "timeout_seconds": settings.AUDIO_EXTRACTION_TIMEOUT_SECONDS,
+            },
+        )
+        raise timeout_error from error
 
     if process.returncode != 0:
         message = stderr.decode("utf-8", errors="replace").strip() or "ffmpeg exited with a non-zero status"
-        raise RuntimeError(message)
+        if "404 Not Found" in message or "Server returned 404 Not Found" in message:
+            missing_source_error = ApplicationError(
+                "source media object could not be read from object storage",
+                non_retryable=True,
+                type="MissingSourceObject",
+            )
+            await emit_retry_warning(
+                job_id=plan.job_id,
+                stage="EXTRACTING_AUDIO",
+                stage_progress=10,
+                error=missing_source_error,
+                user_message="Source media di object storage tidak ditemukan. Import source perlu diperiksa ulang.",
+                metadata={
+                    "media_asset_id": plan.media_asset_id,
+                    "object_key": plan.object_key,
+                    "output_audio_path": plan.output_audio_path,
+                },
+            )
+            raise missing_source_error
+        extraction_error = RuntimeError(message)
+        await emit_retry_warning(
+            job_id=plan.job_id,
+            stage="EXTRACTING_AUDIO",
+            stage_progress=10,
+            error=extraction_error,
+            user_message="Audio extraction gagal di worker dan akan dicoba ulang otomatis.",
+            metadata={
+                "media_asset_id": plan.media_asset_id,
+                "output_audio_path": plan.output_audio_path,
+            },
+        )
+        raise extraction_error
 
     if not output_audio_path.exists():
-        raise RuntimeError("ffmpeg completed without creating the extracted audio file")
+        missing_output_error = RuntimeError("ffmpeg completed without creating the extracted audio file")
+        await emit_retry_warning(
+            job_id=plan.job_id,
+            stage="EXTRACTING_AUDIO",
+            stage_progress=10,
+            error=missing_output_error,
+            user_message="Audio extraction tidak menghasilkan file output dan akan dicoba ulang otomatis.",
+            metadata={
+                "media_asset_id": plan.media_asset_id,
+                "output_audio_path": plan.output_audio_path,
+            },
+        )
+        raise missing_output_error
 
     result = AudioExtractionResult(
         media_asset_id=plan.media_asset_id,
@@ -93,3 +179,12 @@ async def execute_audio_extraction(payload: dict[str, Any]) -> dict[str, Any]:
         }
     )
     return result.model_dump(mode="json")
+
+
+async def _source_object_exists(download_url: str) -> bool:
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+        response = await client.get(
+            download_url,
+            headers={"range": "bytes=0-0"},
+        )
+        return response.status_code < 400

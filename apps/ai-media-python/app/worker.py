@@ -24,6 +24,7 @@ from app.activities.render_outputs import (
     submit_clip_output_result,
 )
 from app.activities.tts_segmentation import execute_tts_segmentation, submit_tts_segmentation_result
+from app.activities.tts_synthesis import execute_tts_audio_synthesis
 from app.activities.transcription_pipeline import (
     execute_transcription,
     prepare_transcription,
@@ -70,6 +71,7 @@ async def main() -> None:
             submit_clip_output_result,
             execute_tts_segmentation,
             submit_tts_segmentation_result,
+            execute_tts_audio_synthesis,
         ],
         max_concurrent_activities=20,
     )

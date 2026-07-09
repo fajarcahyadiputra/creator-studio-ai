@@ -1,9 +1,12 @@
 import type { Prisma } from "../../generated/prisma/client.js";
 import type { JobStatus } from "../../generated/prisma/enums.js";
+import { env } from "../../config/env.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
+import { temporalClient } from "../../infrastructure/temporal/client.js";
 import { NotFoundError } from "../../shared/errors/app-error.js";
 import type { JobEventBus } from "./job-event-bus.js";
 import { z } from "zod";
+import { buildClipOutputRenderWorkflowId, buildRenderSettings } from "./job-service.js";
 
 export interface ProgressInput {
   stage: string;
@@ -99,7 +102,31 @@ type PersistableCandidate = {
   sceneIds: Prisma.InputJsonValue;
   analyzerMetadata: Prisma.InputJsonValue;
   selected: boolean;
-  rank: number;
+  rank: number | null;
+};
+
+type PersistedClipCandidate = {
+  id: string;
+  candidateExternalId: string;
+  startMs: bigint;
+  endMs: bigint;
+  durationMs: bigint;
+  contentCategory: string;
+  metadataSuggestions: Prisma.JsonValue;
+  analyzerMetadata: Prisma.JsonValue;
+  selected: boolean;
+};
+
+type RenderQueueCandidate = {
+  id: string;
+  candidateExternalId: string;
+  startMs: bigint;
+  endMs: bigint;
+  durationMs: bigint;
+  contentCategory: string;
+  metadataSuggestions: Prisma.JsonValue;
+  analyzerMetadata: Prisma.JsonValue;
+  selected: boolean;
 };
 
 type TranscriptLinkSource = {
@@ -112,7 +139,8 @@ type TranscriptLinkTarget = {
 };
 
 export function resolvePersistableCandidates(
-  metadata: Record<string, unknown> | undefined
+  metadata: Record<string, unknown> | undefined,
+  desiredClipCount = 0
 ): PersistableCandidate[] | undefined {
   const outputSummary = resolveOutputSummary(metadata);
   const parsed = outputSummarySchema.safeParse(outputSummary);
@@ -157,8 +185,8 @@ export function resolvePersistableCandidates(
         analysis_version: parsed.data.analysis_version,
         ...(parsed.data.analyzer ?? {})
       } satisfies Prisma.InputJsonObject,
-      selected: true,
-      rank: index + 1
+      selected: desiredClipCount <= 0 ? true : index < desiredClipCount,
+      rank: desiredClipCount <= 0 || index < desiredClipCount ? index + 1 : null
     };
   });
 }
@@ -198,11 +226,41 @@ export function resolveCandidateTranscriptId(
   return transcript.mediaAssetId === job.sourceMediaAssetId ? transcript.id : null;
 }
 
+const TERMINAL_JOB_STAGES = [
+  "COMPLETED",
+  "FAILED",
+  "CANCELED",
+  "PARTIALLY_COMPLETED",
+  "NEEDS_REVIEW"
+] as const;
+
+export function resolveRecordedJobProgress(params: {
+  currentProgressPercent: number;
+  computedProgressPercent: number;
+  nextStatus: string;
+}) {
+  if (params.nextStatus === "COMPLETED" || params.nextStatus === "PARTIALLY_COMPLETED") {
+    return 100;
+  }
+
+  if (params.nextStatus === "FAILED" || params.nextStatus === "CANCELED" || params.nextStatus === "NEEDS_REVIEW") {
+    return Math.min(99, Math.max(params.currentProgressPercent, params.computedProgressPercent));
+  }
+
+  return Math.max(params.currentProgressPercent, params.computedProgressPercent);
+}
+
+export function resolveRecordedJobStage(stage: string, nextStatus: string) {
+  return TERMINAL_JOB_STAGES.includes(nextStatus as (typeof TERMINAL_JOB_STAGES)[number])
+    ? nextStatus
+    : stage;
+}
+
 export class JobProjectionService {
   public constructor(private readonly eventBus: JobEventBus) {}
 
   public async record(jobId: string, input: ProgressInput) {
-    const event = await prisma.$transaction(async (tx) => {
+    const recordResult = await prisma.$transaction(async (tx) => {
       const current = await tx.job.findUnique({ where: { id: jobId } });
       if (!current) throw new NotFoundError("Job");
       const existingStages = await tx.jobStage.findMany({
@@ -212,17 +270,35 @@ export class JobProjectionService {
       const nextSequence = current.eventSequence + 1n;
       const nextStatus = input.status ?? (current.status === "QUEUED" ? "RUNNING" : current.status);
       const outputSummary = resolveOutputSummary(input.metadata);
-      const persistedCandidates = resolvePersistableCandidates(input.metadata);
+      const inputSnapshot =
+        current.inputSnapshot && typeof current.inputSnapshot === "object" && !Array.isArray(current.inputSnapshot)
+          ? (current.inputSnapshot as Record<string, unknown>)
+          : {};
+      const strategySnapshot =
+        inputSnapshot.strategy && typeof inputSnapshot.strategy === "object" && !Array.isArray(inputSnapshot.strategy)
+          ? (inputSnapshot.strategy as Record<string, unknown>)
+          : {};
+      const desiredClipCount =
+        typeof strategySnapshot.desired_clip_count === "number" && Number.isFinite(strategySnapshot.desired_clip_count)
+          ? strategySnapshot.desired_clip_count
+          : 0;
+      const persistedCandidates = resolvePersistableCandidates(input.metadata, desiredClipCount);
       const serverOverallProgress = computeServerOverallProgress({
         existingStages,
         input
       });
+      const recordedProgressPercent = resolveRecordedJobProgress({
+        currentProgressPercent: current.progressPercent,
+        computedProgressPercent: serverOverallProgress,
+        nextStatus
+      });
+      const recordedStage = resolveRecordedJobStage(input.stage, nextStatus);
       const updated = await tx.job.update({
         where: { id: jobId },
         data: {
           eventSequence: nextSequence,
-          currentStage: input.stage,
-          progressPercent: Math.max(current.progressPercent, serverOverallProgress),
+          currentStage: recordedStage,
+          progressPercent: recordedProgressPercent,
           status: nextStatus,
           outputSummary:
             outputSummary
@@ -255,6 +331,8 @@ export class JobProjectionService {
         }
       });
 
+      const queuedClipOutputIds: string[] = [];
+      let renderQueueCandidates: RenderQueueCandidate[] = [];
       if (persistedCandidates) {
         const linkedTranscript = current.sourceMediaAssetId
           ? await tx.transcript.findFirst({
@@ -276,8 +354,9 @@ export class JobProjectionService {
           }
         });
 
+        const persistedClipCandidates: PersistedClipCandidate[] = [];
         for (const candidate of persistedCandidates) {
-          await tx.clipCandidate.upsert({
+          const persistedClipCandidate = await tx.clipCandidate.upsert({
             where: {
               jobId_candidateExternalId: {
                 jobId,
@@ -291,10 +370,75 @@ export class JobProjectionService {
               ...candidate
             }
           });
+          persistedClipCandidates.push(persistedClipCandidate);
+        }
+        renderQueueCandidates = persistedClipCandidates;
+      }
+
+      if (nextStatus === "COMPLETED") {
+        if (renderQueueCandidates.length === 0) {
+          renderQueueCandidates = await tx.clipCandidate.findMany({
+            where: {
+              jobId,
+              selected: true
+            },
+            select: {
+              id: true,
+              candidateExternalId: true,
+              startMs: true,
+              endMs: true,
+              durationMs: true,
+              contentCategory: true,
+              metadataSuggestions: true,
+              analyzerMetadata: true,
+              selected: true
+            }
+          });
+        }
+
+        if (renderQueueCandidates.length > 0) {
+          const existingClipOutputs = await tx.clipOutput.findMany({
+            where: {
+              jobId,
+              deletedAt: null
+            },
+            select: {
+              candidateId: true
+            }
+          });
+          const existingCandidateIds = new Set(existingClipOutputs.map((output) => output.candidateId));
+
+          for (const candidate of renderQueueCandidates) {
+            if (!candidate.selected || existingCandidateIds.has(candidate.id)) {
+              continue;
+            }
+
+            const clipOutput = await tx.clipOutput.create({
+              data: {
+                jobId,
+                candidateId: candidate.id,
+                version: 1,
+                renderSettings: buildRenderSettings({
+                  inputSnapshot: current.inputSnapshot,
+                  candidate: {
+                    id: candidate.id,
+                    candidateExternalId: candidate.candidateExternalId,
+                    startMs: candidate.startMs,
+                    endMs: candidate.endMs,
+                    durationMs: candidate.durationMs,
+                    contentCategory: candidate.contentCategory,
+                    metadataSuggestions: candidate.metadataSuggestions,
+                    analyzerMetadata: candidate.analyzerMetadata
+                  }
+                }) as never
+              }
+            });
+            queuedClipOutputIds.push(clipOutput.id);
+          }
         }
       }
 
-      return tx.jobEvent.create({
+      const event = await tx.jobEvent.create({
         data: {
           jobId,
           sequence: nextSequence,
@@ -308,10 +452,26 @@ export class JobProjectionService {
           occurredAt: input.occurred_at ? new Date(input.occurred_at) : new Date()
         }
       });
+
+      return {
+        event,
+        queuedClipOutputIds
+      };
     });
 
-    await this.eventBus.publish(jobId, event.sequence);
-    return event;
+    if (recordResult.queuedClipOutputIds.length > 0) {
+      const client = await temporalClient();
+      for (const clipOutputId of recordResult.queuedClipOutputIds) {
+        await client.workflow.start("ClipOutputRenderWorkflow", {
+          taskQueue: env.TEMPORAL_AUTO_CLIP_TASK_QUEUE,
+          workflowId: buildClipOutputRenderWorkflowId(clipOutputId),
+          args: [{ clip_output_id: clipOutputId }]
+        });
+      }
+    }
+
+    await this.eventBus.publish(jobId, recordResult.event.sequence);
+    return recordResult.event;
   }
 }
 

@@ -1,5 +1,8 @@
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "../../generated/prisma/client.js";
+import {
+  PrismaClient as PrismaClientConstructor,
+  type PrismaClient
+} from "../../generated/prisma/client.js";
 import { env } from "../../config/env.js";
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
@@ -11,7 +14,7 @@ function createClient(): PrismaClient {
     idleTimeoutMillis: 30000,
     max: 20
   });
-  return new PrismaClient({ adapter });
+  return new PrismaClientConstructor({ adapter });
 }
 
 export const prisma = globalForPrisma.prisma ?? createClient();

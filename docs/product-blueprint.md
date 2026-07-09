@@ -54,26 +54,21 @@ flowchart TD
   C --> D
   D --> E[EXTRACTING_AUDIO]
   E --> F[TRANSCRIBING]
-  F --> G[DIARIZING_OR_SPEAKER_ANALYSIS]
-  F --> H[DETECTING_SCENES]
-  F --> I[DETECTING_SILENCE]
-  G --> J[ANALYZING_CLIP_CANDIDATES]
-  H --> J
-  I --> J
-  J --> K[NORMALIZING_BOUNDARIES]
-  K --> L[RANKING_AND_DEDUPLICATING]
-  L --> M[GENERATING_PREVIEWS]
-  M --> N[REFRAMING]
-  N --> O[GENERATING_SUBTITLES]
-  O --> P[RENDERING_FINAL_CLIPS]
-  P --> Q[QUALITY_CHECK]
-  Q -->|Pass| R[GENERATING_METADATA]
-  Q -->|Warning| S[NEEDS_REVIEW]
-  R --> T[UPLOADING_OUTPUTS]
-  T --> U[COMPLETED]
+  F --> G[DETECTING_SCENES_AND_SILENCE]
+  G --> H[ANALYZING_CLIP_CANDIDATES]
+  H --> I[RANKING_AND_DEDUPLICATING]
+  I --> J[PREPARING_REVIEW_DATA]
+  J --> K[COMPLETED_ANALYSIS]
+  K --> L{Candidate selected?}
+  L -->|Yes| M[RENDERING_FINAL_CLIPS]
+  M --> N[GENERATING_SUBTITLES]
+  N --> O[QUALITY_CHECK]
+  O -->|Pass| P[UPLOADING_OUTPUTS]
+  O -->|Warning| Q[NEEDS_REVIEW]
+  P --> R[COMPLETED]
 ```
 
-Phase 1 includes the durable workflow envelope, progress projection, cancellation, and attempts. It intentionally ends as `NEEDS_REVIEW` until Phase 2 media activities are enabled.
+Phase 1 includes the durable workflow envelope, progress projection, cancellation, and attempts. Phase 2 extends this into transcript-driven candidate analysis plus automatic render queueing once a user selects candidates for final output generation.
 
 ## 5. Final repository structure
 

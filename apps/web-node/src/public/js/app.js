@@ -681,6 +681,7 @@ if (ttsForm) {
     setIfPresent(ttsForm, "pause_intensity", config.pause_intensity);
     setIfPresent(ttsForm, "target_duration_ms", config.target_duration_ms);
     setIfPresent(ttsForm, "preferred_format", config.preferred_format);
+    setIfPresent(ttsForm, "segmentation_mode", config.segmentation_mode);
     setIfPresent(ttsForm, "sample_rate", config.sample_rate);
     setIfPresent(ttsForm, "channels", config.channels);
     setIfPresent(ttsForm, "tone_notes", config.tone_notes);
@@ -1180,6 +1181,8 @@ function buildTtsPayload(form) {
     pronunciation_dictionary: parseKeyValueLines(form.querySelector('[name="pronunciation_dictionary"]')?.value),
     output_config: compactObject({
       preferred_format: String(form.querySelector('[name="preferred_format"]')?.value || "WAV").trim() || "WAV",
+      segmentation_mode:
+        String(form.querySelector('[name="segmentation_mode"]')?.value || "LOCAL_HEURISTIC").trim() || "LOCAL_HEURISTIC",
       sample_rate: sampleRateValue ? Number(sampleRateValue) : undefined,
       channels: channelsValue ? Number(channelsValue) : undefined
     }),
@@ -1351,6 +1354,12 @@ function validateTtsPayload(payload) {
   }
   if (payload?.pause_intensity !== undefined && (Number.isNaN(payload.pause_intensity) || payload.pause_intensity < 0 || payload.pause_intensity > 3)) {
     errors.push("pause_intensity must be between 0 and 3");
+  }
+  if (
+    payload?.output_config?.segmentation_mode !== undefined
+    && !["OPENAI", "LOCAL_HEURISTIC"].includes(String(payload.output_config.segmentation_mode))
+  ) {
+    errors.push("output_config.segmentation_mode must be OPENAI or LOCAL_HEURISTIC");
   }
   return errors;
 }

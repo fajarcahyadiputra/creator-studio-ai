@@ -45,6 +45,7 @@ export class PresetService {
         description: preset.description,
         type: preset.type,
         isDefault: preset.isDefault,
+        analysisBrief: extractPresetText(preset.config, ["analysis_brief", "editor_brief", "content_context"]),
         configJson: JSON.stringify(preset.config, null, 2),
         updatedAt: preset.updatedAt
       })),
@@ -158,4 +159,14 @@ export class PresetService {
     if (!brandKit) throw new NotFoundError("Brand kit");
     return brandKit;
   }
+}
+
+function extractPresetText(config: unknown, keys: string[]): string {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return "";
+  const record = config as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  }
+  return "";
 }

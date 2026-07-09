@@ -32,6 +32,14 @@ The web app now validates `EXTERNAL_URL` job sources through `media-ingestion-no
 - `MEDIA_INGESTION_INTERNAL_BASE_URL` points at the internal ingestion service.
 - `INTERNAL_SERVICE_TOKEN` matches between `web-node` and `media-ingestion-node`.
 
+If the error contains `getaddrinfo EAI_AGAIN youtu.be`, that is typically a temporary DNS resolution failure for the short YouTube domain. Retry the request, or use the canonical full URL format instead:
+
+```text
+https://www.youtube.com/watch?v=VIDEO_ID
+```
+
+In the current development boundary, trusted YouTube hosts already listed in `INGESTION_ALLOWED_HOSTS` may still be accepted when the only failure is a temporary public DNS lookup error inside the ingestion container. In that case the ingestion service responds with `validation_mode: trusted_host_dns_bypass` and writes a warning log. If non-YouTube hosts fail this way, fix container DNS rather than expanding the bypass.
+
 Inspect:
 
 ```bash

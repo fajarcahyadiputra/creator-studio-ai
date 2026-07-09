@@ -133,9 +133,10 @@ export const ttsJobSchema = z.object({
   pronunciation_dictionary: z.record(z.string(), z.string()).default({}),
   output_config: z.object({
     preferred_format: z.enum(["WAV", "MP3", "OGG"]).default("WAV"),
+    segmentation_mode: z.enum(["OPENAI", "LOCAL_HEURISTIC"]).default("LOCAL_HEURISTIC"),
     sample_rate: z.number().int().min(8000).max(96000).optional(),
     channels: z.number().int().min(1).max(2).optional()
-  }).catchall(z.unknown()).default({ preferred_format: "WAV" }),
+  }).catchall(z.unknown()).default({ preferred_format: "WAV", segmentation_mode: "LOCAL_HEURISTIC" }),
   user_preferences: z.object({
     tone_notes: z.string().trim().max(4000).optional(),
     delivery_goal: z.string().trim().max(4000).optional(),

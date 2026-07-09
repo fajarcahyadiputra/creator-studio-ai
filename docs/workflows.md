@@ -10,24 +10,24 @@ flowchart TD
   C --> D
   D --> E[EXTRACTING_AUDIO]
   E --> F[TRANSCRIBING]
-  F --> G[DIARIZING_OR_SPEAKER_ANALYSIS]
-  F --> H[DETECTING_SCENES]
-  F --> I[DETECTING_SILENCE]
-  G --> J[ANALYZING_CLIP_CANDIDATES]
-  H --> J
-  I --> J
-  J --> K[NORMALIZING_BOUNDARIES]
-  K --> L[RANKING_AND_DEDUPLICATING]
-  L --> M[GENERATING_PREVIEWS]
-  M --> N[REFRAMING]
-  N --> O[GENERATING_SUBTITLES]
-  O --> P[RENDERING_FINAL_CLIPS]
-  P --> Q[QUALITY_CHECK]
-  Q -->|Pass| R[GENERATING_METADATA]
-  Q -->|Warning| S[NEEDS_REVIEW]
-  R --> T[UPLOADING_OUTPUTS]
-  T --> U[COMPLETED]
+  F --> G[DETECTING_SCENES_AND_SILENCE]
+  G --> H[ANALYZING_CLIP_CANDIDATES]
+  H --> I[RANKING_AND_DEDUPLICATING]
+  I --> J[PREPARING_REVIEW_DATA]
+  J --> K[COMPLETED_ANALYSIS]
+  K --> L{Candidate selected?}
+  L -->|Yes| M[RENDERING_FINAL_CLIPS]
+  M --> N[GENERATING_SUBTITLES]
+  N --> O[QUALITY_CHECK]
+  O -->|Pass| P[UPLOADING_OUTPUTS]
+  O -->|Warning| Q[NEEDS_REVIEW]
+  P --> R[COMPLETED]
 ```
+
+Notes:
+
+- Candidate selection now auto-queues render output creation. The user no longer needs a separate manual "queue render" action.
+- The worker now prioritizes a single final render artifact plus subtitles, thumbnail, and metadata. A separate preview MP4 is optional and can be skipped to reduce storage.
 
 ## Phase 1 workflow
 

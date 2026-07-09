@@ -4,6 +4,9 @@ import { AppError, ValidationError } from "../../shared/errors/app-error.js";
 interface ValidateSourceResponse {
   data?: {
     normalized_url?: string;
+    hostname?: string;
+    resolved_address_count?: number;
+    validation_mode?: string;
   };
   error?: {
     code?: string;

@@ -71,6 +71,7 @@ async def analyze_phase2_candidates_with_fallback(
                 system_prompt=system_prompt,
                 input_payload=prompt_payload,
                 schema=load_clip_analyzer_schema(),
+                schema_name="auto_clip_candidate_batch",
             )
             batch = CandidateBatchOutput.model_validate(provider_result["output"])
             candidates = _limit_and_score_candidates(batch.candidates, analysis_inputs, config)
@@ -154,7 +155,7 @@ def _limit_and_score_candidates(
         and candidate.duration_seconds <= config.maximum_duration_seconds
     ]
     normalized = normalize_candidates(filtered, analysis_inputs.scenes, analysis_inputs.silences)
-    return deduplicate_and_rank(normalized, config.desired_clip_count)
+    return deduplicate_and_rank(normalized, config.candidate_pool_count)
 
 
 def _finalize_summary(

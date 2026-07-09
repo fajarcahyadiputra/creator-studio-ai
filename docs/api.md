@@ -39,6 +39,8 @@ Base path: `/api/v1`
 - `GET /jobs`
 - `GET /jobs/:jobId`
 - `GET /jobs/:jobId/outputs`
+- `GET /jobs/:jobId/export-index`
+- `GET /jobs/:jobId/outputs/:clipOutputId/export-index`
 - `GET /jobs/:jobId/events`
 - `GET /jobs/:jobId/events/stream`
 - `POST /jobs/:jobId/cancel`
@@ -108,12 +110,63 @@ Returns the structured Phase 2 output payload attached to a job.
         }
       ]
     },
-    "clip_outputs": []
+    "clip_outputs": [
+      {
+        "id": "uuid",
+        "candidate_id": "candidate-row-1",
+        "quality_status": "PASSED",
+        "duration_ms": "27500",
+        "width": 1080,
+        "height": 1920,
+        "output_summary": {
+          "aspect_ratio": "9:16",
+          "renderer": "ffmpeg-worker-v1",
+          "render_status": "completed",
+          "validation_status": "passed",
+          "output_playable": true,
+          "preview_playable": true,
+          "resolution_matches_target": true,
+          "audio_present": true,
+          "video_codec_matches_target": true,
+          "audio_codec_matches_target": true,
+          "duration_within_tolerance": true,
+          "subtitle_export_ready": true,
+          "subtitle_cue_count": 5,
+          "final_duration_ms": 27500,
+          "final_video_codec": "h264",
+          "final_audio_codec": "aac",
+          "preview_duration_ms": 27480,
+          "subtitle_format": "ass",
+          "subtitle_language": "id",
+          "subtitle_burned_in": true,
+          "validation_warnings": []
+        },
+        "subtitles": [
+          {
+            "id": "uuid",
+            "format": "srt",
+            "language": "id",
+            "artifact": "subtitle_srt",
+            "object_key": "jobs/job-1/clip-outputs/output-1/subtitle.srt",
+            "is_burned_in": false,
+            "created_at": "2026-06-26T10:04:30.000Z"
+          }
+        ]
+      }
+    ]
   }
 }
 ```
 
 `clip_candidates` reflects the persisted relational review rows when available. `output_summary` is `null` until the workflow has attached a Phase 2 result. `clip_outputs` stays empty until rendered clips are persisted.
+
+### `GET /jobs/:jobId/export-index`
+
+Returns a structured JSON export index for every clip output attached to the job. Each clip output entry includes all currently available signed artifact URLs such as preview, final video, metadata, thumbnail, and per-format subtitles.
+
+### `GET /jobs/:jobId/outputs/:clipOutputId/export-index`
+
+Returns a structured JSON export index for one clip output and all of its currently available signed artifact URLs.
 
 ### `POST /jobs/:jobId/render-queue`
 

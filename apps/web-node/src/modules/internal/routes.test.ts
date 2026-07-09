@@ -11,6 +11,7 @@ const prisma = {
   },
   mediaAsset: {
     findFirst: vi.fn(),
+    findUnique: vi.fn(),
     upsert: vi.fn(),
     update: vi.fn()
   },
@@ -41,6 +42,7 @@ describe("internal clip output routes", () => {
     prisma.clipOutput.findFirst.mockReset();
     prisma.clipOutput.update.mockReset();
     prisma.mediaAsset.findFirst.mockReset();
+    prisma.mediaAsset.findUnique.mockReset();
     prisma.mediaAsset.upsert.mockReset();
     prisma.mediaAsset.update.mockReset();
     prisma.subtitleAsset.upsert.mockReset();
@@ -688,6 +690,119 @@ describe("internal clip output routes", () => {
       media_asset_id: "asset-1",
       status: "READY",
       duration_ms: "65432"
+    });
+  });
+
+  it("preserves external import metadata before linking the ready source media back to the job", async () => {
+    const { internalRouter } = await import("./routes.js");
+    const tx = {
+      ...prisma,
+      job: {
+        findUnique: vi.fn().mockResolvedValue({
+          inputSnapshot: {
+            source: {
+              type: "EXTERNAL_URL",
+              url: "https://www.youtube.com/watch?v=abc123"
+            }
+          }
+        }),
+        update: vi.fn().mockResolvedValue({})
+      },
+      autoClipRequest: {
+        updateMany: vi.fn().mockResolvedValue({ count: 1 })
+      }
+    };
+    prisma.mediaAsset.findUnique.mockResolvedValue({
+      metadata: {
+        source: "external-url-import",
+        source_url: "https://www.youtube.com/watch?v=abc123",
+        job_id: "job-1"
+      }
+    });
+    prisma.mediaAsset.update.mockResolvedValue({
+      id: "asset-1",
+      status: "READY",
+      objectKey: "users/user-1/imports/job-1/source/video.mp4",
+      metadata: {
+        source: "external-url-import",
+        source_url: "https://www.youtube.com/watch?v=abc123",
+        job_id: "job-1",
+        validation: {
+          codec_name: "h264"
+        }
+      }
+    });
+    prisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx));
+
+    const app = express();
+    app.use(express.json());
+    app.use(internalRouter({ record: vi.fn() } as never));
+    app.use(errorHandler);
+
+    const response = await request(app)
+      .post("/internal/v1/external-source-imports/asset-1/complete")
+      .set("authorization", "Bearer replace-with-at-least-32-random-characters")
+      .send({
+        status: "READY",
+        mime_type: "video/mp4",
+        extension: "mp4",
+        display_name: "Video source",
+        original_file_name: "video.mp4",
+        duration_ms: "65432",
+        metadata: { source: "ffprobe" },
+        codec_name: "h264"
+      });
+
+    expect(prisma.mediaAsset.update).toHaveBeenCalledWith({
+      where: { id: "asset-1" },
+      data: {
+        status: "READY",
+        displayName: "Video source",
+        originalFileName: "video.mp4",
+        mimeType: "video/mp4",
+        extension: "mp4",
+        sizeBytes: null,
+        checksumSha256: undefined,
+        durationMs: 65432n,
+        width: undefined,
+        height: undefined,
+        frameRate: undefined,
+        audioSampleRate: undefined,
+        metadata: {
+          source: "ffprobe",
+          source_url: "https://www.youtube.com/watch?v=abc123",
+          job_id: "job-1",
+          validation: {
+            codec_name: "h264",
+            audio_codec_name: null,
+            rotation: null,
+            failure_reason: null
+          }
+        }
+      }
+    });
+    expect(tx.job.update).toHaveBeenCalledWith({
+      where: { id: "job-1" },
+      data: {
+        sourceMediaAssetId: "asset-1",
+        inputSnapshot: {
+          source: {
+            type: "MEDIA_ASSET",
+            media_asset_id: "asset-1"
+          }
+        }
+      }
+    });
+    expect(tx.autoClipRequest.updateMany).toHaveBeenCalledWith({
+      where: { jobId: "job-1" },
+      data: {
+        sourceMediaAssetId: "asset-1"
+      }
+    });
+    expect(response.body.data).toEqual({
+      media_asset_id: "asset-1",
+      status: "READY",
+      object_key: "users/user-1/imports/job-1/source/video.mp4"
     });
   });
 

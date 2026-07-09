@@ -52,6 +52,22 @@ import { logger } from "./shared/logging/logger.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function resolveCspOrigins() {
+  const origins = new Set<string>();
+  const candidates = [env.APP_BASE_URL, env.WEB_INTERNAL_BASE_URL, env.S3_PUBLIC_ENDPOINT, env.S3_ENDPOINT];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      origins.add(new URL(String(candidate)).origin);
+    } catch {
+      // Ignore malformed runtime URLs here because env validation owns correctness.
+    }
+  }
+
+  return [...origins];
+}
+
 export interface ApplicationRuntime {
   app: Express;
   close: () => Promise<void>;
@@ -78,6 +94,8 @@ export async function createApplication(): Promise<ApplicationRuntime> {
   configurePassport(authService);
 
   const app = express();
+  const cspOrigins = resolveCspOrigins();
+  const jsonBodyLimit = `${env.HTTP_JSON_BODY_LIMIT_MB}mb`;
   if (env.TRUST_PROXY) app.set("trust proxy", 1);
   app.set("view engine", "ejs");
   app.set("views", path.join(dirname, "views"));
@@ -100,8 +118,8 @@ export async function createApplication(): Promise<ApplicationRuntime> {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
           styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
-          imgSrc: ["'self'", "data:", "blob:"],
-          mediaSrc: ["'self'", "blob:"],
+          imgSrc: ["'self'", "data:", "blob:", ...cspOrigins],
+          mediaSrc: ["'self'", "blob:", ...cspOrigins],
           connectSrc: ["'self'"],
           fontSrc: ["'self'", "https://cdn.jsdelivr.net"]
         }
@@ -109,8 +127,8 @@ export async function createApplication(): Promise<ApplicationRuntime> {
       crossOriginResourcePolicy: { policy: "cross-origin" }
     })
   );
-  app.use(express.json({ limit: "1mb" }));
-  app.use(express.urlencoded({ extended: false, limit: "1mb" }));
+  app.use(express.json({ limit: jsonBodyLimit }));
+  app.use(express.urlencoded({ extended: false, limit: jsonBodyLimit }));
   app.use(createSessionMiddleware(redis));
   app.use(attachCsrfToken);
   app.use(passport.initialize());

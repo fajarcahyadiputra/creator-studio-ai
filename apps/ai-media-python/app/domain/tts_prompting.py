@@ -2,7 +2,7 @@ from typing import Any
 
 from app.domain.contracts import TtsRequestPayload
 
-TTS_SEGMENTATION_PROMPT_VERSION = "tts-segmentation-v1"
+TTS_SEGMENTATION_PROMPT_VERSION = "tts-segmentation-v2"
 
 
 def build_tts_segmentation_system_prompt() -> str:
@@ -23,6 +23,7 @@ def build_tts_segmentation_system_prompt() -> str:
         "speed must be one of slow, normal, or fast. Use fast only for action-heavy narration. "
         "emphasis must be one of low, medium, or high. Use high only for major reveals, important facts, surprise, warnings, or key conclusions. "
         "volume must be one of low, normal, or high. Keep volume normal unless a segment clearly benefits from softer or stronger delivery. "
+        "Every segment object must include all schema fields, including volume, breath_before, breath_after, fade_in_ms, and fade_out_ms. "
         "fade_in_ms and fade_out_ms should stay subtle and small. "
         "Ensure every segment text is copied exactly from the source script with no wording changes."
     )

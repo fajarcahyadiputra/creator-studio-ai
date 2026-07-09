@@ -20,6 +20,7 @@
         const stageGroups = {
           TTS_VALIDATION: 'Script validation',
           TTS_SEGMENTATION: 'Speech segmentation',
+          TTS_AUDIO: 'Audio synthesis',
           SOURCE_PREP: 'Source preparation',
           AUDIO_TRANSCRIPT: 'Audio and transcript',
           CANDIDATE_ANALYSIS: 'Candidate analysis',
@@ -31,6 +32,7 @@
         const stageGroupKey = (name) => {
           if (name === 'VALIDATING_SCRIPT') return 'TTS_VALIDATION';
           if (name === 'GENERATING_SEGMENTS') return 'TTS_SEGMENTATION';
+          if (name === 'GENERATING_AUDIO') return 'TTS_AUDIO';
           if (name === 'SAVING_OUTPUTS') return 'DELIVERY';
           if (name === 'VALIDATING_SOURCE' || name === 'PROBING_MEDIA') return 'SOURCE_PREP';
           if (name === 'EXTRACTING_AUDIO' || name === 'TRANSCRIBING') return 'AUDIO_TRANSCRIPT';
@@ -86,6 +88,9 @@
         </div>
         <div class="d-flex gap-2">
           <a class="btn btn-outline-primary" href="/app/dashboard">Kembali ke Dashboard</a>
+          <% if (job.type === 'TEXT_TO_SPEECH') { %>
+            <a class="btn btn-outline-secondary" href="/app/jobs/<%= job.id %>/tts-segmentation-export">Download segmentation JSON</a>
+          <% } %>
           <% if (clipOutputs.length) { %>
             <a class="btn btn-outline-secondary" href="/app/jobs/<%= job.id %>/export-index">Download all index</a>
           <% } %>
@@ -133,7 +138,7 @@
             <div class="result-status-box">
               <strong>
                 <% if (job.type === 'TEXT_TO_SPEECH') { %>
-                  <%= outputSummary.tts?.segmentCount ?? 0 %> segmen narasi tersimpan
+                  <%= outputSummary.tts?.segmentCount ?? 0 %> segmen narasi tersimpan<%= outputSummary.tts?.audioOutput?.playbackUrl ? ' + audio output siap diputar' : '' %>
                 <% } else if (!clipOutputs.length && !candidates.length) { %>
                   Memuat hasil...
                 <% } else { %>
@@ -142,7 +147,7 @@
               </strong>
               <span>
                 <% if (job.type === 'TEXT_TO_SPEECH') { %>
-                  Segment plan TTS
+                  Segment plan TTS dan audio narration
                 <% } else if (outputSummary.analysisVersion) { %>
                   Analyzer <%= outputSummary.analysisVersion %>
                 <% } else { %>
@@ -156,6 +161,7 @@
               <article class="job-summary-card"><span>Segments</span><strong><%= outputSummary.tts?.segmentCount ?? 0 %></strong></article>
               <article class="job-summary-card"><span>Total pauses</span><strong><%= outputSummary.tts?.totalPauseMs ? `${outputSummary.tts.totalPauseMs} ms` : '-' %></strong></article>
               <article class="job-summary-card"><span>Voice</span><strong><%= outputSummary.ttsRequestSnapshot?.localModelKey ?? outputSummary.ttsRequestSnapshot?.voiceIdentifier ?? outputSummary.ttsRequestSnapshot?.speakingStyle ?? '-' %></strong></article>
+              <article class="job-summary-card"><span>Audio output</span><strong><%= outputSummary.tts?.audioOutput?.playbackUrl ? 'Ready' : 'Pending' %></strong></article>
               <% } else { %>
                 <article class="job-summary-card"><span>Source duration</span><strong><%= outputSummary.estimatedUsage.sourceDurationSeconds ? `${outputSummary.estimatedUsage.sourceDurationSeconds}s` : '-' %></strong></article>
                 <article class="job-summary-card"><span>Selected candidates</span><strong><%= outputSummary.estimatedUsage.selectedCandidates %></strong></article>
@@ -229,17 +235,74 @@
         <section class="panel mt-4">
           <div class="panel-heading">
             <div><h2>TTS segmentation</h2><p>Speech segment plan yang dihasilkan workflow untuk synthesis berikutnya.</p></div>
+            <div class="d-flex gap-2 flex-wrap">
+              <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/tts-segmentation-export">Export segmentation JSON</a>
+              <% if (outputSummary.tts?.audioOutput?.playbackUrl) { %>
+                <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/tts-output-export-index">Export TTS outputs</a>
+              <% } %>
+            </div>
           </div>
           <div class="p-4">
+            <% if (outputSummary.tts?.audioOutput?.playbackUrl) { %>
+              <div class="candidate-caption-box mb-3">
+                <strong>Rendered narration preview</strong>
+                <audio class="w-100 mt-2" controls preload="metadata" src="<%= outputSummary.tts.audioOutput.playbackUrl %>"></audio>
+                <div class="text-muted small mt-2">
+                  <% if (outputSummary.tts.audioOutput.durationMs) { %>
+                    <span>Durasi <%= (outputSummary.tts.audioOutput.durationMs / 1000).toFixed(1) %> detik</span>
+                  <% } %>
+                  <% if (outputSummary.tts.audioOutput.sampleRate) { %>
+                    <span><%= outputSummary.tts.audioOutput.durationMs ? ' | ' : '' %><%= outputSummary.tts.audioOutput.sampleRate %> Hz</span>
+                  <% } %>
+                  <% if (outputSummary.tts.audioOutput.extension) { %>
+                    <span><%= (outputSummary.tts.audioOutput.durationMs || outputSummary.tts.audioOutput.sampleRate) ? ' | ' : '' %><%= String(outputSummary.tts.audioOutput.extension).toUpperCase() %></span>
+                  <% } %>
+                </div>
+                <% if (outputSummary.tts.audioOutput.requestedFormat || outputSummary.tts.audioOutput.actualFormat) { %>
+                  <div class="text-muted small mt-2">
+                    Requested format: <strong><%= String(outputSummary.tts.audioOutput.requestedFormat ?? '-').toUpperCase() %></strong>
+                    <% if (outputSummary.tts.audioOutput.actualFormat) { %>
+                      | Final format: <strong><%= String(outputSummary.tts.audioOutput.actualFormat).toUpperCase() %></strong>
+                    <% } %>
+                  </div>
+                <% } %>
+                <% if (outputSummary.tts.audioOutput.fallbackUsed) { %>
+                  <div class="clip-output-warning-box mt-3">
+                    <strong>Format fallback applied</strong>
+                    <ul>
+                      <li>Format yang diminta tidak berhasil dirender, jadi output otomatis disimpan sebagai WAV agar job tetap selesai.</li>
+                      <% if (outputSummary.tts.audioOutput.fallbackReason) { %>
+                        <li><strong>Reason:</strong> <%= outputSummary.tts.audioOutput.fallbackReason %></li>
+                      <% } %>
+                    </ul>
+                  </div>
+                <% } %>
+                <div class="d-flex flex-wrap gap-2 mt-3">
+                  <a class="btn btn-sm btn-primary" href="/app/jobs/<%= job.id %>/tts-audio-download" target="_blank" rel="noreferrer">Open audio</a>
+                  <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/tts-audio-download">Download audio</a>
+                  <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/tts-output-export-index">Export output index</a>
+                </div>
+              </div>
+            <% } %>
+
             <div class="job-summary-grid mb-3">
               <article class="job-summary-card"><span>Language</span><strong><%= outputSummary.ttsRequestSnapshot?.language ?? '-' %></strong></article>
               <article class="job-summary-card"><span>Local model</span><strong><%= outputSummary.ttsRequestSnapshot?.localModelKey ?? '-' %></strong></article>
+              <article class="job-summary-card"><span>Segmentation mode</span><strong><%= outputSummary.ttsRequestSnapshot?.segmentationMode ?? '-' %></strong></article>
               <article class="job-summary-card"><span>Style</span><strong><%= outputSummary.ttsRequestSnapshot?.speakingStyle ?? '-' %></strong></article>
               <article class="job-summary-card"><span>Emotion</span><strong><%= outputSummary.ttsRequestSnapshot?.emotion ?? '-' %></strong></article>
               <article class="job-summary-card"><span>Target duration</span><strong><%= outputSummary.ttsRequestSnapshot?.targetDurationMs ? `${outputSummary.ttsRequestSnapshot.targetDurationMs} ms` : '-' %></strong></article>
               <article class="job-summary-card"><span>Format</span><strong><%= outputSummary.ttsRequestSnapshot?.preferredFormat ?? '-' %></strong></article>
               <article class="job-summary-card"><span>Sample rate</span><strong><%= outputSummary.ttsRequestSnapshot?.sampleRate ?? '-' %></strong></article>
+              <article class="job-summary-card"><span>Average pause</span><strong><%= outputSummary.tts?.averagePauseMs ? `${outputSummary.tts.averagePauseMs} ms` : '-' %></strong></article>
             </div>
+
+            <% if (outputSummary.ttsRequestSnapshot?.segmentationMode === 'LOCAL_HEURISTIC') { %>
+              <div class="candidate-caption-box mb-3">
+                <strong>Testing mode aktif</strong>
+                <p class="mb-0">Job ini memakai segmentasi lokal heuristic, jadi pembagian segmen narasi dibuat di worker tanpa request ke OpenAI.</p>
+              </div>
+            <% } %>
 
             <% if (outputSummary.ttsRequestSnapshot?.userPreferences?.deliveryGoal) { %>
               <div class="candidate-caption-box mb-3">
@@ -254,7 +317,31 @@
               </div>
             <% } %>
 
+            <% if (outputSummary.tts?.metadata) { %>
+              <div class="clip-output-review-grid mb-3">
+                <article class="clip-output-review-card">
+                  <span>Provider</span>
+                  <strong><%= outputSummary.tts.metadata.provider ?? '-' %></strong>
+                  <p><%= outputSummary.tts.metadata.model ?? 'Model tidak tersimpan.' %></p>
+                </article>
+                <article class="clip-output-review-card">
+                  <span>Prompt version</span>
+                  <strong><%= outputSummary.tts.metadata.promptVersion ?? '-' %></strong>
+                  <p><%= outputSummary.tts.metadata.latencyMs ? `${outputSummary.tts.metadata.latencyMs} ms latency` : 'Latency belum tersedia.' %></p>
+                </article>
+                <article class="clip-output-review-card">
+                  <span>Request IDs</span>
+                  <strong><%= outputSummary.tts.metadata.providerRequestId ?? '-' %></strong>
+                  <p><%= outputSummary.tts.metadata.requestId ?? 'Request id internal belum tersedia.' %></p>
+                </article>
+              </div>
+            <% } %>
+
             <% if (outputSummary.tts?.previewSegments?.length) { %>
+              <div class="candidate-caption-box mb-3">
+                <strong>Quick preview</strong>
+                <p>Lima segmen pertama ditampilkan langsung untuk cek pacing dan gaya delivery dengan cepat.</p>
+              </div>
               <div class="candidate-grid candidate-grid--single">
                 <% outputSummary.tts.previewSegments.forEach((segment) => { %>
                   <article class="candidate-card candidate-card--result">
@@ -269,6 +356,32 @@
                   </article>
                 <% }) %>
               </div>
+
+              <% if (outputSummary.tts.fullSegments?.length) { %>
+                <details class="candidate-caption-box mt-3">
+                  <summary><strong>Show full segmentation plan</strong> <span class="text-muted">(<%= outputSummary.tts.fullSegments.length %> segments)</span></summary>
+                  <div class="candidate-grid candidate-grid--single mt-3">
+                    <% outputSummary.tts.fullSegments.forEach((segment) => { %>
+                      <article class="candidate-card candidate-card--result">
+                        <div class="candidate-result-header">
+                          <div>
+                            <h3>Segment #<%= segment.id ?? '-' %></h3>
+                            <div class="text-muted small"><%= segment.emotion ?? '-' %> Â· <%= segment.speed ?? '-' %> Â· <%= segment.emphasis ?? '-' %> Â· <%= segment.volume ?? '-' %></div>
+                          </div>
+                          <div class="candidate-score-badge"><%= segment.pauseAfter ? `${segment.pauseAfter} ms pause` : 'Pause -' %></div>
+                        </div>
+                        <p class="candidate-summary"><%= segment.text %></p>
+                        <div class="text-muted small">
+                          Breath before: <strong><%= segment.breathBefore === null ? '-' : (segment.breathBefore ? 'yes' : 'no') %></strong>
+                          Â· Breath after: <strong><%= segment.breathAfter === null ? '-' : (segment.breathAfter ? 'yes' : 'no') %></strong>
+                          Â· Fade in: <strong><%= segment.fadeInMs ?? '-' %> ms</strong>
+                          Â· Fade out: <strong><%= segment.fadeOutMs ?? '-' %> ms</strong>
+                        </div>
+                      </article>
+                    <% }) %>
+                  </div>
+                </details>
+              <% } %>
             <% } else { %>
               <div class="empty-cell">Belum ada segment plan yang tersimpan untuk job ini.</div>
             <% } %>

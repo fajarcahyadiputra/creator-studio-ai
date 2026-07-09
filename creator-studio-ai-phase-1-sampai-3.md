@@ -669,21 +669,22 @@ INGESTING_SOURCE
 PROBING_MEDIA
 EXTRACTING_AUDIO
 TRANSCRIBING
-DIARIZING_OR_SPEAKER_ANALYSIS
-DETECTING_SCENES
-DETECTING_SILENCE
+DETECTING_SCENES_AND_SILENCE
 ANALYZING_CLIP_CANDIDATES
-NORMALIZING_BOUNDARIES
 RANKING_AND_DEDUPLICATING
-GENERATING_PREVIEWS
-REFRAMING
-GENERATING_SUBTITLES
+PREPARING_REVIEW_DATA
+COMPLETED_ANALYSIS
 RENDERING_FINAL_CLIPS
+GENERATING_SUBTITLES
 QUALITY_CHECK
-GENERATING_METADATA
 UPLOADING_OUTPUTS
 COMPLETED
 ```
+
+Catatan implementasi saat ini:
+
+- Pemilihan kandidat di halaman user dapat langsung auto-queue render, jadi tidak perlu langkah manual queue terpisah.
+- Preview video terpisah tidak wajib dibuat jika final render sudah cukup untuk review, agar storage dan waktu render lebih hemat.
 
 Setiap activity wajib memiliki:
 

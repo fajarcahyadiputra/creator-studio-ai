@@ -1,5 +1,7 @@
 <%- include('../partials/head', { title, csrfToken }) %>
 <div class="app-shell"><%- include('../partials/admin-sidebar') %><main class="content-area">
+  <% const latestFailureEvent = events.find((event) => event.eventType === 'job.failed' || event.eventType === 'job.needs_review') ?? null; %>
+  <% const latestWarningEvent = events.find((event) => event.eventType === 'job.warning') ?? null; %>
   <header class="page-header">
     <div>
       <span class="eyebrow">Workflow operations</span>
@@ -15,6 +17,51 @@
     <article class="stat-card"><span>Attempts</span><strong><%= job.attempts.length %></strong></article>
     <article class="stat-card"><span>Candidates / Outputs</span><strong><%= job.clipCandidates.length %> / <%= job.clipOutputs.length %></strong></article>
   </section>
+
+  <% if (job.status === 'FAILED' && job.errors.length) { %>
+    <section class="panel mt-4">
+      <div class="p-4">
+        <div class="clip-output-warning-box">
+          <strong>Latest persisted failure</strong>
+          <ul>
+            <li><strong>Code:</strong> <%= job.errors[0].code %></li>
+            <li><strong>Category:</strong> <%= job.errors[0].category %></li>
+            <li><strong>User message:</strong> <%= job.errors[0].userMessage %></li>
+            <li><strong>Technical message:</strong> <%= job.errors[0].message %></li>
+            <li><strong>Occurred at:</strong> <%= job.errors[0].occurredAt.toLocaleString() %></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  <% } else if (['FAILED', 'NEEDS_REVIEW'].includes(job.status) && latestFailureEvent) { %>
+    <section class="panel mt-4">
+      <div class="p-4">
+        <div class="clip-output-warning-box">
+          <strong>Latest workflow issue</strong>
+          <ul>
+            <li><strong>Type:</strong> <%= latestFailureEvent.eventType %></li>
+            <li><strong>Message:</strong> <%= latestFailureEvent.userMessage ?? latestFailureEvent.message %></li>
+            <li><strong>Technical detail:</strong> <%= latestFailureEvent.message %></li>
+            <li><strong>Occurred at:</strong> <%= latestFailureEvent.occurredAt.toLocaleString() %></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  <% } else if (latestWarningEvent) { %>
+    <section class="panel mt-4">
+      <div class="p-4">
+        <div class="clip-output-warning-box">
+          <strong>Latest pipeline warning</strong>
+          <ul>
+            <li><strong>Type:</strong> <%= latestWarningEvent.eventType %></li>
+            <li><strong>Message:</strong> <%= latestWarningEvent.userMessage ?? latestWarningEvent.message %></li>
+            <li><strong>Technical detail:</strong> <%= latestWarningEvent.message %></li>
+            <li><strong>Occurred at:</strong> <%= latestWarningEvent.occurredAt.toLocaleString() %></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  <% } %>
 
   <section class="panel mt-4">
     <div class="panel-heading"><div><h2>Admin actions</h2><p>Only actions already supported by the backend are exposed here.</p></div></div>

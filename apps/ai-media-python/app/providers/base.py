@@ -20,5 +20,6 @@ class StructuredOutputProvider(ABC):
         system_prompt: str,
         input_payload: dict[str, Any],
         schema: dict[str, Any],
+        schema_name: str | None = None,
     ) -> dict[str, Any]:
         """Return provider output validated against the supplied schema."""

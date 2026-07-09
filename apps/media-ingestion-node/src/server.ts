@@ -23,11 +23,22 @@ app.post("/internal/v1/ingestion/validate-source", requireServiceAuth, async (re
   }
   try {
     const source = await validateSourceUrl(parsed.data.url);
+    if (source.validationMode === "trusted_host_dns_bypass") {
+      logger.warn(
+        {
+          hostname: source.hostname,
+          normalized_url: source.normalizedUrl,
+          validation_mode: source.validationMode
+        },
+        "Accepted trusted YouTube host after retryable DNS resolution failure"
+      );
+    }
     response.json({
       data: {
         normalized_url: source.normalizedUrl,
         hostname: source.hostname,
         resolved_address_count: source.resolvedAddresses.length,
+        validation_mode: source.validationMode,
         maximum_download_bytes: config.INGESTION_MAX_DOWNLOAD_BYTES,
         next_action: "Create a Phase 2 ingestion activity after platform capability and copyright checks."
       }

@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "dev:email-worker": "tsx watch src/workers/email-worker.ts",
-    "build": "npm run prisma:generate && tsc -p tsconfig.json && cp -R src/views dist/views && cp -R src/public dist/public",
+    "build": "npm run prisma:generate && tsc -p tsconfig.json && node scripts/copy-static.mjs",
     "start": "node dist/server.js",
     "start:email-worker": "node dist/workers/email-worker.js",
     "typecheck": "npm run prisma:generate && tsc -p tsconfig.json --noEmit",

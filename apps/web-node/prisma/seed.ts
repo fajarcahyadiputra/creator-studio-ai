@@ -103,7 +103,156 @@ async function main(): Promise<void> {
     }
   });
 
+  await ensureDefaultClippingPreset(admin.id);
+  await ensureDefaultBrandKit(admin.id);
+
   console.log(`Seed completed. Admin: ${adminEmail}`);
+}
+
+async function ensureDefaultClippingPreset(userId: string): Promise<void> {
+  const name = "Short Edu Indonesia";
+  const description = "Preset default untuk auto clipping edukasi Indonesia dengan hook cepat, subtitle siap publish, dan brief editor yang kuat.";
+  const config = {
+    target_platform: "YOUTUBE_SHORTS",
+    objective: "EDUCATION",
+    desired_clip_count: 5,
+    minimum_viral_score: 7.5,
+    hook_style: "QUESTION",
+    cta_preference: "COMMENT",
+    profanity_handling: "KEEP",
+    aspect_ratio: "9:16",
+    durations: {
+      min_seconds: 30,
+      max_seconds: 55
+    },
+    preferred_topics: [
+      "hook 3 detik pertama",
+      "audience retention",
+      "storytelling",
+      "CTA komentar"
+    ],
+    topics_to_avoid: [
+      "politik partisan",
+      "SARA",
+      "klaim medis berisiko"
+    ],
+    sensitive_topics: [
+      "klaim medis",
+      "saran legal",
+      "data pribadi"
+    ],
+    analysis_brief: [
+      "Anda adalah editor short video Indonesia untuk TikTok, Reels, dan YouTube Shorts.",
+      "Pilih potongan yang paling cepat menarik perhatian, paling mudah dipahami tanpa konteks panjang, dan punya alasan kuat untuk ditonton sampai akhir.",
+      "Prioritaskan momen dengan hook kuat di 1-3 detik pertama, konflik atau rasa penasaran yang jelas, insight praktis, bahasa natural, dan payoff yang selesai dengan rapi.",
+      "Jika ada beberapa kandidat, utamakan yang durasinya paling pendek tetapi tetap utuh secara makna.",
+      "Hindari opening yang masih basa-basi, filler berulang, jeda kosong, transisi yang tidak penting, atau bagian yang baru menarik setelah terlalu lama setup.",
+      "Cari ending yang bisa memicu komentar, share, save, atau diskusi, bukan ending yang menggantung tanpa payoff.",
+      "Kalau sumber videonya edukatif, pilih bagian yang menyederhanakan ide rumit menjadi kalimat yang tajam dan mudah dipotong menjadi clip mandiri.",
+      "Kalau ada istilah teknis, utamakan bagian yang paling jelas, paling quotable, dan paling relevan untuk audience Indonesia."
+    ].join(" "),
+    subtitle: {
+      language: "id",
+      style: "Bold Clean",
+      font_family: "Montserrat",
+      position: "BOTTOM",
+      max_lines: 2,
+      safe_margin_percent: 8,
+      burn_in: true,
+      export_formats: ["SRT", "ASS", "VTT", "JSON"]
+    }
+  };
+
+  await prisma.preset.updateMany({
+    where: { userId, type: "CLIPPING", deletedAt: null },
+    data: { isDefault: false }
+  });
+
+  const existing = await prisma.preset.findFirst({
+    where: { userId, type: "CLIPPING", name, deletedAt: null }
+  });
+
+  if (existing) {
+    await prisma.preset.update({
+      where: { id: existing.id },
+      data: {
+        description,
+        config,
+        isSystem: true,
+        isDefault: true
+      }
+    });
+    return;
+  }
+
+  await prisma.preset.create({
+    data: {
+      userId,
+      type: "CLIPPING",
+      name,
+      description,
+      config,
+      isSystem: true,
+      isDefault: true
+    }
+  });
+}
+
+async function ensureDefaultBrandKit(userId: string): Promise<void> {
+  const name = "Creator Studio Default";
+
+  await prisma.brandKit.updateMany({
+    where: { userId, deletedAt: null },
+    data: { isDefault: false }
+  });
+
+  const existing = await prisma.brandKit.findFirst({
+    where: { userId, name, deletedAt: null }
+  });
+
+  const data = {
+    isDefault: true,
+    fontConfig: {
+      primary: "Montserrat",
+      secondary: "DM Sans",
+      emphasis: "Montserrat SemiBold"
+    },
+    colorConfig: {
+      primary: "#111827",
+      secondary: "#f59e0b",
+      accent: "#22c55e",
+      subtitle_fill: "#ffffff",
+      subtitle_stroke: "#111827"
+    },
+    safeMarginConfig: {
+      top_percent: 8,
+      bottom_percent: 8,
+      left_percent: 6,
+      right_percent: 6
+    },
+    subtitlePreset: {
+      style: "Bold Clean",
+      position: "BOTTOM",
+      max_lines: 2,
+      safe_margin_percent: 8
+    }
+  };
+
+  if (existing) {
+    await prisma.brandKit.update({
+      where: { id: existing.id },
+      data
+    });
+    return;
+  }
+
+  await prisma.brandKit.create({
+    data: {
+      userId,
+      name,
+      ...data
+    }
+  });
 }
 
 main()

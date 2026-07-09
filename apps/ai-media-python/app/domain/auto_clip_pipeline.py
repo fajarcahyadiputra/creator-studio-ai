@@ -18,28 +18,40 @@ from app.domain.contracts import (
 @dataclass(frozen=True, slots=True)
 class PipelineConfig:
     desired_clip_count: int
+    candidate_pool_count: int
     minimum_duration_seconds: int
     maximum_duration_seconds: int
     minimum_viral_score: float
     preferred_topics: tuple[str, ...]
     topics_to_avoid: tuple[str, ...]
     sensitive_topics: tuple[str, ...]
+    clip_style_tags: tuple[str, ...]
+    virality_priorities: tuple[str, ...]
     cta_preference: str | None
+    standalone_priority: str | None
+    require_spoken_audio: bool
 
 
 def build_pipeline_config(input_snapshot: dict[str, object]) -> PipelineConfig:
     strategy = input_snapshot.get("strategy")
     if not isinstance(strategy, dict):
         raise ValueError("strategy is required")
+    desired_clip_count = int(strategy.get("desired_clip_count", 3))
+    candidate_pool_count = int(strategy.get("candidate_pool_count", max(desired_clip_count, min(desired_clip_count * 2, 10))))
     return PipelineConfig(
-        desired_clip_count=int(strategy.get("desired_clip_count", 3)),
+        desired_clip_count=desired_clip_count,
+        candidate_pool_count=max(desired_clip_count, min(candidate_pool_count, 30)),
         minimum_duration_seconds=int(strategy.get("minimum_duration_seconds", 15)),
         maximum_duration_seconds=int(strategy.get("maximum_duration_seconds", 60)),
         minimum_viral_score=float(strategy.get("minimum_viral_score", 7)),
         preferred_topics=_normalize_strategy_terms(strategy.get("preferred_topics")),
         topics_to_avoid=_normalize_strategy_terms(strategy.get("topics_to_avoid")),
         sensitive_topics=_normalize_strategy_terms(strategy.get("sensitive_topics")),
+        clip_style_tags=_normalize_strategy_terms(strategy.get("clip_style_tags")),
+        virality_priorities=_normalize_strategy_terms(strategy.get("virality_priorities")),
         cta_preference=_normalize_optional_text(strategy.get("cta_preference")),
+        standalone_priority=_normalize_optional_text(strategy.get("standalone_priority")),
+        require_spoken_audio=bool(strategy.get("require_spoken_audio", True)),
     )
 
 
@@ -62,7 +74,7 @@ def build_candidate_analyses(
         if candidate.scores["final_viral_score"] >= config.minimum_viral_score:
             candidates.append(candidate)
     normalized = normalize_candidates(candidates, analysis_inputs.scenes, analysis_inputs.silences)
-    return deduplicate_and_rank(normalized, config.desired_clip_count)
+    return deduplicate_and_rank(normalized, config.candidate_pool_count)
 
 
 def normalize_candidates(
@@ -77,12 +89,23 @@ def normalize_candidates(
         if end_seconds <= start_seconds:
             end_seconds = candidate.end_seconds
             start_seconds = candidate.start_seconds
+        duration_seconds = round(end_seconds - start_seconds, 2)
+        beat_offset = round(candidate.start_seconds - start_seconds, 2)
+        hook_second, main_point_second, punchline_second = _normalize_story_beats(
+            hook_second=candidate.hook_second + beat_offset,
+            main_point_second=candidate.main_point_second + beat_offset,
+            punchline_second=candidate.punchline_second + beat_offset,
+            duration_seconds=duration_seconds,
+        )
         normalized.append(
             candidate.model_copy(
                 update={
                     "start_seconds": round(start_seconds, 2),
                     "end_seconds": round(end_seconds, 2),
-                    "duration_seconds": round(end_seconds - start_seconds, 2),
+                    "duration_seconds": duration_seconds,
+                    "hook_second": hook_second,
+                    "main_point_second": main_point_second,
+                    "punchline_second": punchline_second,
                 }
             )
         )
@@ -150,7 +173,7 @@ def _build_segment_windows(
                 windows.append(list(current))
                 break
 
-        if len(windows) >= config.desired_clip_count * 6:
+        if len(windows) >= config.candidate_pool_count * 6:
             break
 
     return windows or [[transcript.segments[0]]]
@@ -200,6 +223,12 @@ def _candidate_from_segments(
     summary = combined_text[:300]
     title = _build_title(summary)
     duration_seconds = round(segments[-1].end_seconds - segments[0].start_seconds, 2)
+    hook_second, main_point_second, punchline_second = _normalize_story_beats(
+        hook_second=hook_second,
+        main_point_second=main_point_second,
+        punchline_second=punchline_second,
+        duration_seconds=duration_seconds,
+    )
     return CandidateAnalysis(
         candidate_id=f"candidate-{index:02d}-{sha1(summary.encode('utf-8')).hexdigest()[:8]}",
         start_seconds=segments[0].start_seconds,
@@ -221,7 +250,7 @@ def _candidate_from_segments(
         scene_ids=scene_ids,
         hook_second=hook_second,
         main_point_second=main_point_second,
-        punchline_second=min(round(punchline_second, 2), duration_seconds),
+        punchline_second=punchline_second,
         retention_level=_retention_level(
             final_score=score.final,
             duration_seconds=duration_seconds,
@@ -329,6 +358,20 @@ def _resolve_punchline_second(segments: list[TranscriptSegment]) -> float:
         ):
             return round(segment.end_seconds - clip_start, 2)
     return round(segments[-1].end_seconds - clip_start, 2)
+
+
+def _normalize_story_beats(
+    *,
+    hook_second: float,
+    main_point_second: float,
+    punchline_second: float,
+    duration_seconds: float,
+) -> tuple[float, float, float]:
+    bounded_duration = max(0.01, round(duration_seconds, 2))
+    normalized_hook = round(max(0.0, min(hook_second, bounded_duration)), 2)
+    normalized_main_point = round(max(normalized_hook, min(main_point_second, bounded_duration)), 2)
+    normalized_punchline = round(max(normalized_main_point, min(punchline_second, bounded_duration)), 2)
+    return normalized_hook, normalized_main_point, normalized_punchline
 
 
 def _requires_context(segments: list[TranscriptSegment]) -> bool:

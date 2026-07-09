@@ -252,6 +252,39 @@ class TtsSpeechSegmentsDocument(BaseModel):
     segments: list[TtsSpeechSegment] = Field(min_length=1, max_length=10_000)
 
 
+class TtsOutputTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str = Field(min_length=1, max_length=64)
+    tts_request_id: str = Field(min_length=1, max_length=64)
+    version: int = Field(ge=1)
+    object_key: str = Field(min_length=1, max_length=1000)
+    mime_type: str = Field(min_length=1, max_length=160)
+    extension: str = Field(min_length=1, max_length=20)
+    upload_url: HttpUrl
+
+
+class TtsOutputTargetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preferred_format: Literal["wav", "mp3", "ogg"] = "wav"
+
+
+class TtsOutputPersistenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["READY", "FAILED"]
+    object_key: str | None = Field(default=None, min_length=1, max_length=1000)
+    mime_type: str | None = Field(default=None, min_length=1, max_length=160)
+    extension: str | None = Field(default=None, min_length=1, max_length=20)
+    duration_ms: str | None = Field(default=None, pattern=r"^\d+$")
+    size_bytes: str | None = Field(default=None, pattern=r"^\d+$")
+    sample_rate: int | None = Field(default=None, ge=1)
+    channels: int | None = Field(default=None, ge=1, le=8)
+    provider_metadata: dict[str, Any] = Field(default_factory=dict)
+    failure_reason: str | None = Field(default=None, max_length=2000)
+
+
 class ClipOutputTargets(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

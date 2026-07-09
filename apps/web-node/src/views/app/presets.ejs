@@ -9,7 +9,7 @@
   </header>
 
   <section class="panel">
-    <div class="panel-heading"><div><h2>Create clipping preset</h2><p>Use JSON for the detailed config snapshot you want to reuse later.</p></div></div>
+    <div class="panel-heading"><div><h2>Create clipping preset</h2><p>Gunakan analysis brief untuk arahan editor yang mudah dibaca. Config JSON tetap tersedia untuk kontrol detail.</p></div></div>
     <div class="p-4">
       <div class="form-message"></div>
       <form class="row g-3" data-api-form action="/api/v1/presets" method="post">
@@ -18,7 +18,8 @@
         <div class="col-md-3"><label class="form-label">Type</label><select class="form-select" name="type"><option value="CLIPPING">CLIPPING</option><option value="SUBTITLE">SUBTITLE</option><option value="BRAND">BRAND</option><option value="PUBLISHING">PUBLISHING</option><option value="TTS">TTS</option></select></div>
         <div class="col-md-3"><label class="form-label">Description</label><input class="form-control" name="description" placeholder="9:16, 30-45s, bold subtitle"></div>
         <div class="col-md-2 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_default" id="preset_default"><label class="form-check-label" for="preset_default">Default</label></div></div>
-        <div class="col-md-12"><label class="form-label">Config JSON</label><textarea class="form-control font-monospace" rows="8" name="config_json">{
+        <div class="col-md-12"><label class="form-label">Analysis brief</label><textarea class="form-control" rows="5" name="analysis_brief" placeholder="Arahan editor untuk AI: tipe hook, prioritas momen, pola ending, gaya bahasa, hal yang harus dihindari, dan konteks audience.">Anda adalah editor short video Indonesia untuk TikTok, Reels, dan YouTube Shorts. Pilih potongan yang paling cepat menarik perhatian, mudah dipahami tanpa konteks panjang, dan punya payoff yang selesai dengan rapi. Prioritaskan hook kuat di 1-3 detik pertama, insight praktis, bahasa natural, serta ending yang mendorong komentar, share, atau save. Hindari opening yang lambat, filler, dan bagian yang baru menarik setelah setup terlalu panjang.</textarea></div>
+        <div class="col-md-12"><label class="form-label">Config JSON</label><textarea class="form-control font-monospace" rows="10" name="config_json">{
   "target_platform": "YOUTUBE_SHORTS",
   "objective": "EDUCATION",
   "durations": { "min_seconds": 30, "max_seconds": 55 },
@@ -26,6 +27,8 @@
   "hook_style": "QUESTION",
   "cta_preference": "COMMENT",
   "aspect_ratio": "9:16",
+  "preferred_topics": ["hook 3 detik pertama", "audience retention", "CTA komentar"],
+  "topics_to_avoid": ["politik partisan", "SARA", "klaim medis berisiko"],
   "subtitle": {
     "enabled": true,
     "language": "id",
@@ -86,7 +89,10 @@
           <div class="col-md-3"><label class="form-label">Type</label><select class="form-select" name="type"><option value="CLIPPING" <%= preset.type === 'CLIPPING' ? 'selected' : '' %>>CLIPPING</option><option value="SUBTITLE" <%= preset.type === 'SUBTITLE' ? 'selected' : '' %>>SUBTITLE</option><option value="BRAND" <%= preset.type === 'BRAND' ? 'selected' : '' %>>BRAND</option><option value="PUBLISHING" <%= preset.type === 'PUBLISHING' ? 'selected' : '' %>>PUBLISHING</option><option value="TTS" <%= preset.type === 'TTS' ? 'selected' : '' %>>TTS</option></select></div>
           <div class="col-md-3"><label class="form-label">Description</label><input class="form-control" name="description" value="<%= preset.description ?? '' %>"></div>
           <div class="col-md-2 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_default" id="preset_<%= preset.id %>" <%= preset.isDefault ? 'checked' : '' %>><label class="form-check-label" for="preset_<%= preset.id %>">Default</label></div></div>
-          <div class="col-md-12"><label class="form-label">Config JSON</label><textarea class="form-control font-monospace" rows="5" name="config_json"><%= preset.configJson %></textarea></div>
+          <% if (preset.type === 'CLIPPING') { %>
+            <div class="col-md-12"><label class="form-label">Analysis brief</label><textarea class="form-control" rows="5" name="analysis_brief" placeholder="Arahan editor untuk AI"><%= preset.analysisBrief %></textarea><div class="form-text">Field ini otomatis disimpan ke `analysis_brief` di config preset clipping.</div></div>
+          <% } %>
+          <div class="col-md-12"><label class="form-label">Config JSON</label><textarea class="form-control font-monospace" rows="6" name="config_json"><%= preset.configJson %></textarea></div>
           <div class="col-md-12 d-flex justify-content-between"><small>Updated <%= preset.updatedAt.toLocaleString() %></small><button class="btn btn-outline-primary" type="submit">Save preset</button></div>
         </form>
       <% }) %>

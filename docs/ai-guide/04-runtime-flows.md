@@ -37,15 +37,18 @@ Key file:
 4. Node starts Temporal workflow `FoundationAutoClippingWorkflow`.
 5. Python workflow validates the envelope.
 6. Python emits progress through Node internal API.
-7. If `analysis_inputs` is already present, Python uses that structured transcript/scene/silence payload directly.
-8. If `analysis_inputs` is absent but `source.media_asset_id` is present, Python now fetches the validated media asset context, extracts mono WAV audio, runs transcription, persists the normalized transcript back to Node, and converts that transcript into minimal `analysis_inputs`.
-9. Candidate analysis runs against the prepared transcript-driven inputs and produces ranked clip candidates plus metadata suggestions.
-10. `JobProjectionService` writes authoritative `JobEvent`, updates `Job`/`JobStage`, and publishes a Redis notification.
-11. Browser receives events through `/api/v1/jobs/:jobId/events/stream`.
-12. Polling fallback is available at `/api/v1/jobs/:jobId/events`.
-13. When the user queues selected candidates for rendering, Node creates `ClipOutput` rows and now starts one `ClipOutputRenderWorkflow` per newly created output.
-14. The Python render slice currently returns a deterministic placeholder render result, then reports preview/final/metadata/thumbnail/subtitle object keys plus width/height back to Node through the internal clip-output result endpoint.
-15. When a subtitle object key is supplied, Node upserts a `SUBTITLE` media asset and linked `SubtitleAsset` row so the user-facing download route can treat it as an official clip artifact.
+7. Progress emission is best-effort observability. If the internal callback rejects or is temporarily unavailable, Python now logs the callback failure and continues the core workflow instead of failing the entire job purely because projection sync failed.
+8. If `analysis_inputs` is already present, Python uses that structured transcript/scene/silence payload directly.
+9. If `analysis_inputs` is absent but `source.media_asset_id` is present, Python now fetches the validated media asset context, extracts mono WAV audio, runs transcription, persists the normalized transcript back to Node, and converts that transcript into minimal `analysis_inputs`.
+10. Candidate analysis runs against the prepared transcript-driven inputs and produces ranked clip candidates plus metadata suggestions.
+11. `JobProjectionService` writes authoritative `JobEvent`, updates `Job`/`JobStage`, and publishes a Redis notification.
+12. Browser receives events through `/api/v1/jobs/:jobId/events/stream`.
+13. Polling fallback is available at `/api/v1/jobs/:jobId/events`.
+14. When the user selects a candidate, Node can immediately create `ClipOutput` rows and auto-start one `ClipOutputRenderWorkflow` per newly created output without a separate manual queue step.
+15. The Python render slice now executes FFmpeg-based clip rendering from the source media window, extracts a thumbnail, validates the final output with FFprobe, and can skip a separate preview MP4 when storage optimization is preferred.
+16. Subtitle generation now persists timed sidecars for `SRT`, `ASS`, `VTT`, and `JSON`, while the selected subtitle format can also be burned into the final render when requested by the render settings.
+17. Node receives final/metadata/thumbnail/subtitle artifact results through the internal clip-output result endpoint and persists official `MediaAsset` plus `SubtitleAsset` rows for every supplied sidecar format.
+18. The job detail experience and public jobs API now expose validation summaries, render warnings, grouped pipeline phases, strategy snapshots, and per-format artifact download/export links for downstream review.
 
 Key files:
 

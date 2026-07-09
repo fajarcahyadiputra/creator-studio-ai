@@ -6,6 +6,8 @@ vi.mock("../../infrastructure/database/prisma.js", () => ({
 import {
   computeServerOverallProgress,
   resolveCandidateTranscriptId,
+  resolveRecordedJobProgress,
+  resolveRecordedJobStage,
   resolvePersistableCandidates,
   resolveOutputSummary,
   resolveStageWeight,
@@ -182,5 +184,45 @@ describe("job projection helpers", () => {
     });
 
     expect(progress).toBe(44);
+  });
+
+  it("forces final jobs to 100 percent when completed", () => {
+    expect(
+      resolveRecordedJobProgress({
+        currentProgressPercent: 92,
+        computedProgressPercent: 92,
+        nextStatus: "COMPLETED"
+      })
+    ).toBe(100);
+    expect(
+      resolveRecordedJobProgress({
+        currentProgressPercent: 92,
+        computedProgressPercent: 92,
+        nextStatus: "PARTIALLY_COMPLETED"
+      })
+    ).toBe(100);
+  });
+
+  it("caps failed-like terminal jobs below 100 percent", () => {
+    expect(
+      resolveRecordedJobProgress({
+        currentProgressPercent: 40,
+        computedProgressPercent: 92,
+        nextStatus: "FAILED"
+      })
+    ).toBe(92);
+    expect(
+      resolveRecordedJobProgress({
+        currentProgressPercent: 99,
+        computedProgressPercent: 100,
+        nextStatus: "NEEDS_REVIEW"
+      })
+    ).toBe(99);
+  });
+
+  it("stores terminal status as the display stage", () => {
+    expect(resolveRecordedJobStage("UPLOADING_OUTPUTS", "COMPLETED")).toBe("COMPLETED");
+    expect(resolveRecordedJobStage("TRANSCRIBING", "FAILED")).toBe("FAILED");
+    expect(resolveRecordedJobStage("UPLOADING_OUTPUTS", "RUNNING")).toBe("UPLOADING_OUTPUTS");
   });
 });

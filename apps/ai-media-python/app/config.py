@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     AUDIO_EXTRACTION_TIMEOUT_SECONDS: float = Field(default=120.0, gt=0, le=900)
     TRANSCRIPTION_TIMEOUT_SECONDS: float = Field(default=600.0, gt=0, le=14400)
     RENDER_OUTPUT_TIMEOUT_SECONDS: float = Field(default=900.0, gt=0, le=14400)
+    TTS_TRANSCODE_TIMEOUT_SECONDS: float = Field(default=180.0, gt=0, le=1800)
     FASTER_WHISPER_MODEL_SIZE: str = "small"
     FASTER_WHISPER_DEVICE: str = "cpu"
     FASTER_WHISPER_COMPUTE_TYPE: str = "int8"

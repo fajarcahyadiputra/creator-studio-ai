@@ -114,6 +114,37 @@ interface JobOutputsExportIndex {
   clipOutputs: JobOutputsExportIndexItem[];
 }
 
+interface TtsSegmentationExport {
+  jobId: string;
+  status: string;
+  language: string | null;
+  localModelKey: string | null;
+  voiceIdentifier: string | null;
+  speakingStyle: string | null;
+  emotion: string | null;
+  segmentCount: number;
+  totalPauseMs: number;
+  metadata: Record<string, unknown>;
+  document: Record<string, unknown>;
+}
+
+type TtsOutputArtifact = "audio";
+
+interface TtsOutputExportIndexItem {
+  artifact: TtsOutputArtifact;
+  label: string;
+  url: string;
+}
+
+interface TtsOutputExportIndex {
+  jobId: string;
+  status: string;
+  artifacts: TtsOutputExportIndexItem[];
+  language: string | null;
+  localModelKey: string | null;
+  voiceIdentifier: string | null;
+}
+
 interface RenderSettingsSource {
   inputSnapshot: unknown;
   candidate: {
@@ -858,6 +889,187 @@ export class JobService {
       clipOutputs
     };
   }
+
+  public async createTtsSegmentationExport(
+    userId: string,
+    jobId: string
+  ): Promise<TtsSegmentationExport> {
+    const job = await prisma.job.findFirst({
+      where: {
+        id: jobId,
+        userId,
+        type: "TEXT_TO_SPEECH",
+        deletedAt: null
+      },
+      include: {
+        ttsRequest: true
+      }
+    });
+    if (!job) throw new NotFoundError("Job");
+
+    const outputSummary =
+      job.outputSummary && typeof job.outputSummary === "object" && !Array.isArray(job.outputSummary)
+        ? (job.outputSummary as Record<string, unknown>)
+        : {};
+    const ttsSummary =
+      outputSummary.tts && typeof outputSummary.tts === "object" && !Array.isArray(outputSummary.tts)
+        ? (outputSummary.tts as Record<string, unknown>)
+        : {};
+    const outputConfig =
+      job.ttsRequest?.outputConfig && typeof job.ttsRequest.outputConfig === "object" && !Array.isArray(job.ttsRequest.outputConfig)
+        ? (job.ttsRequest.outputConfig as Record<string, unknown>)
+        : {};
+    const document =
+      ttsSummary.document && typeof ttsSummary.document === "object" && !Array.isArray(ttsSummary.document)
+        ? (ttsSummary.document as Record<string, unknown>)
+        : outputConfig.segmentation_document && typeof outputConfig.segmentation_document === "object" && !Array.isArray(outputConfig.segmentation_document)
+          ? (outputConfig.segmentation_document as Record<string, unknown>)
+          : {};
+    const metadata =
+      ttsSummary.metadata && typeof ttsSummary.metadata === "object" && !Array.isArray(ttsSummary.metadata)
+        ? (ttsSummary.metadata as Record<string, unknown>)
+        : outputConfig.segmentation_metadata && typeof outputConfig.segmentation_metadata === "object" && !Array.isArray(outputConfig.segmentation_metadata)
+          ? (outputConfig.segmentation_metadata as Record<string, unknown>)
+          : {};
+    const inputSnapshot =
+      job.inputSnapshot && typeof job.inputSnapshot === "object" && !Array.isArray(job.inputSnapshot)
+        ? (job.inputSnapshot as Record<string, unknown>)
+        : {};
+
+    return {
+      jobId: job.id,
+      status: job.status,
+      language: job.ttsRequest?.language ?? null,
+      localModelKey:
+        typeof inputSnapshot.local_model_key === "string" && inputSnapshot.local_model_key.trim().length > 0
+          ? inputSnapshot.local_model_key.trim()
+          : typeof outputConfig.local_model_key === "string" && outputConfig.local_model_key.trim().length > 0
+            ? outputConfig.local_model_key.trim()
+            : null,
+      voiceIdentifier: job.ttsRequest?.voiceIdentifier ?? null,
+      speakingStyle: job.ttsRequest?.speakingStyle ?? null,
+      emotion: job.ttsRequest?.emotion ?? null,
+      segmentCount:
+        typeof ttsSummary.segment_count === "number"
+          ? ttsSummary.segment_count
+          : Array.isArray(document.segments)
+            ? document.segments.length
+            : 0,
+      totalPauseMs: typeof ttsSummary.total_pause_ms === "number" ? ttsSummary.total_pause_ms : 0,
+      metadata,
+      document
+    };
+  }
+
+  public async createTtsAudioArtifactUrl(
+    userId: string,
+    jobId: string,
+    artifact: TtsOutputArtifact,
+  ) {
+    const ttsOutput = await prisma.ttsOutput.findFirst({
+      where: {
+        ttsRequest: {
+          job: {
+            id: jobId,
+            userId,
+            type: "TEXT_TO_SPEECH",
+            deletedAt: null,
+          },
+        },
+        mediaAsset: {
+          deletedAt: null,
+        },
+      },
+      include: {
+        mediaAsset: true,
+        ttsRequest: {
+          include: {
+            job: true,
+          },
+        },
+      },
+      orderBy: [{ version: "desc" }, { createdAt: "desc" }],
+    });
+    if (!ttsOutput) throw new NotFoundError("TTS output");
+
+    const objectKey = resolveTtsOutputArtifactObjectKey(ttsOutput, artifact);
+    if (!objectKey) {
+      throw new ConflictError(
+        "TTS_OUTPUT_ARTIFACT_UNAVAILABLE",
+        `${ttsOutputArtifactLabel(artifact)} is not available for this TTS job yet.`,
+      );
+    }
+
+    return createPublicSignedObjectReadUrl(objectKey);
+  }
+
+  public async createTtsOutputExportIndex(
+    userId: string,
+    jobId: string,
+  ): Promise<TtsOutputExportIndex> {
+    const job = await prisma.job.findFirst({
+      where: {
+        id: jobId,
+        userId,
+        type: "TEXT_TO_SPEECH",
+        deletedAt: null,
+      },
+      include: {
+        ttsRequest: {
+          include: {
+            outputs: {
+              where: {
+                mediaAsset: {
+                  deletedAt: null,
+                },
+              },
+              include: {
+                mediaAsset: true,
+              },
+              orderBy: [{ version: "desc" }, { createdAt: "desc" }],
+            },
+          },
+        },
+      },
+    });
+    if (!job || !job.ttsRequest) throw new NotFoundError("TTS job");
+
+    const latestOutput = job.ttsRequest.outputs[0] ?? null;
+    const outputConfig =
+      job.ttsRequest.outputConfig && typeof job.ttsRequest.outputConfig === "object" && !Array.isArray(job.ttsRequest.outputConfig)
+        ? (job.ttsRequest.outputConfig as Record<string, unknown>)
+        : {};
+    const inputSnapshot =
+      job.inputSnapshot && typeof job.inputSnapshot === "object" && !Array.isArray(job.inputSnapshot)
+        ? (job.inputSnapshot as Record<string, unknown>)
+        : {};
+
+    const artifacts: TtsOutputExportIndexItem[] = [];
+    if (latestOutput) {
+      const objectKey = resolveTtsOutputArtifactObjectKey(latestOutput, "audio");
+      if (objectKey) {
+        artifacts.push({
+          artifact: "audio",
+          label: ttsOutputArtifactLabel("audio"),
+          url: await createPublicSignedObjectReadUrl(objectKey),
+        });
+      }
+    }
+
+    return {
+      jobId: job.id,
+      status: job.status,
+      artifacts,
+      language: job.ttsRequest.language,
+      localModelKey:
+        typeof inputSnapshot.local_model_key === "string" && inputSnapshot.local_model_key.trim().length > 0
+          ? inputSnapshot.local_model_key.trim()
+          : typeof outputConfig.local_model_key === "string" && outputConfig.local_model_key.trim().length > 0
+            ? outputConfig.local_model_key.trim()
+            : null,
+      voiceIdentifier: job.ttsRequest.voiceIdentifier ?? null,
+    };
+  }
 }
 
 function prepareTtsInput(input: CreateTtsInput): CreateTtsInput {
@@ -947,6 +1159,10 @@ interface ClipOutputArtifactSource {
   metadataObjectKey: string | null;
   thumbnailObjectKey: string | null;
   subtitles: Array<{ format: string; objectKey: string }>;
+}
+
+interface TtsOutputArtifactSource {
+  mediaAsset: { objectKey: string } | null;
 }
 
 const SUPPORTED_SUBTITLE_FORMATS = new Set(["srt", "ass", "vtt", "json"]);
@@ -1142,4 +1358,21 @@ function findSubtitleObjectKey(
   format: string
 ) {
   return subtitles.find((subtitle) => subtitle.format.toLowerCase() === format.toLowerCase())?.objectKey ?? null;
+}
+
+function resolveTtsOutputArtifactObjectKey(
+  ttsOutput: TtsOutputArtifactSource,
+  artifact: TtsOutputArtifact,
+) {
+  switch (artifact) {
+    case "audio":
+      return ttsOutput.mediaAsset?.objectKey ?? null;
+  }
+}
+
+function ttsOutputArtifactLabel(artifact: TtsOutputArtifact) {
+  switch (artifact) {
+    case "audio":
+      return "Narration audio";
+  }
 }

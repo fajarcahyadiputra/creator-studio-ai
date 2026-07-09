@@ -214,7 +214,16 @@ dashboardRouter.get(
         project: { select: { name: true } },
         sourceMediaAsset: { select: { displayName: true, durationMs: true, objectKey: true, mimeType: true } },
         autoClipRequest: true,
-        ttsRequest: true,
+        ttsRequest: {
+          include: {
+            outputs: {
+              include: {
+                mediaAsset: true
+              },
+              orderBy: { version: "desc" }
+            }
+          }
+        },
         attempts: { orderBy: { attemptNumber: "desc" } },
         errors: { orderBy: { occurredAt: "desc" } },
         stages: { orderBy: { createdAt: "asc" } },
@@ -266,6 +275,13 @@ dashboardRouter.get(
         : null;
     const sourceMediaPlaybackUrl = job.sourceMediaAsset?.objectKey
       ? await createPublicSignedObjectReadUrl(job.sourceMediaAsset.objectKey)
+      : null;
+    const latestTtsOutput =
+      job.ttsRequest?.outputs.find((output) => output.status === "READY" && output.mediaAsset?.objectKey)
+      ?? job.ttsRequest?.outputs.find((output) => Boolean(output.mediaAsset?.objectKey))
+      ?? null;
+    const ttsAudioPlaybackUrl = latestTtsOutput?.mediaAsset.objectKey
+      ? await createPublicSignedObjectReadUrl(latestTtsOutput.mediaAsset.objectKey)
       : null;
     const strategyConfig = toJsonRecord(job.autoClipRequest?.strategyConfig);
     const visualConfig = toJsonRecord(job.autoClipRequest?.visualConfig);
@@ -539,6 +555,12 @@ dashboardRouter.get(
           ? {
               segmentCount: typeof ttsSummary.segment_count === "number" ? ttsSummary.segment_count : 0,
               totalPauseMs: typeof ttsSummary.total_pause_ms === "number" ? ttsSummary.total_pause_ms : 0,
+              averagePauseMs:
+                typeof ttsSummary.segment_count === "number" &&
+                ttsSummary.segment_count > 0 &&
+                typeof ttsSummary.total_pause_ms === "number"
+                  ? Math.round(ttsSummary.total_pause_ms / ttsSummary.segment_count)
+                  : 0,
               previewSegments: Array.isArray(ttsSummary.preview_segments)
                 ? ttsSummary.preview_segments
                     .filter((segment): segment is Record<string, unknown> => Boolean(segment && typeof segment === "object"))
@@ -552,10 +574,75 @@ dashboardRouter.get(
                       emphasis: typeof segment.emphasis === "string" ? segment.emphasis : null
                     }))
                 : [],
+              fullSegments:
+                ttsSummary.document &&
+                typeof ttsSummary.document === "object" &&
+                !Array.isArray(ttsSummary.document) &&
+                Array.isArray((ttsSummary.document as Record<string, unknown>).segments)
+                  ? ((ttsSummary.document as Record<string, unknown>).segments as unknown[])
+                      .filter((segment): segment is Record<string, unknown> => Boolean(segment && typeof segment === "object"))
+                      .map((segment) => ({
+                        id: typeof segment.id === "number" ? segment.id : null,
+                        text: typeof segment.text === "string" ? segment.text : "",
+                        pauseAfter: typeof segment.pause_after === "number" ? segment.pause_after : null,
+                        emotion: typeof segment.emotion === "string" ? segment.emotion : null,
+                        speed: typeof segment.speed === "string" ? segment.speed : null,
+                        emphasis: typeof segment.emphasis === "string" ? segment.emphasis : null,
+                        volume: typeof segment.volume === "string" ? segment.volume : null,
+                        breathBefore: typeof segment.breath_before === "boolean" ? segment.breath_before : null,
+                        breathAfter: typeof segment.breath_after === "boolean" ? segment.breath_after : null,
+                        fadeInMs: typeof segment.fade_in_ms === "number" ? segment.fade_in_ms : null,
+                        fadeOutMs: typeof segment.fade_out_ms === "number" ? segment.fade_out_ms : null
+                      }))
+                  : [],
               metadata:
                 ttsSummary.metadata && typeof ttsSummary.metadata === "object" && !Array.isArray(ttsSummary.metadata)
-                  ? (ttsSummary.metadata as Record<string, unknown>)
-                  : null
+                  ? {
+                      requestId: toOptionalString((ttsSummary.metadata as Record<string, unknown>).request_id),
+                      provider: toOptionalString((ttsSummary.metadata as Record<string, unknown>).provider),
+                      model: toOptionalString((ttsSummary.metadata as Record<string, unknown>).model),
+                      providerRequestId: toOptionalString((ttsSummary.metadata as Record<string, unknown>).provider_request_id),
+                      latencyMs: toOptionalNumber((ttsSummary.metadata as Record<string, unknown>).latency_ms),
+                      promptVersion: toOptionalString((ttsSummary.metadata as Record<string, unknown>).prompt_version)
+                    }
+                  : null,
+              audioOutput: latestTtsOutput
+                ? {
+                    status: latestTtsOutput.status,
+                    version: latestTtsOutput.version,
+                    durationMs: latestTtsOutput.durationMs ? Number(latestTtsOutput.durationMs) : null,
+                    sampleRate: latestTtsOutput.mediaAsset?.audioSampleRate ?? null,
+                    mimeType: latestTtsOutput.mediaAsset?.mimeType ?? null,
+                    extension: latestTtsOutput.mediaAsset?.extension ?? null,
+                    playbackUrl: ttsAudioPlaybackUrl,
+                    mediaAssetId: latestTtsOutput.mediaAssetId,
+                    objectKey: latestTtsOutput.mediaAsset?.objectKey ?? null,
+                    requestedFormat:
+                      latestTtsOutput.providerMetadata &&
+                      typeof latestTtsOutput.providerMetadata === "object" &&
+                      !Array.isArray(latestTtsOutput.providerMetadata)
+                        ? toOptionalString((latestTtsOutput.providerMetadata as Record<string, unknown>).requested_format)
+                        : null,
+                    actualFormat:
+                      latestTtsOutput.providerMetadata &&
+                      typeof latestTtsOutput.providerMetadata === "object" &&
+                      !Array.isArray(latestTtsOutput.providerMetadata)
+                        ? toOptionalString((latestTtsOutput.providerMetadata as Record<string, unknown>).format)
+                        : null,
+                    fallbackUsed:
+                      latestTtsOutput.providerMetadata &&
+                      typeof latestTtsOutput.providerMetadata === "object" &&
+                      !Array.isArray(latestTtsOutput.providerMetadata)
+                        ? toOptionalBoolean((latestTtsOutput.providerMetadata as Record<string, unknown>).fallback_used)
+                        : null,
+                    fallbackReason:
+                      latestTtsOutput.providerMetadata &&
+                      typeof latestTtsOutput.providerMetadata === "object" &&
+                      !Array.isArray(latestTtsOutput.providerMetadata)
+                        ? toOptionalString((latestTtsOutput.providerMetadata as Record<string, unknown>).fallback_reason)
+                        : null
+                  }
+                : null
             }
           : null,
         requestSnapshot: job.autoClipRequest
@@ -625,6 +712,7 @@ dashboardRouter.get(
               pauseIntensity: job.ttsRequest.pauseIntensity ? Number(job.ttsRequest.pauseIntensity) : null,
               targetDurationMs: job.ttsRequest.targetDurationMs ? Number(job.ttsRequest.targetDurationMs) : null,
               preferredFormat: toOptionalString(ttsOutputConfig.preferred_format),
+              segmentationMode: toOptionalString(ttsOutputConfig.segmentation_mode) ?? "LOCAL_HEURISTIC",
               sampleRate: toOptionalNumber(ttsOutputConfig.sample_rate),
               channels: toOptionalNumber(ttsOutputConfig.channels),
               userPreferences:
@@ -715,6 +803,7 @@ dashboardRouter.get(
         pauseIntensity: toOptionalNumber(presetConfig.pause_intensity) ?? 1,
         targetDurationMs: toOptionalNumber(presetConfig.target_duration_ms) ?? "",
         preferredFormat: toOptionalString(presetConfig.preferred_format) ?? "WAV",
+        segmentationMode: toOptionalString(presetConfig.segmentation_mode) ?? "LOCAL_HEURISTIC",
         sampleRate: toOptionalNumber(presetConfig.sample_rate) ?? 24000,
         channels: toOptionalNumber(presetConfig.channels) ?? 1,
         toneNotes: toOptionalString(presetConfig.tone_notes) ?? "",

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import type { PrismaClient } from "../../generated/prisma/client.js";
@@ -23,7 +24,9 @@ const progressSchema = z.object({
     "CANCEL_REQUESTED", "CANCELED", "FAILED", "COMPLETED", "PARTIALLY_COMPLETED",
     "NEEDS_REVIEW"
   ]).optional(),
-  occurred_at: z.iso.datetime().optional()
+  occurred_at: z.string().trim().refine((value) => !Number.isNaN(Date.parse(value)), {
+    message: "Invalid datetime."
+  }).optional()
 });
 
 const clipOutputResultSchema = z.object({
@@ -56,6 +59,37 @@ const mediaAssetValidationSchema = z.object({
   failure_reason: z.string().trim().min(1).max(2000).optional()
 });
 
+const externalSourceImportCreateSchema = z.object({
+  job_id: z.uuid(),
+  user_id: z.uuid(),
+  project_id: z.preprocess((value) => value ?? undefined, z.uuid().optional()),
+  source_url: z.url(),
+  display_name: z.string().trim().min(1).max(255),
+  original_file_name: z.string().trim().min(1).max(255),
+  mime_type: z.string().trim().min(1).max(160),
+  extension: z.string().trim().min(1).max(20),
+});
+
+const externalSourceImportCompleteSchema = z.object({
+  status: z.enum(["READY", "FAILED"]),
+  size_bytes: z.string().regex(/^\d+$/).optional(),
+  checksum_sha256: z.string().trim().length(64).optional(),
+  mime_type: z.string().trim().min(1).max(160),
+  extension: z.string().trim().min(1).max(20),
+  display_name: z.string().trim().min(1).max(255),
+  original_file_name: z.string().trim().min(1).max(255),
+  duration_ms: z.string().regex(/^\d+$/).optional(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+  frame_rate: z.number().positive().optional(),
+  audio_sample_rate: z.number().int().positive().optional(),
+  codec_name: z.string().trim().min(1).max(80).optional(),
+  audio_codec_name: z.string().trim().min(1).max(80).optional(),
+  rotation: z.number().int().optional(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  failure_reason: z.string().trim().min(1).max(2000).optional(),
+});
+
 const transcriptWordSchema = z.object({
   start_seconds: z.number().min(0),
   end_seconds: z.number().gt(0),
@@ -86,6 +120,44 @@ const transcriptionResultSchema = z.object({
   })
 });
 
+const ttsSegmentationResultSchema = z.object({
+  document: z.object({
+    segments: z.array(
+      z.object({
+        id: z.number().int().positive(),
+        text: z.string().trim().min(1).max(2000),
+        pause_after: z.number().int().min(0).max(5000),
+        emotion: z.string().trim().min(1).max(40),
+        speed: z.string().trim().min(1).max(40),
+        emphasis: z.string().trim().min(1).max(40),
+        volume: z.string().trim().min(1).max(40),
+        breath_before: z.boolean(),
+        breath_after: z.boolean(),
+        fade_in_ms: z.number().int().min(0).max(5000),
+        fade_out_ms: z.number().int().min(0).max(5000)
+      })
+    ).min(1).max(10000)
+  }),
+  metadata: z.record(z.string(), z.unknown()).default({})
+});
+
+const ttsOutputResultSchema = z.object({
+  status: z.enum(["READY", "FAILED"]),
+  object_key: z.string().trim().min(1).max(1000).optional(),
+  mime_type: z.string().trim().min(1).max(160).optional(),
+  extension: z.string().trim().min(1).max(20).optional(),
+  duration_ms: z.string().regex(/^\d+$/).optional(),
+  size_bytes: z.string().regex(/^\d+$/).optional(),
+  sample_rate: z.number().int().positive().optional(),
+  channels: z.number().int().min(1).max(8).optional(),
+  provider_metadata: z.record(z.string(), z.unknown()).default({}),
+  failure_reason: z.string().trim().min(1).max(2000).optional()
+});
+
+const ttsOutputTargetRequestSchema = z.object({
+  preferred_format: z.enum(["wav", "mp3", "ogg"]).default("wav")
+});
+
 export function internalRouter(projection: JobProjectionService): Router {
   const router = Router();
   router.get("/internal/v1/health", requireInternalService, (_request, response) => {
@@ -98,6 +170,174 @@ export function internalRouter(projection: JobProjectionService): Router {
     asyncHandler(async (request, response) => {
       const event = await projection.record(routeParam(request.params.jobId, "jobId"), request.validatedBody as never);
       response.status(201).json({ data: { id: event.id, sequence: event.sequence.toString() } });
+    })
+  );
+  router.post(
+    "/internal/v1/external-source-imports",
+    requireInternalService,
+    validateBody(externalSourceImportCreateSchema),
+    asyncHandler(async (request, response) => {
+      const body = request.validatedBody as {
+        job_id: string;
+        user_id: string;
+        project_id?: string;
+        source_url: string;
+        display_name: string;
+        original_file_name: string;
+        mime_type: string;
+        extension: string;
+      };
+
+      const extension = sanitizeExtension(body.extension);
+      const fileNameBase = sanitizeObjectFileName(body.original_file_name, body.display_name);
+      const objectKey = `users/${body.user_id}/imports/${body.job_id}/source/${fileNameBase}.${extension}`;
+
+      const created = await prisma.$transaction(async (tx) => {
+        const job = await tx.job.findUnique({ where: { id: body.job_id }, select: { id: true } });
+        if (!job) throw new NotFoundError("Job");
+
+        const mediaAsset = await tx.mediaAsset.create({
+          data: {
+            userId: body.user_id,
+            projectId: body.project_id,
+            type: "VIDEO",
+            status: "UPLOADING",
+            displayName: body.display_name,
+            originalFileName: body.original_file_name,
+            objectKey,
+            mimeType: body.mime_type,
+            extension,
+            metadata: {
+              source: "external-url-import",
+              source_url: body.source_url,
+              job_id: body.job_id,
+            } as never,
+          }
+        });
+
+        return mediaAsset;
+      });
+
+      response.status(201).json({
+        data: {
+          media_asset_id: created.id,
+          job_id: body.job_id,
+          user_id: body.user_id,
+          project_id: body.project_id ?? null,
+          source_url: body.source_url,
+          object_key: created.objectKey,
+          upload_url: await createInternalSignedObjectWriteUrl(created.objectKey, body.mime_type, 3600),
+          read_url: await createInternalSignedObjectReadUrl(created.objectKey, 3600),
+          display_name: created.displayName,
+          original_file_name: created.originalFileName,
+          mime_type: created.mimeType,
+          extension: created.extension,
+        }
+      });
+    })
+  );
+  router.post(
+    "/internal/v1/external-source-imports/:mediaAssetId/complete",
+    requireInternalService,
+    validateBody(externalSourceImportCompleteSchema),
+    asyncHandler(async (request, response) => {
+      const mediaAssetId = routeParam(request.params.mediaAssetId, "mediaAssetId");
+      const body = request.validatedBody as {
+        status: "READY" | "FAILED";
+        size_bytes?: string;
+        checksum_sha256?: string;
+        mime_type: string;
+        extension: string;
+        display_name: string;
+        original_file_name: string;
+        duration_ms?: string;
+        width?: number;
+        height?: number;
+        frame_rate?: number;
+        audio_sample_rate?: number;
+        codec_name?: string;
+        audio_codec_name?: string;
+        rotation?: number;
+        metadata: Record<string, unknown>;
+        failure_reason?: string;
+      };
+
+      const existingMediaAsset = await prisma.mediaAsset.findUnique({
+        where: { id: mediaAssetId },
+        select: { metadata: true }
+      });
+      const existingMetadata =
+        existingMediaAsset?.metadata && typeof existingMediaAsset.metadata === "object" && !Array.isArray(existingMediaAsset.metadata)
+          ? (existingMediaAsset.metadata as Record<string, unknown>)
+          : {};
+
+      const updated = await prisma.mediaAsset.update({
+        where: { id: mediaAssetId },
+        data: {
+          status: body.status,
+          displayName: body.display_name,
+          originalFileName: body.original_file_name,
+          mimeType: body.mime_type,
+          extension: sanitizeExtension(body.extension),
+          sizeBytes: body.size_bytes ? BigInt(body.size_bytes) : null,
+          checksumSha256: body.checksum_sha256,
+          durationMs: body.duration_ms ? BigInt(body.duration_ms) : null,
+          width: body.width,
+          height: body.height,
+          frameRate: body.frame_rate,
+          audioSampleRate: body.audio_sample_rate,
+          metadata: {
+            ...existingMetadata,
+            ...(body.metadata ?? {}),
+            validation: {
+              codec_name: body.codec_name ?? null,
+              audio_codec_name: body.audio_codec_name ?? null,
+              rotation: body.rotation ?? null,
+              failure_reason: body.failure_reason ?? null,
+            },
+          } as never
+        }
+      });
+
+      if (body.status === "READY") {
+        const metadata = updated.metadata && typeof updated.metadata === "object" && !Array.isArray(updated.metadata)
+          ? (updated.metadata as Record<string, unknown>)
+          : {};
+        const jobId = typeof metadata.job_id === "string" ? metadata.job_id : null;
+
+        if (jobId) {
+          await prisma.$transaction(async (tx) => {
+            const job = await tx.job.findUnique({
+              where: { id: jobId },
+              select: { inputSnapshot: true }
+            });
+            if (!job) return;
+
+            await tx.job.update({
+              where: { id: jobId },
+              data: {
+                sourceMediaAssetId: updated.id,
+                inputSnapshot: replaceJobSourceWithMediaAsset(job.inputSnapshot, updated.id) as never,
+              }
+            });
+
+            await tx.autoClipRequest.updateMany({
+              where: { jobId },
+              data: {
+                sourceMediaAssetId: updated.id,
+              }
+            });
+          });
+        }
+      }
+
+      response.json({
+        data: {
+          media_asset_id: updated.id,
+          status: updated.status,
+          object_key: updated.objectKey,
+        }
+      });
     })
   );
   router.get(
@@ -436,6 +676,323 @@ export function internalRouter(projection: JobProjectionService): Router {
     })
   );
   router.post(
+    "/internal/v1/jobs/:jobId/tts-segmentation-result",
+    requireInternalService,
+    validateBody(ttsSegmentationResultSchema),
+    asyncHandler(async (request, response) => {
+      const jobId = routeParam(request.params.jobId, "jobId");
+      const body = request.validatedBody as {
+        document: {
+          segments: Array<{
+            id: number;
+            text: string;
+            pause_after: number;
+            emotion: string;
+            speed: string;
+            emphasis: string;
+            volume: string;
+            breath_before: boolean;
+            breath_after: boolean;
+            fade_in_ms: number;
+            fade_out_ms: number;
+          }>;
+        };
+        metadata: Record<string, unknown>;
+      };
+
+      const job = await prisma.job.findUnique({
+        where: { id: jobId },
+        include: { ttsRequest: true }
+      });
+      if (!job) throw new NotFoundError("Job");
+
+      const previousSummary =
+        job.outputSummary && typeof job.outputSummary === "object" && !Array.isArray(job.outputSummary)
+          ? (job.outputSummary as Record<string, unknown>)
+          : {};
+      const previousOutputConfig =
+        job.ttsRequest?.outputConfig && typeof job.ttsRequest.outputConfig === "object" && !Array.isArray(job.ttsRequest.outputConfig)
+          ? (job.ttsRequest.outputConfig as Record<string, unknown>)
+          : {};
+      const segmentCount = body.document.segments.length;
+      const totalPauseMs = body.document.segments.reduce((sum, segment) => sum + segment.pause_after, 0);
+      const previewSegments = body.document.segments.slice(0, 5).map((segment) => ({
+        id: segment.id,
+        text: segment.text,
+        pause_after: segment.pause_after,
+        emotion: segment.emotion,
+        speed: segment.speed,
+        emphasis: segment.emphasis
+      }));
+
+      await prisma.$transaction(async (tx) => {
+        await tx.job.update({
+          where: { id: jobId },
+          data: {
+            outputSummary: {
+              ...previousSummary,
+              tts: {
+                segment_count: segmentCount,
+                total_pause_ms: totalPauseMs,
+                preview_segments: previewSegments,
+                document: body.document,
+                metadata: body.metadata
+              }
+            } as never
+          }
+        });
+
+        if (job.ttsRequest) {
+          await tx.ttsRequest.update({
+            where: { id: job.ttsRequest.id },
+            data: {
+              outputConfig: {
+                ...previousOutputConfig,
+                segmentation_document: body.document,
+                segmentation_metadata: body.metadata
+              } as never
+            }
+          });
+        }
+      });
+
+      response.json({
+        data: {
+          job_id: jobId,
+          segment_count: segmentCount
+        }
+      });
+    })
+  );
+
+  router.post(
+    "/internal/v1/jobs/:jobId/tts-output-target",
+    requireInternalService,
+    validateBody(ttsOutputTargetRequestSchema),
+    asyncHandler(async (request, response) => {
+      const jobId = routeParam(request.params.jobId, "jobId");
+      const body = request.validatedBody as { preferred_format: "wav" | "mp3" | "ogg" };
+      const job = await prisma.job.findUnique({
+        where: { id: jobId },
+        include: {
+          ttsRequest: {
+            include: {
+              outputs: {
+                orderBy: { version: "desc" },
+                take: 1
+              }
+            }
+          }
+        }
+      });
+      if (!job || !job.ttsRequest) throw new NotFoundError("TTS job");
+
+      const outputConfig =
+        job.ttsRequest.outputConfig && typeof job.ttsRequest.outputConfig === "object" && !Array.isArray(job.ttsRequest.outputConfig)
+          ? (job.ttsRequest.outputConfig as Record<string, unknown>)
+          : {};
+      const configuredFormat = typeof outputConfig.preferred_format === "string"
+        ? outputConfig.preferred_format.trim().toLowerCase()
+        : "wav";
+      const preferredFormat = body.preferred_format ?? (configuredFormat === "mp3" || configuredFormat === "ogg" ? configuredFormat : "wav");
+      const extension = resolveTtsAudioExtension(preferredFormat);
+      const mimeType = resolveTtsAudioMimeType(preferredFormat);
+      const version = job.ttsRequest.outputs[0]?.version ?? 1;
+      const objectKey = `users/${job.userId}/jobs/${job.id}/tts/output-v${version}.${extension}`;
+
+      response.json({
+        data: {
+          job_id: job.id,
+          tts_request_id: job.ttsRequest.id,
+          version,
+          object_key: objectKey,
+          mime_type: mimeType,
+          extension,
+          upload_url: await createInternalSignedObjectWriteUrl(objectKey, mimeType, 3600)
+        }
+      });
+    })
+  );
+
+  router.post(
+    "/internal/v1/jobs/:jobId/tts-output-result",
+    requireInternalService,
+    validateBody(ttsOutputResultSchema),
+    asyncHandler(async (request, response) => {
+      const jobId = routeParam(request.params.jobId, "jobId");
+      const body = request.validatedBody as {
+        status: "READY" | "FAILED";
+        object_key?: string;
+        mime_type?: string;
+        extension?: string;
+        duration_ms?: string;
+        size_bytes?: string;
+        sample_rate?: number;
+        channels?: number;
+        provider_metadata: Record<string, unknown>;
+        failure_reason?: string;
+      };
+
+      const job = await prisma.job.findUnique({
+        where: { id: jobId },
+        include: {
+          ttsRequest: {
+            include: {
+              outputs: {
+                orderBy: { version: "desc" },
+                take: 1
+              }
+            }
+          }
+        }
+      });
+      if (!job || !job.ttsRequest) throw new NotFoundError("TTS job");
+      const ttsRequest = job.ttsRequest;
+      if (body.status === "READY" && !body.object_key) {
+        throw new AppError({
+          code: "TTS_OUTPUT_OBJECT_KEY_REQUIRED",
+          message: "object_key is required when TTS output status is READY.",
+          statusCode: 400
+        });
+      }
+
+      const previousSummary =
+        job.outputSummary && typeof job.outputSummary === "object" && !Array.isArray(job.outputSummary)
+          ? (job.outputSummary as Record<string, unknown>)
+          : {};
+      const previousTtsSummary =
+        previousSummary.tts && typeof previousSummary.tts === "object" && !Array.isArray(previousSummary.tts)
+          ? (previousSummary.tts as Record<string, unknown>)
+          : {};
+      const previousOutputConfig =
+        job.ttsRequest.outputConfig && typeof job.ttsRequest.outputConfig === "object" && !Array.isArray(job.ttsRequest.outputConfig)
+          ? (job.ttsRequest.outputConfig as Record<string, unknown>)
+          : {};
+      const outputVersion = job.ttsRequest.outputs[0]?.version ?? 1;
+
+      const persisted = await prisma.$transaction(async (tx) => {
+        let mediaAssetId: string | null = null;
+
+        if (body.status === "READY" && body.object_key) {
+          const mediaAsset = await tx.mediaAsset.upsert({
+            where: { objectKey: body.object_key },
+            update: {
+              status: "READY",
+              displayName: deriveObjectFileName(body.object_key),
+              originalFileName: deriveObjectFileName(body.object_key),
+              mimeType: body.mime_type ?? "audio/wav",
+              extension: body.extension ?? resolveObjectExtension(body.object_key) ?? "wav",
+              sizeBytes: body.size_bytes ? BigInt(body.size_bytes) : null,
+              durationMs: body.duration_ms ? BigInt(body.duration_ms) : null,
+              audioSampleRate: body.sample_rate ?? null,
+              metadata: {
+                source: "tts-render",
+                job_id: job.id,
+                tts_request_id: ttsRequest.id,
+                channels: body.channels ?? null,
+                provider_metadata: body.provider_metadata ?? {}
+              } as never
+            },
+            create: {
+              userId: job.userId,
+              projectId: job.projectId,
+              type: "AUDIO",
+              status: "READY",
+              displayName: deriveObjectFileName(body.object_key),
+              originalFileName: deriveObjectFileName(body.object_key),
+              objectKey: body.object_key,
+              mimeType: body.mime_type ?? "audio/wav",
+              extension: body.extension ?? resolveObjectExtension(body.object_key) ?? "wav",
+              sizeBytes: body.size_bytes ? BigInt(body.size_bytes) : null,
+              durationMs: body.duration_ms ? BigInt(body.duration_ms) : null,
+              audioSampleRate: body.sample_rate ?? null,
+              metadata: {
+                source: "tts-render",
+                job_id: job.id,
+                tts_request_id: ttsRequest.id,
+                channels: body.channels ?? null,
+                provider_metadata: body.provider_metadata ?? {}
+              } as never
+            }
+          });
+          mediaAssetId = mediaAsset.id;
+
+          await tx.ttsOutput.upsert({
+            where: {
+              ttsRequestId_version: {
+                ttsRequestId: ttsRequest.id,
+                version: outputVersion
+              }
+            },
+            update: {
+              mediaAssetId,
+              status: "READY",
+              durationMs: body.duration_ms ? BigInt(body.duration_ms) : null,
+              providerMetadata: body.provider_metadata as never
+            },
+            create: {
+              ttsRequestId: ttsRequest.id,
+              mediaAssetId,
+              version: outputVersion,
+              status: "READY",
+              durationMs: body.duration_ms ? BigInt(body.duration_ms) : null,
+              providerMetadata: body.provider_metadata as never
+            }
+          });
+        }
+
+        const audioOutputSummary = {
+          status: body.status,
+          version: outputVersion,
+          media_asset_id: mediaAssetId,
+          object_key: body.object_key ?? null,
+          mime_type: body.mime_type ?? null,
+          extension: body.extension ?? null,
+          duration_ms: body.duration_ms ? Number(body.duration_ms) : null,
+          size_bytes: body.size_bytes ? Number(body.size_bytes) : null,
+          sample_rate: body.sample_rate ?? null,
+          channels: body.channels ?? null,
+          provider_metadata: body.provider_metadata ?? {},
+          failure_reason: body.failure_reason ?? null
+        };
+
+        await tx.job.update({
+          where: { id: job.id },
+          data: {
+            outputSummary: {
+              ...previousSummary,
+              tts: {
+                ...previousTtsSummary,
+                audio_output: audioOutputSummary
+              }
+            } as never
+          }
+        });
+
+        await tx.ttsRequest.update({
+          where: { id: ttsRequest.id },
+          data: {
+            outputConfig: {
+              ...previousOutputConfig,
+              audio_output: audioOutputSummary
+            } as never
+          }
+        });
+
+        return audioOutputSummary;
+      });
+
+      response.json({
+        data: {
+          job_id: jobId,
+          status: persisted.status,
+          object_key: persisted.object_key
+        }
+      });
+    })
+  );
+
+  router.post(
     "/internal/v1/media-assets/:mediaAssetId/transcription-result",
     requireInternalService,
     validateBody(transcriptionResultSchema),
@@ -573,7 +1130,10 @@ function resolveSubtitleFormat(renderSettings: unknown): string {
     const subtitle = (renderSettings as Record<string, unknown>).subtitle;
     if (subtitle && typeof subtitle === "object" && !Array.isArray(subtitle)) {
       const format = (subtitle as Record<string, unknown>).format;
-      if (typeof format === "string" && format.trim()) return format.trim().toLowerCase();
+      if (typeof format === "string") {
+        const normalized = format.trim().toLowerCase();
+        if (["srt", "ass", "vtt", "json"].includes(normalized)) return normalized;
+      }
     }
   }
   return "srt";
@@ -584,6 +1144,20 @@ function resolveImageMimeType(objectKey: string): string {
   if (extension === "png") return "image/png";
   if (extension === "webp") return "image/webp";
   return "image/jpeg";
+}
+
+function resolveTtsAudioExtension(format: string | undefined): string {
+  const normalized = format?.trim().toLowerCase();
+  if (normalized === "mp3") return "mp3";
+  if (normalized === "ogg") return "ogg";
+  return "wav";
+}
+
+function resolveTtsAudioMimeType(format: string | undefined): string {
+  const normalized = format?.trim().toLowerCase();
+  if (normalized === "mp3") return "audio/mpeg";
+  if (normalized === "ogg") return "audio/ogg";
+  return "audio/wav";
 }
 
 async function upsertClipOutputMediaArtifact(
@@ -770,4 +1344,47 @@ function buildClipTranscriptWindow(input: {
     language: input.transcript.detectedLanguage ?? "id",
     segments
   };
+}
+
+function replaceJobSourceWithMediaAsset(
+  inputSnapshot: unknown,
+  mediaAssetId: string,
+): Record<string, unknown> {
+  const snapshot =
+    inputSnapshot && typeof inputSnapshot === "object" && !Array.isArray(inputSnapshot)
+      ? { ...(inputSnapshot as Record<string, unknown>) }
+      : {};
+  const existingSource =
+    snapshot.source && typeof snapshot.source === "object" && !Array.isArray(snapshot.source)
+      ? { ...(snapshot.source as Record<string, unknown>) }
+      : {};
+  const preservedUrl =
+    typeof existingSource.url === "string" && existingSource.url.trim().length > 0
+      ? existingSource.url.trim()
+      : undefined;
+
+  return {
+    ...snapshot,
+    source: {
+      ...existingSource,
+      type: preservedUrl ? "EXTERNAL_URL" : "MEDIA_ASSET",
+      url: preservedUrl,
+      media_asset_id: mediaAssetId,
+    }
+  };
+}
+
+function sanitizeExtension(value: string) {
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return normalized || "mp4";
+}
+
+function sanitizeObjectFileName(originalFileName: string, fallbackName: string) {
+  const source = originalFileName.trim() || fallbackName.trim() || `external-source-${randomUUID().slice(0, 8)}`;
+  const withoutExtension = source.replace(/\.[A-Za-z0-9]+$/, "");
+  const normalized = withoutExtension
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-_.]+|[-_.]+$/g, "");
+  return (normalized || `external-source-${randomUUID().slice(0, 8)}`).slice(0, 120);
 }

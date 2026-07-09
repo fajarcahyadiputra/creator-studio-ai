@@ -4,6 +4,12 @@ import { logger } from "../logging/logger.js";
 
 export const errorHandler: ErrorRequestHandler = (error, request, response, _next) => {
   const requestId = request.requestId ?? "unknown";
+  const statusCode =
+    typeof error === "object" && error !== null && "statusCode" in error && typeof error.statusCode === "number"
+      ? error.statusCode
+      : typeof error === "object" && error !== null && "status" in error && typeof error.status === "number"
+        ? error.status
+        : null;
 
   if (error instanceof AppError) {
     const log = error.statusCode >= 500 ? logger.error.bind(logger) : logger.warn.bind(logger);
@@ -25,6 +31,19 @@ export const errorHandler: ErrorRequestHandler = (error, request, response, _nex
         message: error.expose ? error.message : "An unexpected error occurred.",
         request_id: requestId,
         details: error.expose ? error.details : {}
+      }
+    });
+    return;
+  }
+
+  if (statusCode === 413) {
+    logger.warn({ requestId, err: error }, "Request payload exceeded the configured size limit");
+    response.status(413).json({
+      error: {
+        code: "PAYLOAD_TOO_LARGE",
+        message: "The request payload is too large.",
+        request_id: requestId,
+        details: {}
       }
     });
     return;

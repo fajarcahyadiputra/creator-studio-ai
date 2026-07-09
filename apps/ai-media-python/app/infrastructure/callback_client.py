@@ -1,9 +1,12 @@
 from datetime import UTC, datetime
+import logging
 
 import httpx
 
 from app.config import get_settings
 from app.domain.contracts import ProgressEvent
+
+logger = logging.getLogger(__name__)
 
 
 class JobCallbackClient:
@@ -20,4 +23,14 @@ class JobCallbackClient:
         }
         async with httpx.AsyncClient(timeout=self._settings.CALLBACK_TIMEOUT_SECONDS) as client:
             response = await client.post(url, headers=headers, json=payload)
+            if response.status_code >= 400:
+                logger.warning(
+                    "job callback rejected",
+                    extra={
+                        "job_id": job_id,
+                        "status_code": response.status_code,
+                        "response_text": response.text[:4000],
+                        "payload": payload,
+                    },
+                )
             response.raise_for_status()

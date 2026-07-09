@@ -4,11 +4,11 @@
     <div>
       <span class="eyebrow">Tools</span>
       <h1>Text to Speech</h1>
-      <p>Buat segment plan narasi yang natural untuk workflow TTS. Tahap ini sudah menghasilkan durable job dan menyimpan hasil segmentasi script ke detail job.</p>
+      <p>Buat segment plan narasi yang natural lalu render audio narration lokal dengan Piper. Hasil job akan menyimpan segmentasi script dan file audio yang bisa diputar di detail job.</p>
     </div>
   </header>
 
-  <div class="alert alert-info">Versi saat ini fokus ke script segmentation dulu. Audio synthesis final akan disambungkan di backlog berikutnya.</div>
+  <div class="alert alert-info">Workflow ini sekarang membuat segment plan TTS, merender audio narration lokal, lalu menyimpan hasil WAV ke job detail untuk review dan download.</div>
   <div class="form-message"></div>
 
   <form id="tts-form" class="wizard-panel">
@@ -124,6 +124,14 @@
             <textarea class="form-control" name="tone_notes" rows="4" maxlength="4000" placeholder="Contoh: jangan terlalu teatrikal, tetap jelas, beri penekanan di fakta penting."><%= formDefaults.toneNotes %></textarea>
           </div>
           <div class="col-md-4">
+            <label class="form-label">Segmentation mode</label>
+            <select class="form-select" name="segmentation_mode">
+              <option value="LOCAL_HEURISTIC" <%= formDefaults.segmentationMode === 'LOCAL_HEURISTIC' ? 'selected' : '' %>>LOCAL_HEURISTIC - testing tanpa OpenAI</option>
+              <option value="OPENAI" <%= formDefaults.segmentationMode === 'OPENAI' ? 'selected' : '' %>>OPENAI - analisis segmentasi lebih kaya</option>
+            </select>
+            <div class="form-text">Untuk generate text testing, pilih <code>LOCAL_HEURISTIC</code> agar segmentasi dibuat lokal dan tidak hit OpenAI.</div>
+          </div>
+          <div class="col-md-4">
             <label class="form-label">Segment length preference</label>
             <select class="form-select" name="segment_length_preference">
               <% ['SHORT','BALANCED','LONG'].forEach((option) => { %>
@@ -160,6 +168,7 @@
                 <option value="<%= format %>" <%= formDefaults.preferredFormat === format ? 'selected' : '' %>><%= format %></option>
               <% }) %>
             </select>
+            <div class="form-text">Format akhir audio narration akan dirender sesuai pilihan ini.</div>
           </div>
           <div class="col-md-4">
             <label class="form-label">Sample rate</label>
@@ -190,8 +199,8 @@
           </article>
           <article class="job-summary-card">
             <span>Workflow output</span>
-            <strong>Speech segments JSON</strong>
-            <p class="mb-0 mt-1 text-secondary small">Hasil awal masuk ke detail job sebagai segment plan.</p>
+            <strong>Segments JSON + WAV audio</strong>
+            <p class="mb-0 mt-1 text-secondary small">Detail job akan menampilkan segment plan dan player audio hasil render.</p>
           </article>
         </div>
         <button class="btn btn-primary mt-3" type="submit">Create TTS job</button>

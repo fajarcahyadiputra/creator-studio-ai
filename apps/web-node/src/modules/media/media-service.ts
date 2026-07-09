@@ -1,7 +1,7 @@
 import type { Prisma } from "../../generated/prisma/client.js";
 import { MediaAssetStatus, MediaAssetType } from "../../generated/prisma/enums.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
-import { createInternalSignedObjectReadUrl } from "../../infrastructure/storage/s3.js";
+import { createPublicSignedObjectReadUrl } from "../../infrastructure/storage/s3.js";
 import { NotFoundError } from "../../shared/errors/app-error.js";
 
 interface MediaServiceDeps {
@@ -112,7 +112,7 @@ export class MediaService {
 
   public async createDownloadUrl(userId: string, mediaAssetId: string) {
     const asset = await this.requireAsset(userId, mediaAssetId);
-    return createInternalSignedObjectReadUrl(asset.objectKey);
+    return createPublicSignedObjectReadUrl(asset.objectKey);
   }
 
   private async requireAsset(userId: string, mediaAssetId: string) {

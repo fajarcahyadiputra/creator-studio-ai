@@ -37,7 +37,22 @@ export const presetSchema = z.object({
   description: optionalText(500),
   type: z.enum(["CLIPPING", "SUBTITLE", "TTS", "BRAND", "PUBLISHING"]),
   is_default: booleanField(false),
+  analysis_brief: optionalText(20000),
   config_json: jsonField()
+}).transform((value) => {
+  const configJson = { ...value.config_json };
+  if (value.type === "CLIPPING") {
+    if (value.analysis_brief) configJson.analysis_brief = value.analysis_brief;
+    else delete configJson.analysis_brief;
+  }
+
+  return {
+    name: value.name,
+    description: value.description,
+    type: value.type,
+    is_default: value.is_default,
+    config_json: configJson
+  };
 });
 
 export const brandKitSchema = z.object({
@@ -48,4 +63,3 @@ export const brandKitSchema = z.object({
   safe_margin_config_json: jsonField(),
   subtitle_preset_json: jsonField()
 });
-

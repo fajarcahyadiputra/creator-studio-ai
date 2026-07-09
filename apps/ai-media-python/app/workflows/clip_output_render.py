@@ -29,32 +29,55 @@ class ClipOutputRenderWorkflow:
         if not isinstance(clip_output_id, str) or not clip_output_id:
             raise ValueError("clip_output_id is required")
 
-        context = await workflow.execute_activity(
-            prepare_clip_output_render,
-            {"clip_output_id": clip_output_id},
-            start_to_close_timeout=timedelta(seconds=30),
-            heartbeat_timeout=timedelta(seconds=10),
-            retry_policy=ACTIVITY_RETRY,
-        )
+        current_stage = "PREPARING_RENDER"
+        try:
+            context = await workflow.execute_activity(
+                prepare_clip_output_render,
+                {"clip_output_id": clip_output_id},
+                start_to_close_timeout=timedelta(seconds=30),
+                heartbeat_timeout=timedelta(seconds=10),
+                retry_policy=ACTIVITY_RETRY,
+            )
 
-        result = await workflow.execute_activity(
-            execute_clip_output_render,
-            context,
-            start_to_close_timeout=timedelta(seconds=30),
-            heartbeat_timeout=timedelta(seconds=10),
-            retry_policy=ACTIVITY_RETRY,
-        )
+            current_stage = "RENDERING_FINAL_CLIPS"
+            result = await workflow.execute_activity(
+                execute_clip_output_render,
+                context,
+                start_to_close_timeout=timedelta(minutes=30),
+                heartbeat_timeout=timedelta(seconds=30),
+                retry_policy=ACTIVITY_RETRY,
+            )
 
-        await workflow.execute_activity(
-            submit_clip_output_result,
-            {"clip_output_id": clip_output_id, "result": result},
-            start_to_close_timeout=timedelta(seconds=30),
-            heartbeat_timeout=timedelta(seconds=10),
-            retry_policy=ACTIVITY_RETRY,
-        )
+            current_stage = "SUBMITTING_RENDER_RESULT"
+            await workflow.execute_activity(
+                submit_clip_output_result,
+                {"clip_output_id": clip_output_id, "result": result},
+                start_to_close_timeout=timedelta(seconds=30),
+                heartbeat_timeout=timedelta(seconds=10),
+                retry_policy=ACTIVITY_RETRY,
+            )
 
-        return {
-            "clip_output_id": clip_output_id,
-            "quality_status": result.get("quality_status"),
-            "preview_object_key": result.get("preview_object_key"),
-        }
+            return {
+                "clip_output_id": clip_output_id,
+                "quality_status": result.get("quality_status"),
+                "preview_object_key": result.get("preview_object_key"),
+            }
+        except Exception as error:
+            failure_result = {
+                "quality_status": "FAILED",
+                "quality_report": {
+                    "status": "failed",
+                    "workflow": "ClipOutputRenderWorkflow",
+                    "stage": current_stage,
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                },
+            }
+            await workflow.execute_activity(
+                submit_clip_output_result,
+                {"clip_output_id": clip_output_id, "result": failure_result},
+                start_to_close_timeout=timedelta(seconds=30),
+                heartbeat_timeout=timedelta(seconds=10),
+                retry_policy=ACTIVITY_RETRY,
+            )
+            raise

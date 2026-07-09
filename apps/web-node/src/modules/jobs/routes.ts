@@ -288,6 +288,37 @@ function serializeJobOutputsExportIndex(exportIndex: Awaited<ReturnType<JobServi
   };
 }
 
+function serializeTtsSegmentationExport(exportData: Awaited<ReturnType<JobService["createTtsSegmentationExport"]>>) {
+  return {
+    job_id: exportData.jobId,
+    status: exportData.status,
+    language: exportData.language,
+    local_model_key: exportData.localModelKey,
+    voice_identifier: exportData.voiceIdentifier,
+    speaking_style: exportData.speakingStyle,
+    emotion: exportData.emotion,
+    segment_count: exportData.segmentCount,
+    total_pause_ms: exportData.totalPauseMs,
+    metadata: exportData.metadata,
+    document: exportData.document
+  };
+}
+
+function serializeTtsOutputExportIndex(exportIndex: Awaited<ReturnType<JobService["createTtsOutputExportIndex"]>>) {
+  return {
+    job_id: exportIndex.jobId,
+    status: exportIndex.status,
+    language: exportIndex.language,
+    local_model_key: exportIndex.localModelKey,
+    voice_identifier: exportIndex.voiceIdentifier,
+    artifacts: exportIndex.artifacts.map((artifact) => ({
+      artifact: artifact.artifact,
+      label: artifact.label,
+      url: artifact.url
+    }))
+  };
+}
+
 function serializeEvent(
   event: {
   id: string;
@@ -428,6 +459,53 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
   );
 
   router.get(
+    "/app/jobs/:jobId/tts-segmentation-export",
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      const exportData = await jobService.createTtsSegmentationExport(
+        request.identity!.effectiveUserId,
+        routeParam(request.params.jobId, "jobId")
+      );
+      response.setHeader("Content-Type", "application/json");
+      response.setHeader(
+        "Content-Disposition",
+        `attachment; filename="job-${exportData.jobId.slice(0, 8)}-tts-segmentation.json"`
+      );
+      response.json({ data: serializeTtsSegmentationExport(exportData) });
+    })
+  );
+
+  router.get(
+    "/app/jobs/:jobId/tts-audio-download",
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      const url = await jobService.createTtsAudioArtifactUrl(
+        request.identity!.effectiveUserId,
+        routeParam(request.params.jobId, "jobId"),
+        "audio"
+      );
+      response.redirect(url);
+    })
+  );
+
+  router.get(
+    "/app/jobs/:jobId/tts-output-export-index",
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      const exportIndex = await jobService.createTtsOutputExportIndex(
+        request.identity!.effectiveUserId,
+        routeParam(request.params.jobId, "jobId")
+      );
+      response.setHeader("Content-Type", "application/json");
+      response.setHeader(
+        "Content-Disposition",
+        `attachment; filename="job-${exportIndex.jobId.slice(0, 8)}-tts-output-export-index.json"`
+      );
+      response.json({ data: serializeTtsOutputExportIndex(exportIndex) });
+    })
+  );
+
+  router.get(
     "/app/jobs/:jobId/outputs/:clipOutputId/download",
     requireAuth,
     asyncHandler(async (request, response) => {
@@ -495,6 +573,30 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
         routeParam(request.params.jobId, "jobId")
       );
       response.json({ data: serializeJobOutputsExportIndex(exportIndex) });
+    })
+  );
+
+  router.get(
+    "/api/v1/jobs/:jobId/tts-segmentation-export",
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      const exportData = await jobService.createTtsSegmentationExport(
+        request.identity!.effectiveUserId,
+        routeParam(request.params.jobId, "jobId")
+      );
+      response.json({ data: serializeTtsSegmentationExport(exportData) });
+    })
+  );
+
+  router.get(
+    "/api/v1/jobs/:jobId/tts-output-export-index",
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      const exportIndex = await jobService.createTtsOutputExportIndex(
+        request.identity!.effectiveUserId,
+        routeParam(request.params.jobId, "jobId")
+      );
+      response.json({ data: serializeTtsOutputExportIndex(exportIndex) });
     })
   );
 

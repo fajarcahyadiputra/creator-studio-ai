@@ -21,5 +21,17 @@ async def validate_foundation_request(payload: dict[str, Any]) -> dict[str, Any]
 async def emit_progress(payload: dict[str, Any]) -> None:
     job_id = str(payload["job_id"])
     event = ProgressEvent.model_validate(payload["event"])
-    await JobCallbackClient().send(job_id, event)
-    logger.info("progress emitted", extra={"job_id": job_id, "stage": event.stage})
+    try:
+        await JobCallbackClient().send(job_id, event)
+        logger.info("progress emitted", extra={"job_id": job_id, "stage": event.stage})
+    except Exception:
+        logger.warning(
+            "progress callback failed but workflow will continue",
+            extra={
+                "job_id": job_id,
+                "stage": event.stage,
+                "event_type": event.event_type,
+                "status": event.status,
+            },
+            exc_info=True,
+        )

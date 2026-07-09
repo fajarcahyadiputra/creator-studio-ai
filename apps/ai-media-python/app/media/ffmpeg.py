@@ -63,6 +63,45 @@ def build_audio_extraction(source: str | Path, destination: str | Path, sample_r
     )
 
 
+def build_audio_transcode(
+    *,
+    source: str | Path,
+    destination: str | Path,
+    format: str,
+    sample_rate: int | None = None,
+    channels: int | None = None,
+) -> FfmpegCommand:
+    normalized_format = format.strip().lower()
+    if normalized_format not in {"wav", "mp3", "ogg"}:
+        raise ValueError("unsupported audio format")
+    if sample_rate is not None and sample_rate not in {8_000, 16_000, 22_050, 24_000, 44_100, 48_000}:
+        raise ValueError("unsupported sample rate")
+    if channels is not None and channels not in {1, 2}:
+        raise ValueError("unsupported channel count")
+
+    arguments: list[str] = [
+        "-hide_banner",
+        "-nostdin",
+        "-y",
+        "-i",
+        str(source),
+    ]
+    if channels is not None:
+        arguments.extend(["-ac", str(channels)])
+    if sample_rate is not None:
+        arguments.extend(["-ar", str(sample_rate)])
+
+    if normalized_format == "wav":
+        arguments.extend(["-c:a", "pcm_s16le"])
+    elif normalized_format == "mp3":
+        arguments.extend(["-c:a", "libmp3lame", "-b:a", "192k"])
+    else:
+        arguments.extend(["-c:a", "libvorbis", "-q:a", "5"])
+
+    arguments.append(str(destination))
+    return FfmpegCommand(executable="ffmpeg", arguments=tuple(arguments))
+
+
 def build_clip_render_command(
     *,
     source: str | Path,

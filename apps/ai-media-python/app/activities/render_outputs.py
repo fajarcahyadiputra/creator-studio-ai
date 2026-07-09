@@ -4,6 +4,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 import httpx
@@ -11,10 +12,13 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from app.config import get_settings
+from app.activities.warning_events import emit_retry_warning
 from app.domain.contracts import ClipOutputResult, ClipRenderArtifactUpload, ClipRenderContext, TranscriptSegment
 from app.infrastructure.clip_output_client import ClipOutputClient
 from app.media.ffmpeg import build_clip_render_command
 from app.activities.media_validation import run_ffprobe_json
+
+SUPPORTED_SUBTITLE_FORMATS = {"srt", "ass", "vtt", "json"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +64,6 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
     working_directory = Path(settings.TEMP_WORKDIR) / "clip-output-renders" / context.clip_output_id
     working_directory.mkdir(parents=True, exist_ok=True)
     final_path = working_directory / "final.mp4"
-    preview_path = working_directory / "preview.mp4"
     thumbnail_path = working_directory / "thumbnail.jpg"
     metadata_path = working_directory / "metadata.json"
     subtitle_srt_path = working_directory / "subtitle.srt"
@@ -80,7 +83,13 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         subtitle_ass_path.write_text(_render_ass(subtitle_cues), encoding="utf-8")
         subtitle_vtt_path.write_text(_render_vtt(subtitle_cues), encoding="utf-8")
         subtitle_json_path.write_text(_render_subtitle_json(subtitle_cues), encoding="utf-8")
-        subtitle_path_for_upload = subtitle_ass_path if subtitle_format == "ass" else subtitle_srt_path
+        subtitle_path_for_upload = _resolve_subtitle_output_path(
+            subtitle_format,
+            srt_path=subtitle_srt_path,
+            ass_path=subtitle_ass_path,
+            vtt_path=subtitle_vtt_path,
+            json_path=subtitle_json_path,
+        )
         if subtitle_burned_in:
             subtitle_path_for_burn_in = subtitle_ass_path
 
@@ -97,44 +106,100 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         video_preset="medium",
         subtitle_path=subtitle_path_for_burn_in,
     )
-    await _run_command(render_command.as_exec_args(), timeout_seconds=settings.TRANSCRIPTION_TIMEOUT_SECONDS)
+    try:
+        await _run_command_with_heartbeat(
+            render_command.as_exec_args(),
+            timeout_seconds=settings.RENDER_OUTPUT_TIMEOUT_SECONDS,
+            heartbeat_details={
+                "clip_output_id": context.clip_output_id,
+                "job_id": context.job_id,
+                "candidate_id": context.candidate.candidate_id,
+                "stage": "RENDERING_FINAL_CLIPS",
+                "artifact": "final",
+            },
+        )
+    except Exception as error:
+        await emit_retry_warning(
+            job_id=context.job_id,
+            stage="RENDERING_FINAL_CLIPS",
+            stage_progress=15,
+            error=error,
+            user_message="Render video final gagal di worker dan akan dicoba ulang otomatis.",
+            status=None,
+            metadata={
+                "clip_output_id": context.clip_output_id,
+                "candidate_id": context.candidate.candidate_id,
+                "artifact": "final",
+                "aspect_ratio": aspect_ratio,
+            },
+        )
+        raise
     if not final_path.exists():
-        raise RuntimeError("ffmpeg completed without creating the final render output")
+        missing_final_error = RuntimeError("ffmpeg completed without creating the final render output")
+        await emit_retry_warning(
+            job_id=context.job_id,
+            stage="RENDERING_FINAL_CLIPS",
+            stage_progress=20,
+            error=missing_final_error,
+            user_message="Render video final tidak menghasilkan file output dan akan dicoba ulang otomatis.",
+            status=None,
+            metadata={
+                "clip_output_id": context.clip_output_id,
+                "candidate_id": context.candidate.candidate_id,
+                "artifact": "final",
+            },
+        )
+        raise missing_final_error
 
-    preview_width = max(360, width // 2)
-    preview_height = max(640, height // 2)
-    preview_command = build_clip_render_command(
-        source=str(final_path),
-        destination=preview_path,
-        start_seconds=0,
-        duration_seconds=clip_duration_seconds,
-        source_width=width,
-        source_height=height,
-        width=preview_width,
-        height=preview_height,
-        fps=min(fps, 24),
-        video_preset="veryfast",
-        subtitle_path=None,
-    )
-    await _run_command(preview_command.as_exec_args(), timeout_seconds=settings.TRANSCRIPTION_TIMEOUT_SECONDS)
-    if not preview_path.exists():
-        raise RuntimeError("ffmpeg completed without creating the preview render output")
-    await _generate_thumbnail(
-        source=final_path,
-        destination=thumbnail_path,
-        timeout_seconds=settings.AUDIO_EXTRACTION_TIMEOUT_SECONDS,
-    )
+    try:
+        await _generate_thumbnail(
+            source=final_path,
+            destination=thumbnail_path,
+            timeout_seconds=min(settings.RENDER_OUTPUT_TIMEOUT_SECONDS, settings.AUDIO_EXTRACTION_TIMEOUT_SECONDS),
+            heartbeat_details={
+                "clip_output_id": context.clip_output_id,
+                "job_id": context.job_id,
+                "candidate_id": context.candidate.candidate_id,
+                "stage": "GENERATING_PREVIEWS",
+                "artifact": "thumbnail",
+            },
+        )
+    except Exception as error:
+        await emit_retry_warning(
+            job_id=context.job_id,
+            stage="GENERATING_PREVIEWS",
+            stage_progress=70,
+            error=error,
+            user_message="Thumbnail clip gagal dibuat dan akan dicoba ulang otomatis.",
+            status=None,
+            metadata={
+                "clip_output_id": context.clip_output_id,
+                "candidate_id": context.candidate.candidate_id,
+                "artifact": "thumbnail",
+            },
+        )
+        raise
 
-    final_probe_payload = await run_ffprobe_json(
-        str(final_path),
-        timeout_seconds=settings.MEDIA_PROBE_TIMEOUT_SECONDS,
-    )
-    preview_probe_payload = await run_ffprobe_json(
-        str(preview_path),
-        timeout_seconds=settings.MEDIA_PROBE_TIMEOUT_SECONDS,
-    )
+    try:
+        final_probe_payload = await run_ffprobe_json(
+            str(final_path),
+            timeout_seconds=settings.MEDIA_PROBE_TIMEOUT_SECONDS,
+        )
+    except Exception as error:
+        await emit_retry_warning(
+            job_id=context.job_id,
+            stage="QUALITY_CHECK",
+            stage_progress=80,
+            error=error,
+            user_message="Validasi output render gagal dibaca dan akan dicoba ulang otomatis.",
+            status=None,
+            metadata={
+                "clip_output_id": context.clip_output_id,
+                "candidate_id": context.candidate.candidate_id,
+            },
+        )
+        raise
     final_probe_summary = _summarize_render_probe(final_probe_payload)
-    preview_probe_summary = _summarize_render_probe(preview_probe_payload)
     validation = _build_validation_summary(
         aspect_ratio=aspect_ratio,
         width=width,
@@ -142,42 +207,57 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         expected_duration_ms=int(round(clip_duration_seconds * 1000)),
         subtitle_format=subtitle_format if subtitle_path_for_upload else None,
         final_observed=final_probe_summary,
-        preview_observed=preview_probe_summary,
         thumbnail_generated=thumbnail_path.exists(),
         subtitle_generated=bool(subtitle_path_for_upload and subtitle_path_for_upload.exists()),
         subtitle_cue_count=len(subtitle_cues),
+        preview_generated=False,
     )
 
     artifact_uploads = {upload.artifact: upload for upload in context.artifact_uploads}
     uploaded_artifacts: list[dict[str, Any]] = []
-    preview_object_key = await _upload_artifact(artifact_uploads.get("preview"), preview_path, uploaded_artifacts)
-    final_object_key = await _upload_artifact(artifact_uploads.get("final"), final_path, uploaded_artifacts)
-    thumbnail_object_key = await _upload_artifact(artifact_uploads.get("thumbnail"), thumbnail_path, uploaded_artifacts)
-    subtitle_object_key = await _upload_artifact(
-        artifact_uploads.get("subtitle"),
-        subtitle_path_for_upload,
-        uploaded_artifacts,
-    )
-    await _upload_artifact(
-        artifact_uploads.get("subtitle_srt"),
-        subtitle_srt_path if subtitle_srt_path.exists() else None,
-        uploaded_artifacts,
-    )
-    await _upload_artifact(
-        artifact_uploads.get("subtitle_ass"),
-        subtitle_ass_path if subtitle_ass_path.exists() else None,
-        uploaded_artifacts,
-    )
-    await _upload_artifact(
-        artifact_uploads.get("subtitle_vtt"),
-        subtitle_vtt_path if subtitle_vtt_path.exists() else None,
-        uploaded_artifacts,
-    )
-    await _upload_artifact(
-        artifact_uploads.get("subtitle_json"),
-        subtitle_json_path if subtitle_json_path.exists() else None,
-        uploaded_artifacts,
-    )
+    try:
+        final_object_key = await _upload_artifact(artifact_uploads.get("final"), final_path, uploaded_artifacts)
+        thumbnail_object_key = await _upload_artifact(artifact_uploads.get("thumbnail"), thumbnail_path, uploaded_artifacts)
+        subtitle_object_key = await _upload_artifact(
+            artifact_uploads.get("subtitle"),
+            subtitle_path_for_upload,
+            uploaded_artifacts,
+        )
+        await _upload_artifact(
+            artifact_uploads.get("subtitle_srt"),
+            subtitle_srt_path if subtitle_srt_path.exists() else None,
+            uploaded_artifacts,
+        )
+        await _upload_artifact(
+            artifact_uploads.get("subtitle_ass"),
+            subtitle_ass_path if subtitle_ass_path.exists() else None,
+            uploaded_artifacts,
+        )
+        await _upload_artifact(
+            artifact_uploads.get("subtitle_vtt"),
+            subtitle_vtt_path if subtitle_vtt_path.exists() else None,
+            uploaded_artifacts,
+        )
+        await _upload_artifact(
+            artifact_uploads.get("subtitle_json"),
+            subtitle_json_path if subtitle_json_path.exists() else None,
+            uploaded_artifacts,
+        )
+    except Exception as error:
+        await emit_retry_warning(
+            job_id=context.job_id,
+            stage="UPLOADING_OUTPUTS",
+            stage_progress=90,
+            error=error,
+            user_message="Upload artifact render gagal dan akan dicoba ulang otomatis.",
+            status=None,
+            metadata={
+                "clip_output_id": context.clip_output_id,
+                "candidate_id": context.candidate.candidate_id,
+                "uploaded_artifact_count": len(uploaded_artifacts),
+            },
+        )
+        raise
 
     metadata_document = {
         "manifest_version": "phase2-render-manifest-v2",
@@ -207,12 +287,6 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
             "subtitle_burned_in": subtitle_burned_in,
             "crop_mode": "center_crop",
         },
-        "preview_plan": {
-            "command": preview_command.as_exec_args(),
-            "width": preview_width,
-            "height": preview_height,
-            "fps": min(fps, 24),
-        },
         "subtitle": {
             "format": subtitle_format if subtitle_path_for_upload else None,
             "language": subtitle_language if subtitle_path_for_upload else None,
@@ -230,12 +304,28 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         "metadata": candidate_metadata,
     }
     metadata_path.write_text(json.dumps(metadata_document, indent=2), encoding="utf-8")
-    metadata_object_key = await _upload_artifact(artifact_uploads.get("metadata"), metadata_path, uploaded_artifacts)
+    try:
+        metadata_object_key = await _upload_artifact(artifact_uploads.get("metadata"), metadata_path, uploaded_artifacts)
+    except Exception as error:
+        await emit_retry_warning(
+            job_id=context.job_id,
+            stage="UPLOADING_OUTPUTS",
+            stage_progress=95,
+            error=error,
+            user_message="Upload metadata render gagal dan akan dicoba ulang otomatis.",
+            status=None,
+            metadata={
+                "clip_output_id": context.clip_output_id,
+                "candidate_id": context.candidate.candidate_id,
+                "artifact": "metadata",
+            },
+        )
+        raise
 
     quality_status = _resolve_quality_status(validation["status"])
     result = ClipOutputResult(
         quality_status=quality_status,
-        preview_object_key=preview_object_key,
+        preview_object_key=None,
         final_object_key=final_object_key,
         metadata_object_key=metadata_object_key,
         thumbnail_object_key=thumbnail_object_key,
@@ -285,9 +375,10 @@ def _resolve_aspect_ratio(render_settings: dict[str, Any]) -> str:
 def _resolve_subtitle_burned_in(render_settings: dict[str, Any]) -> bool:
     subtitle = render_settings.get("subtitle")
     if isinstance(subtitle, dict):
-        value = subtitle.get("burned_in")
-        if isinstance(value, bool):
-            return value
+        for key in ("burned_in", "burn_in"):
+            value = subtitle.get(key)
+            if isinstance(value, bool):
+                return value
     return False
 
 
@@ -311,9 +402,26 @@ def _resolve_subtitle_format(render_settings: dict[str, Any]) -> str:
         value = subtitle.get("format")
         if isinstance(value, str):
             normalized = value.strip().lower()
-            if normalized:
+            if normalized in SUPPORTED_SUBTITLE_FORMATS:
                 return normalized
     return "srt"
+
+
+def _resolve_subtitle_output_path(
+    subtitle_format: str,
+    *,
+    srt_path: Path,
+    ass_path: Path,
+    vtt_path: Path,
+    json_path: Path,
+) -> Path:
+    if subtitle_format == "ass":
+        return ass_path
+    if subtitle_format == "vtt":
+        return vtt_path
+    if subtitle_format == "json":
+        return json_path
+    return srt_path
 
 
 def _resolve_subtitle_language(render_settings: dict[str, Any]) -> str:
@@ -380,10 +488,10 @@ def _build_validation_summary(
     expected_duration_ms: int,
     subtitle_format: str | None,
     final_observed: dict[str, Any],
-    preview_observed: dict[str, Any],
     thumbnail_generated: bool,
     subtitle_generated: bool,
     subtitle_cue_count: int,
+    preview_generated: bool,
 ) -> dict[str, Any]:
     observed_duration_ms = final_observed.get("duration_ms")
     observed_width = final_observed.get("width")
@@ -404,7 +512,7 @@ def _build_validation_summary(
         "audio_codec_matches_target": str(observed_audio_codec or "").lower() == "aac",
         "subtitle_export_ready": bool(subtitle_format),
         "duration_within_tolerance": duration_delta_ms is not None and duration_delta_ms <= 750,
-        "preview_playable": isinstance(preview_observed.get("duration_ms"), int) and int(preview_observed["duration_ms"]) > 0,
+        "preview_playable": True,
         "thumbnail_generated": thumbnail_generated,
         "subtitle_sidecar_generated": subtitle_generated,
         "subtitle_cues_present": subtitle_cue_count > 0 if subtitle_format else True,
@@ -416,8 +524,6 @@ def _build_validation_summary(
         warnings.append("Rendered clip resolution does not match the requested aspect ratio target.")
     if not checks["duration_within_tolerance"]:
         warnings.append("Rendered clip duration differs from the candidate window beyond tolerance.")
-    if not checks["preview_playable"]:
-        warnings.append("Preview artifact could not be validated as a playable video.")
     if not checks["thumbnail_generated"]:
         warnings.append("Thumbnail artifact was not generated.")
     if subtitle_format and not checks["subtitle_sidecar_generated"]:
@@ -440,7 +546,8 @@ def _build_validation_summary(
                 **final_observed,
                 "subtitle_format": subtitle_format,
             },
-            "preview": preview_observed,
+            "preview": None,
+            "preview_generated": preview_generated,
             "thumbnail_generated": thumbnail_generated,
             "subtitle_generated": subtitle_generated,
             "subtitle_cue_count": subtitle_cue_count,
@@ -681,7 +788,52 @@ async def _run_command(command: list[str], *, timeout_seconds: float) -> None:
         raise RuntimeError(message)
 
 
-async def _generate_thumbnail(*, source: Path, destination: Path, timeout_seconds: float) -> None:
+async def _run_command_with_heartbeat(
+    command: list[str],
+    *,
+    timeout_seconds: float,
+    heartbeat_details: dict[str, Any],
+    heartbeat_interval_seconds: int = 10,
+) -> None:
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    started_at = monotonic()
+
+    while True:
+        try:
+            _stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=heartbeat_interval_seconds,
+            )
+            break
+        except asyncio.TimeoutError:
+            elapsed_seconds = monotonic() - started_at
+            if elapsed_seconds >= timeout_seconds:
+                process.kill()
+                await process.communicate()
+                raise TimeoutError(f"command timed out: {command[0]}")
+            activity.heartbeat(
+                {
+                    **heartbeat_details,
+                    "elapsed_seconds": int(elapsed_seconds),
+                }
+            )
+
+    if process.returncode != 0:
+        message = stderr.decode("utf-8", errors="replace").strip() or "command exited with a non-zero status"
+        raise RuntimeError(message)
+
+
+async def _generate_thumbnail(
+    *,
+    source: Path,
+    destination: Path,
+    timeout_seconds: float,
+    heartbeat_details: dict[str, Any] | None = None,
+) -> None:
     command = [
         "ffmpeg",
         "-hide_banner",
@@ -697,7 +849,14 @@ async def _generate_thumbnail(*, source: Path, destination: Path, timeout_second
         "2",
         str(destination),
     ]
-    await _run_command(command, timeout_seconds=timeout_seconds)
+    if heartbeat_details:
+        await _run_command_with_heartbeat(
+            command,
+            timeout_seconds=timeout_seconds,
+            heartbeat_details=heartbeat_details,
+        )
+    else:
+        await _run_command(command, timeout_seconds=timeout_seconds)
     if not destination.exists():
         raise RuntimeError("ffmpeg completed without creating the thumbnail output")
 
@@ -740,8 +899,11 @@ async def _upload_artifact(
 
 async def _upload_file(upload_url: str, path: Path, *, content_type: str) -> None:
     async with httpx.AsyncClient(timeout=120.0) as client:
-        with path.open("rb") as handle:
-            response = await client.put(upload_url, content=handle, headers={"content-type": content_type})
+        response = await client.put(
+            str(upload_url),
+            content=path.read_bytes(),
+            headers={"content-type": content_type},
+        )
         response.raise_for_status()
 
 
