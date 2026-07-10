@@ -1301,15 +1301,38 @@ dashboardRouter.get(
   requireAuth,
   requirePermission("admin.dashboard.view"),
   asyncHandler(async (request, response) => {
-    const [users, jobGroups, recentUsers] = await Promise.all([
+    const [users, jobGroups, recentUsers, userStatusGroups, providerCount, enabledProviderCount, featureFlagCount, enabledFeatureFlagCount, systemSettingCount, secretSystemSettingCount] = await Promise.all([
       prisma.user.count({ where: { deletedAt: null } }),
       prisma.job.groupBy({ by: ["status"], _count: true }),
-      prisma.user.findMany({ where: { deletedAt: null }, orderBy: { createdAt: "desc" }, take: 10 })
+      prisma.user.findMany({ where: { deletedAt: null }, orderBy: { createdAt: "desc" }, take: 10 }),
+      prisma.user.groupBy({ by: ["status"], _count: true }),
+      prisma.aiProvider.count(),
+      prisma.aiProvider.count({ where: { enabled: true } }),
+      prisma.featureFlag.count(),
+      prisma.featureFlag.count({ where: { enabled: true } }),
+      prisma.systemSetting.count(),
+      prisma.systemSetting.count({ where: { isSecret: true } })
     ]);
+    const jobCounts = Object.fromEntries(jobGroups.map((item) => [item.status, item._count]));
+    const userStatusCounts = Object.fromEntries(userStatusGroups.map((item) => [item.status, item._count]));
     response.render("admin/dashboard", {
       title: "Admin Dashboard",
       users,
-      jobCounts: Object.fromEntries(jobGroups.map((item) => [item.status, item._count])),
+      jobCounts,
+      userStatusCounts,
+      providerSummary: {
+        total: providerCount,
+        enabled: enabledProviderCount,
+        disabled: Math.max(0, providerCount - enabledProviderCount)
+      },
+      featureSummary: {
+        total: featureFlagCount,
+        enabled: enabledFeatureFlagCount
+      },
+      systemSummary: {
+        total: systemSettingCount,
+        secret: secretSystemSettingCount
+      },
       recentUsers,
       csrfToken: request.session.csrfToken
     });

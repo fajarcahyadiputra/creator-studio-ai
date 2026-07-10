@@ -2,6 +2,41 @@
 <div class="app-shell"><%- include('../partials/admin-sidebar') %><main class="content-area">
   <header class="page-header"><div><span class="eyebrow">Platform operations</span><h1>Administration</h1><p>System-wide view without losing the actor identity during view-as-user.</p></div><div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="/admin/users">Manage users</a><a class="btn btn-outline-secondary" href="/admin/jobs">Manage jobs</a><a class="btn btn-outline-secondary" href="/admin/providers">Manage providers</a><a class="btn btn-outline-secondary" href="/admin/system">System controls</a><a class="btn btn-outline-secondary" href="/admin/audit-logs">Audit logs</a><a class="btn btn-outline-secondary" href="/admin/workers">Worker health</a><a class="btn btn-outline-primary" href="/app/dashboard">Open User Workspace</a></div></header>
   <section class="stat-grid"><article class="stat-card"><span>Total users</span><strong><%= users %></strong></article><article class="stat-card"><span>Running jobs</span><strong><%= jobCounts.RUNNING ?? 0 %></strong></article><article class="stat-card"><span>Queued jobs</span><strong><%= jobCounts.QUEUED ?? 0 %></strong></article><article class="stat-card"><span>Failed jobs</span><strong><%= jobCounts.FAILED ?? 0 %></strong></article></section>
+  <section class="panel mt-4">
+    <div class="panel-heading"><div><h2>Management Overview</h2><p>Quick operational picture across users, providers, jobs, and platform settings.</p></div></div>
+    <div class="p-4">
+      <div class="job-summary-grid">
+        <article class="job-summary-card"><span>Active users</span><strong><%= userStatusCounts.ACTIVE ?? 0 %></strong><p class="mb-0 mt-1 text-secondary small">Pending <%= userStatusCounts.PENDING_VERIFICATION ?? 0 %> | Suspended <%= userStatusCounts.SUSPENDED ?? 0 %> | Disabled <%= userStatusCounts.DISABLED ?? 0 %></p></article>
+        <article class="job-summary-card"><span>Provider health</span><strong><%= providerSummary.enabled %> enabled</strong><p class="mb-0 mt-1 text-secondary small">Total <%= providerSummary.total %> | Disabled <%= providerSummary.disabled %></p></article>
+        <article class="job-summary-card"><span>Feature flags</span><strong><%= featureSummary.enabled %> enabled</strong><p class="mb-0 mt-1 text-secondary small">Total <%= featureSummary.total %> operator flags</p></article>
+        <article class="job-summary-card"><span>System settings</span><strong><%= systemSummary.total %></strong><p class="mb-0 mt-1 text-secondary small">Secret settings <%= systemSummary.secret %></p></article>
+      </div>
+    </div>
+  </section>
+  <section class="panel mt-4">
+    <div class="panel-heading"><div><h2>Management Hub</h2><p>Shortcut area for the admin tasks that usually matter most during daily operations.</p></div></div>
+    <div class="p-4">
+      <div class="clip-output-review-grid">
+        <article class="clip-output-review-card"><span>User management</span><strong>Accounts, roles, plans</strong><p>Create users, update status, revoke sessions, and audit who was impersonated.</p><a class="btn btn-sm btn-outline-primary mt-2" href="/admin/users">Open user management</a></article>
+        <article class="clip-output-review-card"><span>Provider management</span><strong>Vendors, models, credentials</strong><p>Control routing readiness, platform credentials, timeout policy, and capability exposure.</p><a class="btn btn-sm btn-outline-primary mt-2" href="/admin/providers">Open provider management</a></article>
+        <article class="clip-output-review-card"><span>Job operations</span><strong>Retries, failures, cross-tenant review</strong><p>Investigate stuck pipelines, failed jobs, and operator intervention history.</p><a class="btn btn-sm btn-outline-primary mt-2" href="/admin/jobs">Open job operations</a></article>
+        <article class="clip-output-review-card"><span>Platform settings</span><strong>Flags, secret configs, rollout policy</strong><p>Manage maintenance toggles, render defaults, webhook config, and platform-wide rules.</p><a class="btn btn-sm btn-outline-primary mt-2" href="/admin/system">Open platform settings</a></article>
+      </div>
+    </div>
+  </section>
+  <section class="panel mt-4">
+    <div class="panel-heading"><div><h2>Operational Signals</h2><p>Fast-reading indicators that help admins decide where to go next.</p></div></div>
+    <div class="p-4">
+      <div class="candidate-tags">
+        <% if ((jobCounts.FAILED ?? 0) > 0) { %><span>Failed jobs need review</span><% } %>
+        <% if ((jobCounts.NEEDS_REVIEW ?? 0) > 0) { %><span>Needs-review jobs pending</span><% } %>
+        <% if (providerSummary.disabled > 0) { %><span>Disabled providers exist</span><% } %>
+        <% if ((userStatusCounts.PENDING_VERIFICATION ?? 0) > 0) { %><span>Pending verification users exist</span><% } %>
+        <% if (systemSummary.secret > 0) { %><span>Secret settings stored</span><% } %>
+        <% if (!(jobCounts.FAILED ?? 0) && !(jobCounts.NEEDS_REVIEW ?? 0) && !providerSummary.disabled) { %><span>Core management signals look healthy</span><% } %>
+      </div>
+    </div>
+  </section>
   <section class="panel mt-4"><div class="panel-heading"><div><h2>Recent users</h2><p>View-as-user requires a reason and rotates the session.</p></div></div>
     <div class="table-responsive"><table class="table align-middle"><thead><tr><th>User</th><th>Status</th><th>Joined</th><th>Audited action</th></tr></thead><tbody>
       <% recentUsers.forEach(user => { %><tr><td><strong><%= user.displayName %></strong><br><small><%= user.email %></small></td><td><%= user.status %></td><td><%= user.createdAt.toLocaleString() %></td><td><form class="d-flex gap-2" data-api-form action="/api/v1/admin/impersonation/start" method="post" data-success-redirect><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="target_user_id" value="<%= user.id %>"><input class="form-control form-control-sm" name="reason" minlength="10" placeholder="Reason for access" required><button class="btn btn-sm btn-outline-primary">View</button></form></td></tr><% }) %>

@@ -100,6 +100,54 @@ for (const picker of document.querySelectorAll("[data-append-to-field]")) {
   });
 }
 
+for (const picker of document.querySelectorAll("[data-json-template-picker]")) {
+  picker.addEventListener("change", () => {
+    if (!(picker instanceof HTMLSelectElement)) return;
+
+    const sourceId = picker.getAttribute("data-json-template-picker");
+    if (!sourceId) return;
+
+    const sourceNode = document.getElementById(sourceId);
+    if (!sourceNode?.textContent) return;
+
+    let templates = [];
+    try {
+      const parsed = JSON.parse(sourceNode.textContent);
+      templates = Array.isArray(parsed) ? parsed : [];
+    } catch (_error) {
+      return;
+    }
+
+    const selectedIndex = Number.parseInt(String(picker.value || ""), 10);
+    if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= templates.length) {
+      return;
+    }
+
+    const template = templates[selectedIndex];
+    if (!template || typeof template !== "object") return;
+
+    const applyValue = (attributeName, templateKey, transform) => {
+      const fieldName = picker.getAttribute(attributeName);
+      if (!fieldName) return;
+      const field = document.querySelector(`[name="${fieldName}"]`);
+      if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement)) {
+        return;
+      }
+      const rawValue = template[templateKey];
+      if (rawValue === undefined) return;
+      field.value = typeof transform === "function" ? transform(rawValue) : String(rawValue);
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+
+    applyValue("data-template-key-field", "key");
+    applyValue("data-template-description-field", "description");
+    applyValue("data-template-json-field", "json", (value) => JSON.stringify(value ?? {}, null, 2));
+    applyValue("data-template-enabled-field", "enabled", (value) => String(Boolean(value)));
+    applyValue("data-template-secret-field", "isSecret", (value) => String(Boolean(value)));
+  });
+}
+
 for (const form of document.querySelectorAll("[data-api-form]")) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();

@@ -1,3 +1,13 @@
+<%
+  const enabledProviders = providers.filter((provider) => provider.enabled).length;
+  const disabledProviders = providers.filter((provider) => !provider.enabled).length;
+  const degradedProviders = providers.filter((provider) => provider.healthStatus === 'DEGRADED').length;
+  const totalModels = providers.reduce((sum, provider) => sum + provider.models.length, 0);
+  const totalCredentials = providers.reduce((sum, provider) => sum + provider.recentPlatformCredentials.length, 0);
+  const adapterTypeOptions = ['openai', 'anthropic', 'google', 'openrouter', 'internal', 'custom'];
+  const providerHealthOptions = ['HEALTHY', 'UNKNOWN', 'DEGRADED', 'DOWN'];
+  const credentialStatusOptions = ['ACTIVE', 'DEGRADED', 'REVOKED', 'EXPIRED'];
+%>
 <%- include('../partials/head', { title, csrfToken }) %>
 <div class="app-shell"><%- include('../partials/admin-sidebar') %><main class="content-area">
   <header class="page-header">
@@ -8,6 +18,29 @@
     </div>
     <a class="btn btn-outline-primary" href="/admin/dashboard">Back to dashboard</a>
   </header>
+
+  <section class="stat-grid">
+    <article class="stat-card"><span>Total providers</span><strong><%= providers.length %></strong></article>
+    <article class="stat-card"><span>Enabled providers</span><strong><%= enabledProviders %></strong></article>
+    <article class="stat-card"><span>Configured models</span><strong><%= totalModels %></strong></article>
+    <article class="stat-card"><span>Stored credentials</span><strong><%= totalCredentials %></strong></article>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Routing Signals</h2>
+        <p>Provider management should help operators decide readiness, not just edit raw rows.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="clip-output-review-grid">
+        <article class="clip-output-review-card"><span>Availability</span><strong><%= enabledProviders %> enabled providers</strong><p>Disabled <%= disabledProviders %> | Degraded <%= degradedProviders %>. Review disabled or degraded vendors before changing routing policy.</p></article>
+        <article class="clip-output-review-card"><span>Model inventory</span><strong><%= totalModels %> model entries</strong><p>Gunakan model list untuk membedakan production-safe model, fallback model, dan eksperimen biaya rendah.</p></article>
+        <article class="clip-output-review-card"><span>Credential ops</span><strong><%= totalCredentials %> recent credentials</strong><p>Rotasi secret, update scope tool, dan batas pemakaian langsung dari halaman ini tanpa bongkar config file.</p></article>
+      </div>
+    </div>
+  </section>
 
   <section class="panel">
     <div class="panel-heading">
@@ -22,7 +55,14 @@
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="col-md-3"><label class="form-label">Code</label><input class="form-control" name="code" placeholder="OPENAI" required></div>
         <div class="col-md-3"><label class="form-label">Display name</label><input class="form-control" name="display_name" placeholder="OpenAI" required></div>
-        <div class="col-md-3"><label class="form-label">Adapter type</label><input class="form-control" name="adapter_type" placeholder="openai" required></div>
+        <div class="col-md-3">
+          <label class="form-label">Adapter type</label>
+          <select class="form-select" name="adapter_type" required>
+            <% adapterTypeOptions.forEach((adapterType) => { %>
+              <option value="<%= adapterType %>" <%= adapterType === 'openai' ? 'selected' : '' %>><%= adapterType %></option>
+            <% }) %>
+          </select>
+        </div>
         <div class="col-md-3"><label class="form-label">Base URL</label><input class="form-control" name="base_url" placeholder="https://api.example.com"></div>
         <div class="col-md-2">
           <label class="form-label">Enabled</label>
@@ -31,7 +71,14 @@
             <option value="false">false</option>
           </select>
         </div>
-        <div class="col-md-2"><label class="form-label">Health</label><input class="form-control" name="health_status" value="UNKNOWN" required></div>
+        <div class="col-md-2">
+          <label class="form-label">Health</label>
+          <select class="form-select" name="health_status">
+            <% providerHealthOptions.forEach((healthStatus) => { %>
+              <option value="<%= healthStatus %>" <%= healthStatus === 'UNKNOWN' ? 'selected' : '' %>><%= healthStatus %></option>
+            <% }) %>
+          </select>
+        </div>
         <div class="col-md-2"><label class="form-label">Timeout ms</label><input class="form-control" type="number" name="timeout_ms" value="60000" min="1" required></div>
         <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit">Create provider</button></div>
         <div class="col-md-2"><label class="form-label">Capabilities reference</label><input class="form-control" value="<%= capabilities.join(',') %>" readonly></div>
@@ -106,7 +153,14 @@
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <div class="col-md-3"><label class="form-label">Code</label><input class="form-control" name="code" value="<%= provider.code %>" required></div>
               <div class="col-md-3"><label class="form-label">Display name</label><input class="form-control" name="display_name" value="<%= provider.displayName %>" required></div>
-              <div class="col-md-3"><label class="form-label">Adapter type</label><input class="form-control" name="adapter_type" value="<%= provider.adapterType %>" required></div>
+              <div class="col-md-3">
+                <label class="form-label">Adapter type</label>
+                <select class="form-select" name="adapter_type">
+                  <% adapterTypeOptions.forEach((adapterType) => { %>
+                    <option value="<%= adapterType %>" <%= provider.adapterType === adapterType ? 'selected' : '' %>><%= adapterType %></option>
+                  <% }) %>
+                </select>
+              </div>
               <div class="col-md-3"><label class="form-label">Base URL</label><input class="form-control" name="base_url" value="<%= provider.baseUrl ?? '' %>"></div>
               <div class="col-md-2">
                 <label class="form-label">Enabled</label>
@@ -115,7 +169,14 @@
                   <option value="false" <%= !provider.enabled ? 'selected' : '' %>>false</option>
                 </select>
               </div>
-              <div class="col-md-2"><label class="form-label">Health</label><input class="form-control" name="health_status" value="<%= provider.healthStatus %>" required></div>
+              <div class="col-md-2">
+                <label class="form-label">Health</label>
+                <select class="form-select" name="health_status">
+                  <% providerHealthOptions.forEach((healthStatus) => { %>
+                    <option value="<%= healthStatus %>" <%= provider.healthStatus === healthStatus ? 'selected' : '' %>><%= healthStatus %></option>
+                  <% }) %>
+                </select>
+              </div>
               <div class="col-md-2"><label class="form-label">Timeout ms</label><input class="form-control" type="number" name="timeout_ms" value="<%= provider.timeoutMs %>" min="1" required></div>
               <div class="col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary w-100" type="submit">Save provider</button></div>
               <div class="col-md-4"><label class="form-label">Retry policy JSON</label><textarea class="form-control font-monospace" rows="4" name="retry_policy_json"><%= provider.retryPolicyJson %></textarea></div>
@@ -130,15 +191,14 @@
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <input type="hidden" name="provider_id" value="<%= provider.id %>">
                 <div class="col-md-3"><label class="form-label">Label</label><input class="form-control" name="label" placeholder="Primary platform key" required></div>
-                <div class="col-md-2">
-                  <label class="form-label">Status</label>
-                  <select class="form-select" name="status">
-                    <option value="ACTIVE" selected>ACTIVE</option>
-                    <option value="DEGRADED">DEGRADED</option>
-                    <option value="REVOKED">REVOKED</option>
-                    <option value="EXPIRED">EXPIRED</option>
-                  </select>
-                </div>
+                    <div class="col-md-2">
+                      <label class="form-label">Status</label>
+                      <select class="form-select" name="status">
+                        <% credentialStatusOptions.forEach((status) => { %>
+                          <option value="<%= status %>" <%= status === 'ACTIVE' ? 'selected' : '' %>><%= status %></option>
+                        <% }) %>
+                      </select>
+                    </div>
                 <div class="col-md-3"><label class="form-label">Allowed tools CSV</label><input class="form-control" name="allowed_tools_csv" placeholder="AUTO_CLIPPING,TRANSCRIPTION"></div>
                 <div class="col-md-4"><label class="form-label">Allowed model IDs CSV</label><input class="form-control" name="allowed_model_ids_csv" placeholder="<%= provider.models.map((model) => model.id).join(',') %>"></div>
                 <div class="col-md-4"><label class="form-label">Secret payload JSON</label><textarea class="form-control font-monospace" rows="4" name="payload_json">{}</textarea></div>
@@ -157,10 +217,9 @@
                     <div class="col-md-2">
                       <label class="form-label">Status</label>
                       <select class="form-select" name="status">
-                        <option value="ACTIVE" <%= credential.status === 'ACTIVE' ? 'selected' : '' %>>ACTIVE</option>
-                        <option value="DEGRADED" <%= credential.status === 'DEGRADED' ? 'selected' : '' %>>DEGRADED</option>
-                        <option value="REVOKED" <%= credential.status === 'REVOKED' ? 'selected' : '' %>>REVOKED</option>
-                        <option value="EXPIRED" <%= credential.status === 'EXPIRED' ? 'selected' : '' %>>EXPIRED</option>
+                        <% credentialStatusOptions.forEach((status) => { %>
+                          <option value="<%= status %>" <%= credential.status === status ? 'selected' : '' %>><%= status %></option>
+                        <% }) %>
                       </select>
                     </div>
                     <div class="col-md-3"><label class="form-label">Allowed tools CSV</label><input class="form-control" name="allowed_tools_csv" value="<%= credential.allowedToolsCsv %>"></div>

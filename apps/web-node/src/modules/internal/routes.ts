@@ -3,7 +3,11 @@ import { Router } from "express";
 import { z } from "zod";
 import type { PrismaClient } from "../../generated/prisma/client.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
-import { createInternalSignedObjectReadUrl, createInternalSignedObjectWriteUrl } from "../../infrastructure/storage/s3.js";
+import {
+  createInternalSignedObjectReadUrl,
+  createInternalSignedObjectWriteUrl,
+  createPublicSignedObjectReadUrl
+} from "../../infrastructure/storage/s3.js";
 import { asyncHandler } from "../../shared/http/async-handler.js";
 import { validateBody } from "../../shared/http/validate.js";
 import { AppError, NotFoundError } from "../../shared/errors/app-error.js";
@@ -443,7 +447,7 @@ export function internalRouter(projection: JobProjectionService): Router {
           candidate_id: clipOutput.candidateId,
           version: clipOutput.version,
           quality_status: clipOutput.qualityStatus,
-          render_settings: clipOutput.renderSettings,
+          render_settings: await refreshRenderSettingsForWorker(clipOutput.renderSettings),
           candidate: {
             candidate_id: clipOutput.candidate.candidateExternalId,
             title: clipOutput.candidate.title,
@@ -1133,6 +1137,64 @@ function resolveSubtitleFormat(renderSettings: unknown): string {
     }
   }
   return "srt";
+}
+
+async function refreshRenderSettingsForWorker(renderSettings: unknown) {
+  if (!renderSettings || typeof renderSettings !== "object" || Array.isArray(renderSettings)) {
+    return renderSettings;
+  }
+
+  const snapshot = { ...(renderSettings as Record<string, unknown>) };
+  const visual =
+    snapshot.visual && typeof snapshot.visual === "object" && !Array.isArray(snapshot.visual)
+      ? { ...(snapshot.visual as Record<string, unknown>) }
+      : null;
+  if (!visual) return snapshot;
+
+  const visualSettings =
+    visual.settings && typeof visual.settings === "object" && !Array.isArray(visual.settings)
+      ? { ...(visual.settings as Record<string, unknown>) }
+      : null;
+  if (!visualSettings) {
+    return {
+      ...snapshot,
+      visual
+    };
+  }
+
+  const branding =
+    visualSettings.branding && typeof visualSettings.branding === "object" && !Array.isArray(visualSettings.branding)
+      ? { ...(visualSettings.branding as Record<string, unknown>) }
+      : null;
+  if (!branding) {
+    return {
+      ...snapshot,
+      visual: {
+        ...visual,
+        settings: visualSettings
+      }
+    };
+  }
+
+  const logoObjectKey =
+    typeof branding.logo_object_key === "string" && branding.logo_object_key.trim().length > 0
+      ? branding.logo_object_key.trim()
+      : null;
+  if (logoObjectKey) {
+    branding.logo_internal_url = await createInternalSignedObjectReadUrl(logoObjectKey);
+    branding.logo_url = await createPublicSignedObjectReadUrl(logoObjectKey);
+  }
+
+  return {
+    ...snapshot,
+    visual: {
+      ...visual,
+      settings: {
+        ...visualSettings,
+        branding
+      }
+    }
+  };
 }
 
 function resolveImageMimeType(objectKey: string): string {

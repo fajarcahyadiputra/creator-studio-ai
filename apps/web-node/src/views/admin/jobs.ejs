@@ -1,3 +1,10 @@
+<%
+  const runningJobs = jobs.filter((job) => job.status === 'RUNNING').length;
+  const failedJobs = jobs.filter((job) => job.status === 'FAILED').length;
+  const needsReviewJobs = jobs.filter((job) => job.status === 'NEEDS_REVIEW').length;
+  const completedJobs = jobs.filter((job) => job.status === 'COMPLETED').length;
+  const queuedJobs = jobs.filter((job) => job.status === 'QUEUED').length;
+%>
 <%- include('../partials/head', { title, csrfToken }) %>
 <div class="app-shell"><%- include('../partials/admin-sidebar') %><main class="content-area">
   <header class="page-header">
@@ -8,6 +15,29 @@
     </div>
     <a class="btn btn-outline-primary" href="/admin/dashboard">Back to dashboard</a>
   </header>
+
+  <section class="stat-grid">
+    <article class="stat-card"><span>Visible jobs</span><strong><%= jobs.length %></strong></article>
+    <article class="stat-card"><span>Running</span><strong><%= runningJobs %></strong></article>
+    <article class="stat-card"><span>Failed</span><strong><%= failedJobs %></strong></article>
+    <article class="stat-card"><span>Needs review</span><strong><%= needsReviewJobs %></strong></article>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Operations Guidance</h2>
+        <p>Admin jobs should function as an intervention queue, not just a historical ledger.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="clip-output-review-grid">
+        <article class="clip-output-review-card"><span>Backlog</span><strong><%= queuedJobs %> queued</strong><p>Gunakan filter type dan status untuk melihat bottleneck per tool atau workflow tertentu.</p></article>
+        <article class="clip-output-review-card"><span>Recovery</span><strong><%= failedJobs %> failed</strong><p>Job gagal dan `needs review` seharusnya jadi area prioritas untuk retry, duplicate, atau investigasi error teknis.</p></article>
+        <article class="clip-output-review-card"><span>Throughput</span><strong><%= completedJobs %> completed</strong><p>Bandingkan completion rate dengan running queue untuk menilai kesehatan pipeline lintas tenant.</p></article>
+      </div>
+    </div>
+  </section>
 
   <section class="panel">
     <div class="panel-heading">

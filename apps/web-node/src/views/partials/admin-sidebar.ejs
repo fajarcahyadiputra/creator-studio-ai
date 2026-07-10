@@ -3,16 +3,16 @@
   <nav class="nav flex-column gap-1 mt-4">
     <a class="nav-link <%= path === '/admin/dashboard' ? 'active' : '' %>" href="/admin/dashboard">Dashboard</a>
     <% if (identity?.permissions?.has('admin.users.read')) { %>
-      <a class="nav-link <%= path.startsWith('/admin/users') ? 'active' : '' %>" href="/admin/users">Users</a>
+      <a class="nav-link <%= path.startsWith('/admin/users') ? 'active' : '' %>" href="/admin/users">User Management</a>
     <% } %>
     <% if (identity?.permissions?.has('admin.providers.manage')) { %>
-      <a class="nav-link <%= path.startsWith('/admin/providers') ? 'active' : '' %>" href="/admin/providers">Providers</a>
+      <a class="nav-link <%= path.startsWith('/admin/providers') ? 'active' : '' %>" href="/admin/providers">Provider Management</a>
     <% } %>
     <% if (identity?.permissions?.has('admin.jobs.manage')) { %>
-      <a class="nav-link <%= path.startsWith('/admin/jobs') ? 'active' : '' %>" href="/admin/jobs">Jobs</a>
+      <a class="nav-link <%= path.startsWith('/admin/jobs') ? 'active' : '' %>" href="/admin/jobs">Job Operations</a>
     <% } %>
     <% if (identity?.permissions?.has('admin.system.manage')) { %>
-      <a class="nav-link <%= path.startsWith('/admin/system') ? 'active' : '' %>" href="/admin/system">System</a>
+      <a class="nav-link <%= path.startsWith('/admin/system') ? 'active' : '' %>" href="/admin/system">Platform Settings</a>
     <% } %>
     <% if (identity?.permissions?.has('admin.audit.read')) { %>
       <a class="nav-link <%= path.startsWith('/admin/audit-logs') ? 'active' : '' %>" href="/admin/audit-logs">Audit Logs</a>

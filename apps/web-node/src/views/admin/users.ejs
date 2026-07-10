@@ -1,3 +1,11 @@
+<%
+  const activeUsers = users.filter((user) => user.status === 'ACTIVE').length;
+  const pendingUsers = users.filter((user) => user.status === 'PENDING_VERIFICATION').length;
+  const suspendedUsers = users.filter((user) => user.status === 'SUSPENDED').length;
+  const disabledUsers = users.filter((user) => user.status === 'DISABLED').length;
+  const verifiedUsers = users.filter((user) => Boolean(user.emailVerifiedAt)).length;
+  const usersWithSessions = users.filter((user) => user.activeSessionCount > 0).length;
+%>
 <%- include('../partials/head', { title, csrfToken }) %>
 <div class="app-shell"><%- include('../partials/admin-sidebar') %><main class="content-area">
   <header class="page-header">
@@ -8,6 +16,29 @@
     </div>
     <a class="btn btn-outline-primary" href="/admin/dashboard">Back to dashboard</a>
   </header>
+
+  <section class="stat-grid">
+    <article class="stat-card"><span>Visible users</span><strong><%= users.length %></strong></article>
+    <article class="stat-card"><span>Active</span><strong><%= activeUsers %></strong></article>
+    <article class="stat-card"><span>Pending verification</span><strong><%= pendingUsers %></strong></article>
+    <article class="stat-card"><span>Verified emails</span><strong><%= verifiedUsers %></strong></article>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Management Signals</h2>
+        <p>Fast admin picture before touching individual accounts.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="clip-output-review-grid">
+        <article class="clip-output-review-card"><span>Account health</span><strong><%= activeUsers %> active users</strong><p>Suspended <%= suspendedUsers %> | Disabled <%= disabledUsers %> | Pending <%= pendingUsers %>.</p></article>
+        <article class="clip-output-review-card"><span>Session exposure</span><strong><%= usersWithSessions %> users signed in</strong><p>Gunakan revoke session untuk force logout bila ada perubahan akses, role, atau insiden keamanan.</p></article>
+        <article class="clip-output-review-card"><span>Verification</span><strong><%= verifiedUsers %> already verified</strong><p>Admin bisa cepat bantu aktivasi akun yang tertahan di tahap verifikasi email.</p></article>
+      </div>
+    </div>
+  </section>
 
   <section class="panel">
     <div class="panel-heading">

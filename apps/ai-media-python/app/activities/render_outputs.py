@@ -110,6 +110,17 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         quote_path=quote_path,
         source_label_path=source_label_path,
     )
+    logo_fetch_warning: str | None = None
+    try:
+        logo_fetch_warning = await _materialize_optional_logo(
+            layout_options=layout_options,
+            working_directory=working_directory,
+        )
+    except Exception:
+        # Branding assets are non-critical. Rendering should continue even if
+        # a decorative logo cannot be fetched.
+        logo_fetch_warning = "Channel logo could not be prepared for render. Continuing without logo."
+        layout_options.pop("logo_source", None)
 
     render_command = build_clip_render_command(
         source=str(context.source_media.download_url),
@@ -203,6 +214,8 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         subtitle_cue_count=len(subtitle_cues),
         preview_generated=False,
     )
+    if logo_fetch_warning:
+        validation["warnings"].append(logo_fetch_warning)
 
     artifact_uploads = {upload.artifact: upload for upload in context.artifact_uploads}
     uploaded_artifacts: list[dict[str, Any]] = []
@@ -342,6 +355,52 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         }
     )
     return result.model_dump(mode="json", exclude_none=True)
+
+
+async def _materialize_optional_logo(
+    *,
+    layout_options: dict[str, Any],
+    working_directory: Path,
+) -> str | None:
+    logo_source = layout_options.get("logo_source")
+    if not isinstance(logo_source, str) or not logo_source.strip():
+        return None
+
+    normalized_source = logo_source.strip()
+    if normalized_source.startswith(("http://", "https://")):
+        local_path = working_directory / "branding-logo"
+        downloaded = await _download_optional_asset(normalized_source, local_path)
+        if downloaded is None:
+            layout_options.pop("logo_source", None)
+            return "Channel logo URL was unavailable during render, so the final clip was rendered without logo."
+        layout_options["logo_source"] = str(downloaded)
+    return None
+
+
+async def _download_optional_asset(url: str, destination_stem: Path) -> Path | None:
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+    except Exception:
+        return None
+
+    suffix = _resolve_asset_suffix_from_url(url)
+    destination = destination_stem.with_suffix(suffix)
+    destination.write_bytes(response.content)
+    return destination
+
+
+def _resolve_asset_suffix_from_url(url: str) -> str:
+    try:
+        parsed = httpx.URL(url)
+        suffix = Path(parsed.path).suffix.lower()
+    except Exception:
+        suffix = ""
+
+    if suffix in {".png", ".jpg", ".jpeg", ".webp", ".svg"}:
+        return suffix
+    return ".img"
 
 
 @activity.defn
