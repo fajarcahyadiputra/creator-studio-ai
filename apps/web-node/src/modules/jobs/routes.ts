@@ -5,10 +5,22 @@ import { validateBody } from "../../shared/http/validate.js";
 import { routeParam } from "../../shared/http/route-param.js";
 import { requireAuth } from "../auth/identity-middleware.js";
 import { writeAudit } from "../audit/audit-service.js";
-import { autoClipJobSchema, clipCandidateSelectionSchema, retryJobSchema, ttsJobSchema } from "./schemas.js";
+import {
+  autoClipJobSchema,
+  clipCandidateSelectionSchema,
+  regenerateAutoClipJobSchema,
+  regenerateTtsJobSchema,
+  retryJobSchema,
+  ttsJobSchema
+} from "./schemas.js";
 import { AppError } from "../../shared/errors/app-error.js";
 import { assertIdempotencyKey, type ClipOutputArtifact, JobService, serializeJob } from "./job-service.js";
 import type { JobEventBus } from "./job-event-bus.js";
+
+function resolveRequestOrigin(request: { protocol: string; get(name: string): string | undefined }) {
+  const host = request.get("host");
+  return host ? `${request.protocol}://${host}` : undefined;
+}
 
 function serializeClipOutput(output: {
   id: string;
@@ -418,6 +430,70 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
   );
 
   router.post(
+    "/api/v1/tts/jobs/:jobId/regenerate",
+    requireAuth,
+    validateBody(regenerateTtsJobSchema),
+    asyncHandler(async (request, response) => {
+      const jobId = routeParam(request.params.jobId, "jobId");
+      const idempotencyKey = assertIdempotencyKey(request.get("idempotency-key"));
+      const job = await jobService.regenerateTextToSpeechJob({
+        userId: request.identity!.effectiveUserId,
+        jobId,
+        idempotencyKey,
+        input: request.validatedBody as never
+      });
+      await writeAudit({
+        actorUserId: request.identity!.actorUserId,
+        targetUserId: request.identity!.effectiveUserId,
+        action: "TTS_JOB_REGENERATED",
+        resourceType: "Job",
+        resourceId: jobId,
+        metadata: { idempotency_key: idempotencyKey, job_type: "TEXT_TO_SPEECH" },
+        request
+      });
+      response.status(202).json({
+        data: {
+          ...serializeJob(job),
+          redirect: `/app/jobs/${job.id}`,
+          message: "TTS job regenerated and old output has been replaced."
+        }
+      });
+    })
+  );
+
+  router.post(
+    "/api/v1/auto-clipping/jobs/:jobId/regenerate",
+    requireAuth,
+    validateBody(regenerateAutoClipJobSchema),
+    asyncHandler(async (request, response) => {
+      const jobId = routeParam(request.params.jobId, "jobId");
+      const idempotencyKey = assertIdempotencyKey(request.get("idempotency-key"));
+      const job = await jobService.regenerateAutoClippingJob({
+        userId: request.identity!.effectiveUserId,
+        jobId,
+        idempotencyKey,
+        input: request.validatedBody as never
+      });
+      await writeAudit({
+        actorUserId: request.identity!.actorUserId,
+        targetUserId: request.identity!.effectiveUserId,
+        action: "AUTO_CLIP_JOB_REGENERATED",
+        resourceType: "Job",
+        resourceId: jobId,
+        metadata: { idempotency_key: idempotencyKey, job_type: "AUTO_CLIPPING" },
+        request
+      });
+      response.status(202).json({
+        data: {
+          ...serializeJob(job),
+          redirect: `/app/jobs/${job.id}`,
+          message: "Auto-clipping job regenerated and previous outputs have been replaced."
+        }
+      });
+    })
+  );
+
+  router.post(
     "/api/v1/auto-clipping/jobs/:jobId/duplicate",
     requireAuth,
     asyncHandler(async (request, response) => {
@@ -445,9 +521,11 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     "/app/jobs/:jobId/export-index",
     requireAuth,
     asyncHandler(async (request, response) => {
+      const requestOrigin = resolveRequestOrigin(request);
       const exportIndex = await jobService.createJobOutputsExportIndex(
         request.identity!.effectiveUserId,
-        routeParam(request.params.jobId, "jobId")
+        routeParam(request.params.jobId, "jobId"),
+        requestOrigin
       );
       response.setHeader("Content-Type", "application/json");
       response.setHeader(
@@ -479,10 +557,12 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     "/app/jobs/:jobId/tts-audio-download",
     requireAuth,
     asyncHandler(async (request, response) => {
+      const requestOrigin = resolveRequestOrigin(request);
       const url = await jobService.createTtsAudioArtifactUrl(
         request.identity!.effectiveUserId,
         routeParam(request.params.jobId, "jobId"),
-        "audio"
+        "audio",
+        requestOrigin
       );
       response.redirect(url);
     })
@@ -492,9 +572,11 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     "/app/jobs/:jobId/tts-output-export-index",
     requireAuth,
     asyncHandler(async (request, response) => {
+      const requestOrigin = resolveRequestOrigin(request);
       const exportIndex = await jobService.createTtsOutputExportIndex(
         request.identity!.effectiveUserId,
-        routeParam(request.params.jobId, "jobId")
+        routeParam(request.params.jobId, "jobId"),
+        requestOrigin
       );
       response.setHeader("Content-Type", "application/json");
       response.setHeader(
@@ -509,11 +591,13 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     "/app/jobs/:jobId/outputs/:clipOutputId/download",
     requireAuth,
     asyncHandler(async (request, response) => {
+      const requestOrigin = resolveRequestOrigin(request);
       const url = await jobService.createClipOutputArtifactUrl(
         request.identity!.effectiveUserId,
         routeParam(request.params.jobId, "jobId"),
         routeParam(request.params.clipOutputId, "clipOutputId"),
-        parseClipOutputArtifact(request.query.artifact)
+        parseClipOutputArtifact(request.query.artifact),
+        requestOrigin
       );
       response.redirect(url);
     })
@@ -523,10 +607,12 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     "/app/jobs/:jobId/outputs/:clipOutputId/export-index",
     requireAuth,
     asyncHandler(async (request, response) => {
+      const requestOrigin = resolveRequestOrigin(request);
       const exportIndex = await jobService.createClipOutputExportIndex(
         request.identity!.effectiveUserId,
         routeParam(request.params.jobId, "jobId"),
-        routeParam(request.params.clipOutputId, "clipOutputId")
+        routeParam(request.params.clipOutputId, "clipOutputId"),
+        requestOrigin
       );
       response.setHeader("Content-Type", "application/json");
       response.setHeader(
@@ -568,9 +654,11 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     "/api/v1/jobs/:jobId/export-index",
     requireAuth,
     asyncHandler(async (request, response) => {
+      const requestOrigin = resolveRequestOrigin(request);
       const exportIndex = await jobService.createJobOutputsExportIndex(
         request.identity!.effectiveUserId,
-        routeParam(request.params.jobId, "jobId")
+        routeParam(request.params.jobId, "jobId"),
+        requestOrigin
       );
       response.json({ data: serializeJobOutputsExportIndex(exportIndex) });
     })
@@ -592,9 +680,11 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     "/api/v1/jobs/:jobId/tts-output-export-index",
     requireAuth,
     asyncHandler(async (request, response) => {
+      const requestOrigin = resolveRequestOrigin(request);
       const exportIndex = await jobService.createTtsOutputExportIndex(
         request.identity!.effectiveUserId,
-        routeParam(request.params.jobId, "jobId")
+        routeParam(request.params.jobId, "jobId"),
+        requestOrigin
       );
       response.json({ data: serializeTtsOutputExportIndex(exportIndex) });
     })
@@ -604,12 +694,44 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     "/api/v1/jobs/:jobId/outputs/:clipOutputId/export-index",
     requireAuth,
     asyncHandler(async (request, response) => {
+      const requestOrigin = resolveRequestOrigin(request);
       const exportIndex = await jobService.createClipOutputExportIndex(
         request.identity!.effectiveUserId,
         routeParam(request.params.jobId, "jobId"),
-        routeParam(request.params.clipOutputId, "clipOutputId")
+        routeParam(request.params.clipOutputId, "clipOutputId"),
+        requestOrigin
       );
       response.json({ data: serializeClipOutputExportIndex(exportIndex) });
+    })
+  );
+
+  router.post(
+    "/api/v1/jobs/:jobId/delete",
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      const jobId = routeParam(request.params.jobId, "jobId");
+      const result = await jobService.delete(request.identity!.effectiveUserId, jobId);
+      await writeAudit({
+        actorUserId: request.identity!.actorUserId,
+        targetUserId: request.identity!.effectiveUserId,
+        action: "JOB_DELETED",
+        resourceType: "Job",
+        resourceId: jobId,
+        metadata: {
+          deleted_object_count: result.deletedObjectCount,
+          deleted_generated_media_asset_count: result.deletedGeneratedMediaAssetCount,
+        },
+        request,
+      });
+      response.json({
+        data: {
+          job_id: result.jobId,
+          deleted_object_count: result.deletedObjectCount,
+          deleted_generated_media_asset_count: result.deletedGeneratedMediaAssetCount,
+          redirect: "/app/jobs",
+          message: "Job and related generated artifacts were deleted.",
+        },
+      });
     })
   );
 
@@ -872,7 +994,6 @@ function parseClipOutputArtifact(value: unknown): ClipOutputArtifact {
     value === "preview"
     || value === "final"
     || value === "metadata"
-    || value === "thumbnail"
     || value === "subtitle"
     || value === "subtitle_srt"
     || value === "subtitle_ass"

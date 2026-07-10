@@ -52,6 +52,7 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
     settings = get_settings()
 
     aspect_ratio = _resolve_aspect_ratio(context.render_settings)
+    layout_template = _resolve_layout_template(context.render_settings, aspect_ratio)
     subtitle_format = _resolve_subtitle_format(context.render_settings)
     subtitle_language = _resolve_subtitle_language(context.render_settings)
     subtitle_burned_in = _resolve_subtitle_burned_in(context.render_settings)
@@ -64,12 +65,16 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
     working_directory = Path(settings.TEMP_WORKDIR) / "clip-output-renders" / context.clip_output_id
     working_directory.mkdir(parents=True, exist_ok=True)
     final_path = working_directory / "final.mp4"
-    thumbnail_path = working_directory / "thumbnail.jpg"
     metadata_path = working_directory / "metadata.json"
     subtitle_srt_path = working_directory / "subtitle.srt"
     subtitle_ass_path = working_directory / "subtitle.ass"
     subtitle_vtt_path = working_directory / "subtitle.vtt"
     subtitle_json_path = working_directory / "subtitle.json"
+    channel_name_path = working_directory / "channel-name.txt"
+    channel_tagline_path = working_directory / "channel-tagline.txt"
+    headline_path = working_directory / "headline.txt"
+    quote_path = working_directory / "quote.txt"
+    source_label_path = working_directory / "source-label.txt"
 
     subtitle_cues = _build_subtitle_cues(
         transcript_segments=context.transcript.segments if context.transcript else [],
@@ -93,6 +98,19 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         if subtitle_burned_in:
             subtitle_path_for_burn_in = subtitle_ass_path
 
+    layout_options = _build_layout_options(
+        layout_template=layout_template,
+        render_settings=context.render_settings,
+        candidate=context.candidate,
+        metadata=candidate_metadata,
+        working_directory=working_directory,
+        channel_name_path=channel_name_path,
+        channel_tagline_path=channel_tagline_path,
+        headline_path=headline_path,
+        quote_path=quote_path,
+        source_label_path=source_label_path,
+    )
+
     render_command = build_clip_render_command(
         source=str(context.source_media.download_url),
         destination=final_path,
@@ -105,6 +123,8 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         fps=fps,
         video_preset="medium",
         subtitle_path=subtitle_path_for_burn_in,
+        layout_template=layout_template,
+        layout_options=layout_options,
     )
     try:
         await _run_command_with_heartbeat(
@@ -152,35 +172,6 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         raise missing_final_error
 
     try:
-        await _generate_thumbnail(
-            source=final_path,
-            destination=thumbnail_path,
-            timeout_seconds=min(settings.RENDER_OUTPUT_TIMEOUT_SECONDS, settings.AUDIO_EXTRACTION_TIMEOUT_SECONDS),
-            heartbeat_details={
-                "clip_output_id": context.clip_output_id,
-                "job_id": context.job_id,
-                "candidate_id": context.candidate.candidate_id,
-                "stage": "GENERATING_PREVIEWS",
-                "artifact": "thumbnail",
-            },
-        )
-    except Exception as error:
-        await emit_retry_warning(
-            job_id=context.job_id,
-            stage="GENERATING_PREVIEWS",
-            stage_progress=70,
-            error=error,
-            user_message="Thumbnail clip gagal dibuat dan akan dicoba ulang otomatis.",
-            status=None,
-            metadata={
-                "clip_output_id": context.clip_output_id,
-                "candidate_id": context.candidate.candidate_id,
-                "artifact": "thumbnail",
-            },
-        )
-        raise
-
-    try:
         final_probe_payload = await run_ffprobe_json(
             str(final_path),
             timeout_seconds=settings.MEDIA_PROBE_TIMEOUT_SECONDS,
@@ -207,7 +198,7 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         expected_duration_ms=int(round(clip_duration_seconds * 1000)),
         subtitle_format=subtitle_format if subtitle_path_for_upload else None,
         final_observed=final_probe_summary,
-        thumbnail_generated=thumbnail_path.exists(),
+        thumbnail_generated=False,
         subtitle_generated=bool(subtitle_path_for_upload and subtitle_path_for_upload.exists()),
         subtitle_cue_count=len(subtitle_cues),
         preview_generated=False,
@@ -217,7 +208,6 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
     uploaded_artifacts: list[dict[str, Any]] = []
     try:
         final_object_key = await _upload_artifact(artifact_uploads.get("final"), final_path, uploaded_artifacts)
-        thumbnail_object_key = await _upload_artifact(artifact_uploads.get("thumbnail"), thumbnail_path, uploaded_artifacts)
         subtitle_object_key = await _upload_artifact(
             artifact_uploads.get("subtitle"),
             subtitle_path_for_upload,
@@ -286,6 +276,7 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
             "fps": fps,
             "subtitle_burned_in": subtitle_burned_in,
             "crop_mode": "center_crop",
+            "layout_template": layout_template,
         },
         "subtitle": {
             "format": subtitle_format if subtitle_path_for_upload else None,
@@ -302,6 +293,7 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         "validation": validation,
         "artifacts": uploaded_artifacts,
         "metadata": candidate_metadata,
+        "branding": layout_options.get("branding"),
     }
     metadata_path.write_text(json.dumps(metadata_document, indent=2), encoding="utf-8")
     try:
@@ -328,7 +320,6 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         preview_object_key=None,
         final_object_key=final_object_key,
         metadata_object_key=metadata_object_key,
-        thumbnail_object_key=thumbnail_object_key,
         subtitle_object_key=subtitle_object_key,
         subtitle_format=subtitle_format if subtitle_path_for_upload else None,
         subtitle_language=subtitle_language if subtitle_path_for_upload else None,
@@ -370,6 +361,19 @@ def _resolve_aspect_ratio(render_settings: dict[str, Any]) -> str:
         if isinstance(value, str) and value:
             return value
     return "9:16"
+
+
+def _resolve_layout_template(render_settings: dict[str, Any], aspect_ratio: str) -> str | None:
+    if aspect_ratio != "9:16":
+        return None
+    visual = render_settings.get("visual")
+    if isinstance(visual, dict):
+        settings = visual.get("settings")
+        if isinstance(settings, dict):
+            value = settings.get("layout_template")
+            if isinstance(value, str) and value == "PODCAST_SPOTLIGHT_9X16":
+                return value
+    return None
 
 
 def _resolve_subtitle_burned_in(render_settings: dict[str, Any]) -> bool:
@@ -461,6 +465,118 @@ def _resolve_render_metadata(render_settings: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _build_layout_options(
+    *,
+    layout_template: str | None,
+    render_settings: dict[str, Any],
+    candidate: Any,
+    metadata: dict[str, Any],
+    working_directory: Path,
+    channel_name_path: Path,
+    channel_tagline_path: Path,
+    headline_path: Path,
+    quote_path: Path,
+    source_label_path: Path,
+) -> dict[str, Any]:
+    if layout_template != "PODCAST_SPOTLIGHT_9X16":
+        return {}
+
+    visual = render_settings.get("visual")
+    visual_settings = visual.get("settings") if isinstance(visual, dict) else None
+    branding = visual_settings.get("branding") if isinstance(visual_settings, dict) else None
+    branding_data = branding if isinstance(branding, dict) else {}
+    channel_name = _resolve_string(branding_data.get("channel_name")) or "Creator Studio"
+    channel_tagline = _resolve_string(branding_data.get("channel_tagline"))
+    source_label = f"Source: {channel_name}"
+    headline = _normalize_headline_text(
+        _resolve_string(metadata.get("thumbnail_text"))
+        or _resolve_string(getattr(candidate, "title", None))
+        or "Highlight clip"
+    )
+    quote = (
+        _resolve_string(getattr(candidate, "hook_text", None))
+        or _resolve_string(getattr(candidate, "ending_text", None))
+        or _resolve_string(getattr(candidate, "summary", None))
+        or _resolve_string(metadata.get("suggested_caption"))
+        or headline
+    )
+
+    options = {
+        "headline_size": _resolve_dynamic_font_size(headline, 112, 92, 74),
+        "quote_size": _resolve_dynamic_font_size(quote, 64, 54, 44),
+        "channel_name_size": 32,
+        "channel_tagline_size": 24,
+        "source_label_size": 28,
+        "logo_source": _resolve_string(branding_data.get("logo_internal_url"))
+        or _resolve_string(branding_data.get("logo_url")),
+        "branding": {
+            "channel_name": channel_name,
+            "channel_tagline": channel_tagline,
+            "brand_kit_name": _resolve_string(branding_data.get("brand_kit_name")),
+            "logo_object_key": _resolve_string(branding_data.get("logo_object_key")),
+        },
+    }
+
+    text_targets = [
+        (channel_name_path, channel_name),
+        (channel_tagline_path, channel_tagline),
+        (headline_path, _wrap_overlay_text(headline, max_chars=16)),
+        (quote_path, _wrap_overlay_text(quote, max_chars=22)),
+        (source_label_path, source_label),
+    ]
+    key_map = {
+        channel_name_path: "channel_name_file",
+        channel_tagline_path: "channel_tagline_file",
+        headline_path: "headline_file",
+        quote_path: "quote_file",
+        source_label_path: "source_label_file",
+    }
+    for path, text in text_targets:
+        if not text:
+            continue
+        path.write_text(str(text), encoding="utf-8")
+        options[key_map[path]] = str(path)
+
+    return options
+
+
+def _resolve_dynamic_font_size(text: str, short_size: int, medium_size: int, long_size: int) -> int:
+    normalized_length = len(" ".join(text.split()))
+    if normalized_length <= 28:
+        return short_size
+    if normalized_length <= 60:
+        return medium_size
+    return long_size
+
+
+def _normalize_headline_text(text: str) -> str:
+    normalized = " ".join(str(text).split()).strip()
+    if not normalized:
+        return "HIGHLIGHT CLIP"
+    return normalized.upper()
+
+
+def _wrap_overlay_text(text: str, *, max_chars: int) -> str:
+    words = [word for word in str(text).split() if word]
+    if not words:
+        return ""
+    lines: list[str] = []
+    current: list[str] = []
+    current_length = 0
+    for word in words:
+        projected = current_length + len(word) + (1 if current else 0)
+        if current and projected > max_chars:
+            lines.append(" ".join(current))
+            current = [word]
+            current_length = len(word)
+        else:
+            current.append(word)
+            current_length = projected
+    if current:
+        lines.append(" ".join(current))
+    return "\n".join(lines[:4])
+
+
 def _resolve_string(value: Any) -> str | None:
     if isinstance(value, str):
         normalized = value.strip()
@@ -524,8 +640,6 @@ def _build_validation_summary(
         warnings.append("Rendered clip resolution does not match the requested aspect ratio target.")
     if not checks["duration_within_tolerance"]:
         warnings.append("Rendered clip duration differs from the candidate window beyond tolerance.")
-    if not checks["thumbnail_generated"]:
-        warnings.append("Thumbnail artifact was not generated.")
     if subtitle_format and not checks["subtitle_sidecar_generated"]:
         warnings.append("Subtitle sidecar artifact was not generated.")
     return {

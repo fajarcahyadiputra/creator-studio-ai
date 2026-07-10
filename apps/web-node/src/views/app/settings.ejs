@@ -20,6 +20,44 @@
         <div class="col-md-3"><label class="form-label">Plan</label><input class="form-control" value="<%= user.plan?.name ?? 'No plan assigned' %>" readonly></div>
         <div class="col-md-6"><label class="form-label">Default content niche</label><input class="form-control" name="default_content_niche" value="<%= profile.defaultContentNiche %>"></div>
         <div class="col-md-6"><label class="form-label">Default audience</label><input class="form-control" name="default_audience" value="<%= profile.defaultAudience %>"></div>
+        <div class="col-md-4"><label class="form-label">Channel name</label><input class="form-control" name="channel_name" value="<%= profile.channelName %>" placeholder="Suara Inspirasi"></div>
+        <div class="col-md-4"><label class="form-label">Channel tagline</label><input class="form-control" name="channel_tagline" value="<%= profile.channelTagline %>" placeholder="Podcast Edukasi"></div>
+        <div class="col-md-4">
+          <label class="form-label">Preferred brand kit</label>
+          <select class="form-select" name="preferred_brand_kit_id">
+            <option value="">Use form selection</option>
+            <% brandKits.forEach((brandKit) => { %>
+              <option value="<%= brandKit.id %>" <%= profile.preferredBrandKitId === brandKit.id ? 'selected' : '' %>><%= brandKit.name %><%= brandKit.isDefault ? ' (default)' : '' %></option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="col-md-8">
+          <label class="form-label">Channel logo file</label>
+          <input type="hidden" name="channel_logo_object_key" value="<%= profile.channelLogoObjectKey %>" data-settings-logo-object-key>
+          <input
+            class="form-control"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml"
+            data-settings-logo-input>
+          <div class="form-text">Upload logo PNG, JPG, WEBP, atau SVG. File akan disimpan ke MinIO dan dipakai untuk layout auto-clipping 9:16.</div>
+          <div class="small text-muted mt-2" data-settings-logo-status>
+            <%= profile.channelLogoObjectKey ? 'Logo channel sudah tersimpan. Pilih file baru jika ingin mengganti.' : 'Belum ada file logo diupload.' %>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Logo preview</label>
+          <div class="border rounded-4 bg-light d-flex align-items-center justify-content-center p-3 h-100" data-settings-logo-preview-wrap>
+            <% if (profile.channelLogoUrl) { %>
+              <img
+                data-settings-logo-preview
+                src="<%= profile.channelLogoUrl %>"
+                alt="Channel logo preview"
+                style="max-width: 100%; max-height: 120px; object-fit: contain;">
+            <% } else { %>
+              <small class="text-muted text-center" data-settings-logo-empty>Belum ada logo file tersimpan.<br>Upload logo channel agar template 9:16 bisa memakainya.</small>
+            <% } %>
+          </div>
+        </div>
         <div class="col-md-12 d-flex justify-content-end"><button class="btn btn-primary" type="submit">Save profile</button></div>
       </form>
     </div>

@@ -1,4 +1,4 @@
-import { Router } from "express";
+import express, { Router } from "express";
 import { asyncHandler } from "../../shared/http/async-handler.js";
 import { routeParam } from "../../shared/http/route-param.js";
 import { validateBody } from "../../shared/http/validate.js";
@@ -8,6 +8,7 @@ import {
   aiPreferenceSettingsSchema,
   changePasswordSchema,
   notificationSettingsSchema,
+  profileLogoUploadSchema,
   profileSettingsSchema
 } from "./schemas.js";
 import type { SettingsService } from "./settings-service.js";
@@ -28,6 +29,23 @@ export function settingsRouter(settingsService: SettingsService): Router {
         ...page,
         csrfToken: request.session.csrfToken
       });
+    })
+  );
+
+  router.post(
+    "/api/v1/settings/profile/logo-upload",
+    requireAuth,
+    express.raw({ type: () => true, limit: "6mb" }),
+    asyncHandler(async (request, response) => {
+      const body = profileLogoUploadSchema.parse({
+        file_name: decodeHeaderValue(request.header("x-file-name")),
+        mime_type: request.header("content-type")
+      });
+      const upload = await settingsService.uploadProfileLogo(request.identity!.effectiveUserId, {
+        ...body,
+        body: request.body instanceof Uint8Array ? request.body : Buffer.from([])
+      });
+      response.json({ data: upload });
     })
   );
 
@@ -138,3 +156,11 @@ export function settingsRouter(settingsService: SettingsService): Router {
   return router;
 }
 
+function decodeHeaderValue(value: string | undefined) {
+  if (!value) return value;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}

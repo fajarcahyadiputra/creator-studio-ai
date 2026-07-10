@@ -1,6 +1,11 @@
 import type { Prisma } from "../../generated/prisma/client.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
 import {
+  createPublicSignedObjectReadUrl,
+  deleteObjectKeys
+} from "../../infrastructure/storage/s3.js";
+import { putObjectBuffer } from "../../infrastructure/storage/s3.js";
+import {
   ConflictError,
   ForbiddenError,
   NotFoundError,
@@ -20,6 +25,10 @@ interface ProfileInput {
   timezone: string;
   default_content_niche?: string;
   default_audience?: string;
+  channel_name?: string;
+  channel_tagline?: string;
+  channel_logo_object_key?: string;
+  preferred_brand_kit_id?: string;
 }
 
 interface AiPreferenceInput {
@@ -81,6 +90,12 @@ export class SettingsService {
         orderBy: { createdAt: "desc" }
       })
     ]);
+    const preferences = normalizeProfilePreferences(setting?.preferences);
+    const brandKits = await this.deps.prisma.brandKit.findMany({
+      where: { userId, deletedAt: null },
+      select: { id: true, name: true, isDefault: true },
+      orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }]
+    });
 
     return {
       user,
@@ -89,7 +104,14 @@ export class SettingsService {
         locale: user.locale,
         timezone: user.timezone,
         defaultContentNiche: setting?.defaultContentNiche ?? "",
-        defaultAudience: setting?.defaultAudience ?? ""
+        defaultAudience: setting?.defaultAudience ?? "",
+        channelName: preferences.channel_name ?? "",
+        channelTagline: preferences.channel_tagline ?? "",
+        channelLogoObjectKey: preferences.channel_logo_object_key ?? "",
+        channelLogoUrl: preferences.channel_logo_object_key
+          ? await createPublicSignedObjectReadUrl(preferences.channel_logo_object_key)
+          : "",
+        preferredBrandKitId: preferences.preferred_brand_kit_id ?? ""
       },
       aiPreference: {
         credentialMode: preference?.credentialMode ?? "PLATFORM",
@@ -123,12 +145,19 @@ export class SettingsService {
         impersonatedUserId: session.impersonatedUserId,
         isCurrent: currentSessionId ? session.id === currentSessionId : false
       })),
-      notifications: normalizeNotifications(setting?.notificationSettings)
+      notifications: normalizeNotifications(setting?.notificationSettings),
+      brandKits: brandKits.map((brandKit) => ({
+        id: brandKit.id,
+        name: brandKit.name,
+        isDefault: brandKit.isDefault
+      }))
     };
   }
 
   public async updateProfile(userId: string, input: ProfileInput) {
-    return this.deps.prisma.$transaction(async (tx) => {
+    const previousLogoObjectKeys: string[] = [];
+
+    const result = await this.deps.prisma.$transaction(async (tx) => {
       await tx.user.update({
         where: { id: userId },
         data: {
@@ -138,20 +167,75 @@ export class SettingsService {
         }
       });
 
+      const existingSetting = await tx.userSetting.findUnique({
+        where: { userId },
+        select: { preferences: true }
+      });
+      const existingPreferences = normalizeProfilePreferences(existingSetting?.preferences);
+      const nextLogoObjectKey = input.channel_logo_object_key ?? null;
+      if (
+        existingPreferences.channel_logo_object_key
+        && existingPreferences.channel_logo_object_key !== nextLogoObjectKey
+      ) {
+        previousLogoObjectKeys.push(existingPreferences.channel_logo_object_key);
+      }
+      const nextPreferences = {
+        ...existingPreferences,
+        channel_name: input.channel_name ?? null,
+        channel_tagline: input.channel_tagline ?? null,
+        channel_logo_object_key: nextLogoObjectKey,
+        preferred_brand_kit_id: input.preferred_brand_kit_id ?? null
+      };
+
       return tx.userSetting.upsert({
         where: { userId },
         update: {
           defaultContentNiche: input.default_content_niche,
           defaultAudience: input.default_audience,
+          preferences: nextPreferences as unknown as Prisma.InputJsonValue,
           version: { increment: 1 }
         },
         create: {
           userId,
           defaultContentNiche: input.default_content_niche,
-          defaultAudience: input.default_audience
+          defaultAudience: input.default_audience,
+          preferences: nextPreferences as unknown as Prisma.InputJsonValue
         }
       });
     });
+
+    if (previousLogoObjectKeys.length > 0) {
+      await deleteObjectKeys(previousLogoObjectKeys).catch(() => undefined);
+    }
+
+    return result;
+  }
+
+  public async uploadProfileLogo(
+    userId: string,
+    input: { file_name: string; mime_type: string; body: Uint8Array }
+  ) {
+    const fileName = input.file_name.trim();
+    const mimeType = input.mime_type.trim().toLowerCase();
+    const extension = resolveLogoExtension(mimeType, fileName);
+
+    if (!extension) {
+      throw new ValidationError("Logo file type is invalid.", {
+        fields: [{ path: "mime_type", message: "Gunakan PNG, JPG, WEBP, atau SVG untuk logo channel." }]
+      });
+    }
+    if (input.body.byteLength === 0) {
+      throw new ValidationError("Logo file is empty.", {
+        fields: [{ path: "file", message: "Pilih file logo yang valid lalu coba lagi." }]
+      });
+    }
+
+    const objectKey = `users/${userId}/settings/channel-logo/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
+    await putObjectBuffer(objectKey, input.body, mimeType);
+    return {
+      object_key: objectKey,
+      public_url: await createPublicSignedObjectReadUrl(objectKey, 900)
+    };
   }
 
   public async updateAiPreference(userId: string, input: AiPreferenceInput) {
@@ -331,4 +415,33 @@ function normalizeNotifications(raw: unknown) {
     in_app_job_failed: data.in_app_job_failed !== false,
     in_app_publish_completed: data.in_app_publish_completed === true
   };
+}
+
+function normalizeProfilePreferences(raw: unknown) {
+  const data = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  return {
+    channel_name: typeof data.channel_name === "string" ? data.channel_name : null,
+    channel_tagline: typeof data.channel_tagline === "string" ? data.channel_tagline : null,
+    channel_logo_object_key: typeof data.channel_logo_object_key === "string" ? data.channel_logo_object_key : null,
+    preferred_brand_kit_id: typeof data.preferred_brand_kit_id === "string" ? data.preferred_brand_kit_id : null
+  };
+}
+
+function resolveLogoExtension(mimeType: string, fileName: string) {
+  const byMimeType: Record<string, string> = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/webp": "webp",
+    "image/svg+xml": "svg"
+  };
+  const direct = byMimeType[mimeType];
+  if (direct) return direct;
+
+  const extension = fileName.split(".").pop()?.trim().toLowerCase();
+  if (!extension) return null;
+  if (["png", "jpg", "jpeg", "webp", "svg"].includes(extension)) {
+    return extension === "jpeg" ? "jpg" : extension;
+  }
+  return null;
 }

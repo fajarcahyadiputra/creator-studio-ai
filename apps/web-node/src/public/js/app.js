@@ -70,9 +70,42 @@ function validateShortTextList(list, options) {
   return errors;
 }
 
+for (const picker of document.querySelectorAll("[data-append-to-field]")) {
+  picker.addEventListener("change", () => {
+    if (!(picker instanceof HTMLSelectElement)) return;
+
+    const targetName = picker.getAttribute("data-append-to-field");
+    const selectedValue = String(picker.value || "").trim();
+    if (!targetName || !selectedValue) return;
+
+    const target = document.querySelector(`[name="${targetName}"]`);
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
+      picker.value = "";
+      return;
+    }
+
+    const currentItems = String(target.value || "")
+      .split(/[\n,;]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    if (!currentItems.includes(selectedValue)) {
+      currentItems.push(selectedValue);
+      target.value = currentItems.join(", ");
+      target.dispatchEvent(new Event("input", { bubbles: true }));
+      target.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    picker.value = "";
+  });
+}
+
 for (const form of document.querySelectorAll("[data-api-form]")) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) {
+      return;
+    }
     const button = form.querySelector('button[type="submit"],button:not([type])');
     const messages = form.closest("main,section")?.querySelector(".form-message") ?? document.querySelector(".form-message");
     if (button) button.disabled = true;
@@ -97,6 +130,96 @@ for (const form of document.querySelectorAll("[data-api-form]")) {
       if (button) button.disabled = false;
     }
   });
+}
+
+const settingsProfileForm = document.querySelector('form[data-api-form][action="/api/v1/settings/profile"]');
+if (settingsProfileForm) {
+  const logoInput = settingsProfileForm.querySelector("[data-settings-logo-input]");
+  const logoObjectKeyField = settingsProfileForm.querySelector("[data-settings-logo-object-key]");
+  const logoPreviewWrap = settingsProfileForm.querySelector("[data-settings-logo-preview-wrap]");
+  const logoPreview = settingsProfileForm.querySelector("[data-settings-logo-preview]");
+  const logoEmpty = settingsProfileForm.querySelector("[data-settings-logo-empty]");
+  const logoStatus = settingsProfileForm.querySelector("[data-settings-logo-status]");
+  const messages = settingsProfileForm.closest("main,section")?.querySelector(".form-message") ?? document.querySelector(".form-message");
+
+  const setLogoStatus = (message, type = "muted") => {
+    if (!logoStatus) return;
+    logoStatus.className = `small text-${type} mt-2`;
+    logoStatus.textContent = message;
+  };
+
+  const ensureLogoPreview = (src) => {
+    if (!(logoPreviewWrap instanceof HTMLElement) || !src) return;
+
+    if (logoEmpty instanceof HTMLElement) {
+      logoEmpty.remove();
+    }
+
+    let imageNode = logoPreview;
+    if (!(imageNode instanceof HTMLImageElement)) {
+      imageNode = document.createElement("img");
+      imageNode.setAttribute("data-settings-logo-preview", "");
+      imageNode.alt = "Channel logo preview";
+      imageNode.style.maxWidth = "100%";
+      imageNode.style.maxHeight = "120px";
+      imageNode.style.objectFit = "contain";
+      logoPreviewWrap.innerHTML = "";
+      logoPreviewWrap.appendChild(imageNode);
+    }
+
+    imageNode.src = src;
+  };
+
+  if (logoInput instanceof HTMLInputElement) {
+    logoInput.addEventListener("change", async () => {
+      const file = logoInput.files?.[0];
+      if (!file) return;
+
+      const allowedTypes = ["image/png", "image/jpeg", "image/webp", "image/svg+xml"];
+      if (!allowedTypes.includes(file.type)) {
+        showMessage(messages, "Gunakan file logo PNG, JPG, WEBP, atau SVG.");
+        logoInput.value = "";
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        showMessage(messages, "Ukuran logo maksimal 5 MB.");
+        logoInput.value = "";
+        return;
+      }
+
+      logoInput.disabled = true;
+      setLogoStatus("Mengupload logo ke storage...", "warning");
+
+      try {
+        const createUploadResponse = await fetch("/api/v1/settings/profile/logo-upload", {
+          method: "POST",
+          headers: {
+            "content-type": file.type,
+            "x-csrf-token": csrf,
+            "x-file-name": encodeURIComponent(file.name)
+          },
+          body: file
+        });
+        const createUploadPayload = await createUploadResponse.json();
+        if (!createUploadResponse.ok) {
+          throw new Error(createUploadPayload?.error?.message ?? "Gagal menyiapkan upload logo.");
+        }
+
+        const upload = createUploadPayload?.data ?? {};
+        if (logoObjectKeyField instanceof HTMLInputElement) {
+          logoObjectKeyField.value = String(upload.object_key || "");
+        }
+        ensureLogoPreview(URL.createObjectURL(file));
+        setLogoStatus("Logo baru sudah terupload. Klik Save profile untuk menyimpan ke akun.", "success");
+        showMessage(messages, "Logo berhasil diupload. Simpan profile untuk memakai logo ini.", "success");
+      } catch (error) {
+        setLogoStatus("Upload logo gagal. Coba lagi.", "danger");
+        showMessage(messages, error instanceof Error ? error.message : String(error));
+      } finally {
+        logoInput.disabled = false;
+      }
+    });
+  }
 }
 
 for (const button of document.querySelectorAll("[data-api-action]")) {
@@ -142,6 +265,7 @@ if (autoClipForm) {
   const submitSummaryRights = autoClipForm.querySelector("[data-submit-summary-rights]");
   const sourceUrlHelper = autoClipForm.querySelector("[data-source-url-helper]");
   const precheckList = autoClipForm.querySelector("[data-auto-clip-precheck-list]");
+  const layoutPanels = autoClipForm.querySelectorAll("[data-layout-panel]");
   const listHelpers = new Map(
     [...autoClipForm.querySelectorAll("[data-list-helper]")].map((node) => [node.getAttribute("data-list-helper"), node])
   );
@@ -245,6 +369,18 @@ if (autoClipForm) {
     syncSubmitSummary();
   };
 
+  const syncLayoutMode = () => {
+    const aspectRatio = String(autoClipForm.querySelector('[name="aspect_ratio"]')?.value || "9:16").trim();
+    for (const panel of layoutPanels) {
+      panel.hidden = panel.getAttribute("data-layout-panel") !== aspectRatio;
+    }
+    const layoutField = autoClipForm.querySelector('[name="layout_template"]');
+    if (layoutField instanceof HTMLSelectElement && aspectRatio !== "9:16") {
+      layoutField.value = "STANDARD";
+    }
+    syncSubmitSummary();
+  };
+
   const setFieldValue = (name, value) => {
     if (value === undefined || value === null || value === "") return;
     const field = autoClipForm.querySelector(`[name="${name}"]`);
@@ -292,6 +428,7 @@ if (autoClipForm) {
     const subtitleFormat = String(autoClipForm.querySelector('[name="subtitle_primary_format"]')?.value || "ASS").trim();
     const aspectRatio = String(autoClipForm.querySelector('[name="aspect_ratio"]')?.value || "9:16").trim();
     const cropStrategy = String(autoClipForm.querySelector('[name="crop_strategy"]')?.value || "AUTO_REFRAME").trim();
+    const layoutTemplate = String(autoClipForm.querySelector('[name="layout_template"]')?.value || "STANDARD").trim();
     const rightsConfirmed = autoClipForm.querySelector('[name="rights_confirmed"]')?.checked === true;
     const advancedMode = advancedModeField?.checked === true;
     const preferredTopics = splitCsv(autoClipForm.querySelector('[name="preferred_topics"]')?.value || "");
@@ -316,7 +453,7 @@ if (autoClipForm) {
       submitSummarySubtitle.textContent = `${subtitleLanguage || "-"} | ${subtitleFormat || "-"}`;
     }
     if (submitSummaryVisual) {
-      submitSummaryVisual.textContent = `${aspectRatio || "-"} | ${cropStrategy || "-"}`;
+      submitSummaryVisual.textContent = `${aspectRatio || "-"} | ${cropStrategy || "-"} | ${layoutTemplate || "STANDARD"}`;
     }
     if (submitSummaryMode) {
       submitSummaryMode.textContent = advancedMode ? "Advanced Mode" : "Quick Mode";
@@ -438,6 +575,7 @@ if (autoClipForm) {
     setFieldValue("cta_preference", config.cta_preference);
     setFieldValue("standalone_priority", config.standalone_priority);
     setFieldValue("aspect_ratio", config.aspect_ratio);
+    setFieldValue("layout_template", config.layout_template || config.layoutTemplate);
     setFieldValue("preferred_topics", joinTextList(config.preferred_topics));
     setFieldValue("topics_to_avoid", joinTextList(config.topics_to_avoid));
     setFieldValue("clip_style_tags", joinTextList(config.clip_style_tags));
@@ -471,6 +609,7 @@ if (autoClipForm) {
 
   syncAdvancedMode();
   syncSourceMode();
+  syncLayoutMode();
   syncSubmitSummary();
   updatePresetPreview(null);
   updateBrandKitPreview(null);
@@ -479,8 +618,10 @@ if (autoClipForm) {
   advancedModeField?.addEventListener("change", syncAdvancedMode);
   advancedModeField?.addEventListener("change", syncSubmitSummary);
   sourceModeField?.addEventListener("change", syncSourceMode);
+  autoClipForm.querySelector('[name="aspect_ratio"]')?.addEventListener("change", syncLayoutMode);
   presetSelector?.addEventListener("change", () => {
     applyPreset(presetSelector.value);
+    syncLayoutMode();
     syncSubmitSummary();
   });
   brandKitSelector?.addEventListener("change", () => {
@@ -558,7 +699,9 @@ if (autoClipForm) {
         aspect_ratio: String(data.get("aspect_ratio")),
         crop_strategy: String(data.get("crop_strategy")),
         settings: {
-          mode: data.get("advanced_mode") === "on" ? "ADVANCED" : "QUICK"
+          mode: data.get("advanced_mode") === "on" ? "ADVANCED" : "QUICK",
+          layout_template: String(data.get("layout_template") || "STANDARD").trim() || "STANDARD",
+          brand_kit_id: String(data.get("brand_kit_id") || "").trim() || undefined
         }
       },
         subtitle: {
@@ -816,6 +959,7 @@ for (const row of document.querySelectorAll("[data-job-stream-row]")) {
 function initJobStream(root) {
   const jobId = root.getAttribute("data-job-stream");
   if (!jobId || typeof EventSource === "undefined") return;
+  const jobType = String(root.getAttribute("data-job-type") || "").trim();
 
   const progressBar = root.querySelector("[data-job-progress-bar]");
   const progressValues = root.querySelectorAll("[data-job-progress-value], [data-job-progress-value-inline]");
@@ -924,6 +1068,7 @@ function initJobStream(root) {
 
     if (
       !completionRefreshTriggered
+      && jobType === "AUTO_CLIPPING"
       && clipOutputsSection
       && nextStatus === "COMPLETED"
       && ["job.completed", "job.warning"].includes(String(eventPayload.event_type || ""))
@@ -1205,6 +1350,7 @@ function validateAutoClipPayload(payload) {
   const content = payload?.content ?? {};
   const strategy = payload?.strategy ?? {};
   const visual = payload?.visual ?? {};
+  const visualSettings = visual.settings ?? {};
   const subtitle = payload?.subtitle ?? {};
   const subtitleSettings = subtitle.settings ?? {};
   const ai = payload?.ai ?? {};
@@ -1306,6 +1452,12 @@ function validateAutoClipPayload(payload) {
   }
   if (!["CENTER", "ACTIVE_SPEAKER", "FACE_TRACKING", "AUTO_REFRAME", "SPLIT_SCREEN", "SPEAKER_AND_SCREEN", "BLURRED_BACKGROUND", "MANUAL"].includes(String(visual.crop_strategy || ""))) {
     errors.push("visual.crop_strategy is invalid");
+  }
+  if (
+    String(visual.aspect_ratio || "") !== "9:16"
+    && String(visualSettings.layout_template || "STANDARD") !== "STANDARD"
+  ) {
+    errors.push("visual.settings.layout_template hanya tersedia untuk aspect ratio 9:16");
   }
 
   if (typeof subtitle.language !== "string" || subtitle.language.trim().length === 0) {

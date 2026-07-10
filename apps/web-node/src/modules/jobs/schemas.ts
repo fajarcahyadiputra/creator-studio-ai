@@ -1,5 +1,63 @@
 import { z } from "zod";
 
+function booleanField(defaultValue = false) {
+  return z.preprocess((value) => {
+    if (typeof value === "boolean") return value;
+    if (value === "true") return true;
+    if (value === "false") return false;
+    if (value === "on") return true;
+    if (value === "off") return false;
+    return value;
+  }, z.boolean().default(defaultValue));
+}
+
+function optionalText(maxLength: number) {
+  return z
+    .string()
+    .trim()
+    .max(maxLength)
+    .transform((value) => value || undefined);
+}
+
+function optionalInteger(min: number, max: number) {
+  return z.preprocess((value) => {
+    if (value === undefined || value === null || value === "") return undefined;
+    if (typeof value === "number") return value;
+    if (typeof value === "string") return Number.parseInt(value, 10);
+    return value;
+  }, z.number().int().min(min).max(max).optional());
+}
+
+function optionalNumber(min: number, max: number) {
+  return z.preprocess((value) => {
+    if (value === undefined || value === null || value === "") return undefined;
+    if (typeof value === "number") return value;
+    if (typeof value === "string") return Number.parseFloat(value);
+    return value;
+  }, z.number().min(min).max(max).optional());
+}
+
+function splitTextList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  if (typeof value !== "string") return value;
+  return value
+    .split(/[\n,;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function optionalTextList(maxItems: number, maxChars: number) {
+  return z.preprocess(
+    splitTextList,
+    z.array(z.string().trim().min(1).max(maxChars)).max(maxItems).default([])
+  );
+}
+
 const transcriptWordSchema = z.object({
   start_seconds: z.number().min(0),
   end_seconds: z.number().gt(0),
@@ -157,4 +215,94 @@ export const retryJobSchema = z.object({
 
 export const clipCandidateSelectionSchema = z.object({
   selected: z.boolean()
+});
+
+export const regenerateAutoClipJobSchema = z
+  .object({
+    content_title: optionalText(255),
+    content_context: optionalText(20000),
+    topic: optionalText(255),
+    source_language: optionalText(20),
+    speaker_count: optionalInteger(1, 20),
+    custom_vocabulary_text: optionalTextList(200, 100),
+    target_platform: z.enum(["TIKTOK", "INSTAGRAM_REELS", "FACEBOOK_REELS", "YOUTUBE_SHORTS", "CUSTOM"]),
+    objective: z.enum(["ENGAGEMENT", "EDUCATION", "CONTROVERSY", "STORYTELLING", "PRODUCT_AWARENESS", "LEAD_GENERATION"]),
+    tones_text: optionalTextList(5, 50),
+    desired_clip_count: optionalInteger(1, 30),
+    candidate_pool_count: optionalInteger(1, 30),
+    minimum_duration_seconds: optionalInteger(10, 180),
+    maximum_duration_seconds: optionalInteger(15, 180),
+    minimum_viral_score: optionalNumber(0, 10),
+    preferred_topics_text: optionalTextList(20, 120),
+    topics_to_avoid_text: optionalTextList(20, 120),
+    sensitive_topics_text: optionalTextList(20, 120),
+    clip_style_tags_text: optionalTextList(20, 80),
+    virality_priorities_text: optionalTextList(20, 80),
+    selection_brief: optionalText(12000),
+    avoidance_brief: optionalText(12000),
+    packaging_brief: optionalText(12000),
+    hook_style: optionalText(80),
+    cta_preference: optionalText(120),
+    standalone_priority: z.enum(["REQUIRED", "PREFERRED", "FLEXIBLE"]).default("PREFERRED"),
+    require_spoken_audio: booleanField(true),
+    profanity_handling: z.enum(["KEEP", "MUTE", "BLEEP", "SUBTITLE_CENSOR"]).default("KEEP"),
+    remove_long_silence: booleanField(true),
+    remove_filler_words: booleanField(false),
+    aspect_ratio: z.enum(["9:16", "1:1", "4:5", "16:9", "CUSTOM"]),
+    crop_strategy: z.enum(["CENTER", "ACTIVE_SPEAKER", "FACE_TRACKING", "AUTO_REFRAME", "SPLIT_SCREEN", "SPEAKER_AND_SCREEN", "BLURRED_BACKGROUND", "MANUAL"]),
+    layout_template: z.enum(["STANDARD", "PODCAST_SPOTLIGHT_9X16"]).default("STANDARD"),
+    subtitle_enabled: booleanField(true),
+    subtitle_language: z.string().trim().min(2).max(20),
+    subtitle_burn_in: booleanField(false),
+    subtitle_primary_format: z.enum(["SRT", "VTT", "ASS", "JSON"]).default("ASS"),
+    subtitle_export_formats_text: optionalTextList(4, 10),
+    subtitle_style: optionalText(80),
+    subtitle_font_family: optionalText(120),
+    subtitle_position: z.enum(["TOP", "CENTER", "BOTTOM"]).optional(),
+    subtitle_max_lines: optionalInteger(1, 4)
+  })
+  .refine((value) => !value.tones_text || value.tones_text.length >= 1, {
+    message: "At least one tone is required.",
+    path: ["tones_text"]
+  })
+  .refine(
+    (value) =>
+      value.maximum_duration_seconds === undefined
+      || value.minimum_duration_seconds === undefined
+      || value.maximum_duration_seconds >= value.minimum_duration_seconds,
+    {
+      message: "Maximum duration must be greater than or equal to minimum duration.",
+      path: ["maximum_duration_seconds"]
+    }
+  )
+  .refine(
+    (value) =>
+      value.candidate_pool_count === undefined
+      || value.desired_clip_count === undefined
+      || value.candidate_pool_count >= value.desired_clip_count,
+    {
+      message: "Candidate pool count must be greater than or equal to desired clip count.",
+      path: ["candidate_pool_count"]
+    }
+  );
+
+export const regenerateTtsJobSchema = z.object({
+  script: z.string().trim().min(1).max(100000),
+  language: z.string().trim().min(2).max(20).default("id"),
+  local_model_key: optionalText(200),
+  voice_identifier: optionalText(200),
+  speaking_style: optionalText(80),
+  emotion: optionalText(80),
+  speaking_speed: optionalNumber(0.5, 3),
+  pitch: optionalNumber(-20, 20),
+  pause_intensity: optionalNumber(0, 3),
+  target_duration_ms: optionalInteger(1, 14_400_000),
+  preferred_format: z.enum(["WAV", "MP3", "OGG"]).default("WAV"),
+  segmentation_mode: z.enum(["OPENAI", "LOCAL_HEURISTIC"]).default("LOCAL_HEURISTIC"),
+  sample_rate: optionalInteger(8000, 96000),
+  channels: optionalInteger(1, 2),
+  tone_notes: optionalText(4000),
+  delivery_goal: optionalText(4000),
+  segment_length_preference: z.enum(["SHORT", "BALANCED", "LONG"]).optional(),
+  breathing_style: z.enum(["MINIMAL", "NATURAL", "DRAMATIC"]).optional()
 });

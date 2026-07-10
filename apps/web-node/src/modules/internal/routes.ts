@@ -412,8 +412,6 @@ export function internalRouter(projection: JobProjectionService): Router {
         clipOutput.finalObjectKey ?? `jobs/${clipOutput.jobId}/clip-outputs/${clipOutput.id}/final.mp4`;
       const metadataObjectKey =
         clipOutput.metadataObjectKey ?? `jobs/${clipOutput.jobId}/clip-outputs/${clipOutput.id}/metadata.json`;
-      const thumbnailObjectKey =
-        clipOutput.thumbnailObjectKey ?? `jobs/${clipOutput.jobId}/clip-outputs/${clipOutput.id}/thumbnail.jpg`;
       const subtitleFormat = resolveSubtitleFormat(clipOutput.renderSettings);
       const subtitleObjectKey =
         clipOutput.subtitles[0]?.objectKey
@@ -431,7 +429,6 @@ export function internalRouter(projection: JobProjectionService): Router {
         createArtifactUpload("preview", previewObjectKey, "video/mp4"),
         createArtifactUpload("final", finalObjectKey, "video/mp4"),
         createArtifactUpload("metadata", metadataObjectKey, "application/json"),
-        createArtifactUpload("thumbnail", thumbnailObjectKey, resolveImageMimeType(thumbnailObjectKey)),
         createArtifactUpload("subtitle", subtitleObjectKey, resolveSubtitleMimeType(subtitleFormat)),
         createArtifactUpload("subtitle_srt", subtitleSrtObjectKey, "application/x-subrip"),
         createArtifactUpload("subtitle_ass", subtitleAssObjectKey, "text/x-ssa"),
@@ -470,7 +467,6 @@ export function internalRouter(projection: JobProjectionService): Router {
             preview_object_key: previewObjectKey,
             final_object_key: finalObjectKey,
             metadata_object_key: metadataObjectKey,
-            thumbnail_object_key: thumbnailObjectKey,
             subtitle_object_key: subtitleObjectKey
           },
           artifact_uploads: artifactUploads

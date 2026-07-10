@@ -6,6 +6,7 @@ import { prisma } from "../../infrastructure/database/prisma.js";
 import { createPublicSignedObjectReadUrl } from "../../infrastructure/storage/s3.js";
 import { asyncHandler } from "../../shared/http/async-handler.js";
 import { validateBody } from "../../shared/http/validate.js";
+import { logger } from "../../shared/logging/logger.js";
 import { requireAuth, requirePermission } from "../auth/identity-middleware.js";
 import { listLocalTtsModels } from "../tts/local-tts-model-registry.js";
 
@@ -23,6 +24,11 @@ const TERMINAL_JOB_DISPLAY_STAGE: Partial<Record<JobStatus, string>> = {
   PARTIALLY_COMPLETED: "PARTIALLY_COMPLETED",
   NEEDS_REVIEW: "NEEDS_REVIEW"
 };
+
+function resolveRequestOrigin(request: { protocol: string; get(name: string): string | undefined }) {
+  const host = request.get("host");
+  return host ? `${request.protocol}://${host}` : undefined;
+}
 
 dashboardRouter.get(
   "/app/dashboard",
@@ -207,6 +213,7 @@ dashboardRouter.get(
   "/app/jobs/:jobId",
   requireAuth,
   asyncHandler(async (request, response) => {
+    const requestOrigin = resolveRequestOrigin(request);
     const jobId = String(request.params.jobId);
     const job = await prisma.job.findFirst({
       where: { id: jobId, userId: request.identity!.effectiveUserId, deletedAt: null },
@@ -274,14 +281,14 @@ dashboardRouter.get(
         ? (outputSummary.analyzer as Record<string, unknown>)
         : null;
     const sourceMediaPlaybackUrl = job.sourceMediaAsset?.objectKey
-      ? await createPublicSignedObjectReadUrl(job.sourceMediaAsset.objectKey)
+      ? await createPublicSignedObjectReadUrl(job.sourceMediaAsset.objectKey, undefined, requestOrigin)
       : null;
     const latestTtsOutput =
       job.ttsRequest?.outputs.find((output) => output.status === "READY" && output.mediaAsset?.objectKey)
       ?? job.ttsRequest?.outputs.find((output) => Boolean(output.mediaAsset?.objectKey))
       ?? null;
     const ttsAudioPlaybackUrl = latestTtsOutput?.mediaAsset.objectKey
-      ? await createPublicSignedObjectReadUrl(latestTtsOutput.mediaAsset.objectKey)
+      ? await createPublicSignedObjectReadUrl(latestTtsOutput.mediaAsset.objectKey, undefined, requestOrigin)
       : null;
     const strategyConfig = toJsonRecord(job.autoClipRequest?.strategyConfig);
     const visualConfig = toJsonRecord(job.autoClipRequest?.visualConfig);
@@ -346,15 +353,11 @@ dashboardRouter.get(
           ? qualityValidation.warnings.filter((warning): warning is string => typeof warning === "string" && warning.trim().length > 0)
           : [];
         const previewPlaybackUrl = output.previewObjectKey
-          ? await createPublicSignedObjectReadUrl(output.previewObjectKey)
+          ? await createPublicSignedObjectReadUrl(output.previewObjectKey, undefined, requestOrigin)
           : null;
         const finalPlaybackUrl = output.finalObjectKey
-          ? await createPublicSignedObjectReadUrl(output.finalObjectKey)
+          ? await createPublicSignedObjectReadUrl(output.finalObjectKey, undefined, requestOrigin)
           : null;
-        const thumbnailPlaybackUrl = output.thumbnailObjectKey
-          ? await createPublicSignedObjectReadUrl(output.thumbnailObjectKey)
-          : null;
-
         return {
           id: output.id,
           candidateId: output.candidateId,
@@ -369,7 +372,7 @@ dashboardRouter.get(
           previewAvailable: Boolean(output.previewObjectKey),
           finalAvailable: Boolean(output.finalObjectKey),
           metadataAvailable: Boolean(output.metadataObjectKey),
-          thumbnailAvailable: Boolean(output.thumbnailObjectKey),
+          thumbnailAvailable: false,
           subtitleAvailable: output.subtitles.length > 0,
           subtitleFormats: output.subtitles.map((subtitle) => subtitle.format),
           subtitleDownloads: output.subtitles.map((subtitle) => ({
@@ -443,7 +446,7 @@ dashboardRouter.get(
             typeof metadata.retention_level === "string" ? metadata.retention_level : null,
           suggestedCaption:
             typeof metadata.suggested_caption === "string" ? metadata.suggested_caption : null,
-          thumbnailPlaybackUrl,
+          thumbnailPlaybackUrl: null,
           previewPlaybackUrl,
           finalPlaybackUrl
         };
@@ -679,9 +682,11 @@ dashboardRouter.get(
               },
               visual: {
                 aspectRatio: toOptionalString(visualConfig.aspect_ratio),
-                cropStrategy: toOptionalString(visualConfig.crop_strategy)
+                cropStrategy: toOptionalString(visualConfig.crop_strategy),
+                layoutTemplate: toOptionalString(toJsonRecord(visualConfig.settings).layout_template) ?? "STANDARD"
               },
               subtitle: {
+                enabled: toOptionalBoolean(subtitleConfig.enabled),
                 language: toOptionalString(subtitleConfig.language),
                 burnIn: toOptionalBoolean(subtitleConfig.burn_in),
                 exportFormats: toStringArray(subtitleConfig.export_formats),
@@ -699,6 +704,7 @@ dashboardRouter.get(
           : null,
         ttsRequestSnapshot: job.ttsRequest
           ? {
+              script: job.ttsRequest.script,
               language: job.ttsRequest.language,
               localModelKey:
                 toOptionalString(ttsInputSnapshot.local_model_key) ??
@@ -749,11 +755,8 @@ dashboardRouter.get(
           }
         }
       }),
-      prisma.preset.findMany({
-        where: { userId, type: "TTS", deletedAt: null },
-        orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }]
-      }),
-      listLocalTtsModels()
+      loadOptionalTtsPresets(userId),
+      loadOptionalLocalTtsModels()
     ]);
 
     const selectedPreset = ttsPresets.find((preset) => preset.isDefault) ?? ttsPresets[0] ?? null;
@@ -882,24 +885,30 @@ dashboardRouter.get(
           setting: {
             select: {
               defaultContentNiche: true,
-              defaultAudience: true
+              defaultAudience: true,
+              preferences: true
             }
           }
         }
       }),
-      prisma.preset.findMany({
-        where: { userId, type: "CLIPPING", deletedAt: null },
-        orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }]
-      }),
-      prisma.brandKit.findMany({
-        where: { userId, deletedAt: null },
-        orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }]
-      })
+      loadOptionalAutoClipPresets(userId),
+      loadOptionalBrandKits(userId)
     ]);
+    const userPreferences = toJsonRecord(user?.setting?.preferences);
+    const preferredBrandKitId = toStringValue(userPreferences.preferred_brand_kit_id) ?? "";
     const selectedPreset = clippingPresets.find((preset) => preset.isDefault) ?? clippingPresets[0] ?? null;
-    const selectedBrandKit = brandKits.find((brandKit) => brandKit.isDefault) ?? brandKits[0] ?? null;
+    const selectedBrandKit =
+      brandKits.find((brandKit) => brandKit.id === preferredBrandKitId)
+      ?? brandKits.find((brandKit) => brandKit.isDefault)
+      ?? brandKits[0]
+      ?? null;
     const formDefaults = mergeAutoClipDefaults(
-      buildAutoClipFormDefaults(user?.setting?.defaultContentNiche, user?.setting?.defaultAudience),
+      buildAutoClipFormDefaults(
+        user?.setting?.defaultContentNiche,
+        user?.setting?.defaultAudience,
+        toStringValue(userPreferences.channel_name),
+        toStringValue(userPreferences.channel_tagline)
+      ),
       selectedPreset?.config,
       selectedBrandKit
         ? {
@@ -935,6 +944,51 @@ dashboardRouter.get(
     });
   })
 );
+
+async function loadOptionalAutoClipPresets(userId: string) {
+  try {
+    return await prisma.preset.findMany({
+      where: { userId, type: "CLIPPING", deletedAt: null },
+      orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }]
+    });
+  } catch (error) {
+    logger.warn({ userId, err: error }, "Failed to load clipping presets for auto-clipping page; falling back to defaults");
+    return [];
+  }
+}
+
+async function loadOptionalTtsPresets(userId: string) {
+  try {
+    return await prisma.preset.findMany({
+      where: { userId, type: "TTS", deletedAt: null },
+      orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }]
+    });
+  } catch (error) {
+    logger.warn({ userId, err: error }, "Failed to load TTS presets; continuing with manual defaults");
+    return [];
+  }
+}
+
+async function loadOptionalLocalTtsModels() {
+  try {
+    return (await listLocalTtsModels()).filter(isValidLocalTtsModel);
+  } catch (error) {
+    logger.warn({ err: error }, "Failed to load local TTS models; continuing with empty model list");
+    return [];
+  }
+}
+
+async function loadOptionalBrandKits(userId: string) {
+  try {
+    return await prisma.brandKit.findMany({
+      where: { userId, deletedAt: null },
+      orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }]
+    });
+  } catch (error) {
+    logger.warn({ userId, err: error }, "Failed to load brand kits for auto-clipping page; continuing without brand kits");
+    return [];
+  }
+}
 
 function countBy<T>(items: T[], keySelector: (item: T) => string): Array<[string, number]> {
   const counts = new Map<string, number>();
@@ -1020,7 +1074,12 @@ function formatDuration(ms: number) {
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
-function buildAutoClipFormDefaults(defaultContentNiche?: string | null, defaultAudience?: string | null) {
+function buildAutoClipFormDefaults(
+  defaultContentNiche?: string | null,
+  defaultAudience?: string | null,
+  channelName?: string | null,
+  channelTagline?: string | null
+) {
   return {
     sourceLanguage: "id",
     speakerCount: 1,
@@ -1083,8 +1142,38 @@ function buildAutoClipFormDefaults(defaultContentNiche?: string | null, defaultA
     subtitleFontFamily: "Montserrat",
     subtitlePosition: "BOTTOM",
     subtitleMaxLines: 2,
-    subtitleSafeMarginPercent: 8
+    subtitleSafeMarginPercent: 8,
+    layoutTemplate: "PODCAST_SPOTLIGHT_9X16",
+    channelName: channelName?.trim() || "",
+    channelTagline: channelTagline?.trim() || ""
   };
+}
+
+function isValidLocalTtsModel(model: unknown): model is {
+  key: string;
+  displayName: string;
+  languageCode: string;
+  localeGroup: string;
+  voiceName: string;
+  quality: string | null;
+  sampleRate: number | null;
+  speakerCount: number | null;
+  phonemeType: string | null;
+  dataset: string | null;
+  defaultSampleText: string;
+} {
+  if (!model || typeof model !== "object" || Array.isArray(model)) {
+    return false;
+  }
+  const value = model as Record<string, unknown>;
+  return [
+    value.key,
+    value.displayName,
+    value.languageCode,
+    value.localeGroup,
+    value.voiceName,
+    value.defaultSampleText
+  ].every((entry) => typeof entry === "string");
 }
 
 function mergeAutoClipDefaults(
@@ -1155,7 +1244,11 @@ function mergeAutoClipDefaults(
     subtitleSafeMarginPercent:
       toNumberValue(subtitlePreset.safe_margin_percent) ??
       toNumberValue(safeMarginConfig.bottom_percent) ??
-      baseDefaults.subtitleSafeMarginPercent
+      baseDefaults.subtitleSafeMarginPercent,
+    layoutTemplate:
+      toStringValue(presetConfig.layout_template)
+      ?? toStringValue(presetConfig.layoutTemplate)
+      ?? baseDefaults.layoutTemplate
   };
 }
 

@@ -115,6 +115,8 @@ def build_clip_render_command(
     fps: int = 30,
     video_preset: str = "medium",
     subtitle_path: str | Path | None = None,
+    layout_template: str | None = None,
+    layout_options: dict[str, Any] | None = None,
 ) -> FfmpegCommand:
     if start_seconds < 0:
         raise ValueError("start_seconds must be non-negative")
@@ -126,6 +128,22 @@ def build_clip_render_command(
         raise ValueError("fps must be positive")
     if video_preset not in {"ultrafast", "superfast", "veryfast", "faster", "fast", "medium"}:
         raise ValueError("unsupported video preset")
+
+    if layout_template == "PODCAST_SPOTLIGHT_9X16":
+        return _build_podcast_spotlight_render_command(
+            source=source,
+            destination=destination,
+            start_seconds=start_seconds,
+            duration_seconds=duration_seconds,
+            source_width=source_width,
+            source_height=source_height,
+            width=width,
+            height=height,
+            fps=fps,
+            video_preset=video_preset,
+            subtitle_path=subtitle_path,
+            layout_options=layout_options or {},
+        )
 
     arguments: list[str] = [
         "-hide_banner",
@@ -165,6 +183,71 @@ def build_clip_render_command(
     return FfmpegCommand(executable="ffmpeg", arguments=tuple(arguments))
 
 
+def _build_podcast_spotlight_render_command(
+    *,
+    source: str | Path,
+    destination: str | Path,
+    start_seconds: float,
+    duration_seconds: float,
+    source_width: int | None,
+    source_height: int | None,
+    width: int,
+    height: int,
+    fps: int,
+    video_preset: str,
+    subtitle_path: str | Path | None,
+    layout_options: dict[str, Any],
+) -> FfmpegCommand:
+    logo_source = layout_options.get("logo_source")
+    arguments: list[str] = [
+        "-hide_banner",
+        "-nostdin",
+        "-y",
+        "-ss",
+        f"{start_seconds:.3f}",
+        "-t",
+        f"{duration_seconds:.3f}",
+        "-i",
+        str(source),
+    ]
+    if isinstance(logo_source, str) and logo_source.strip():
+        arguments.extend(["-i", logo_source.strip()])
+
+    filter_graph = _build_podcast_spotlight_filter_graph(
+        source_width=source_width,
+        source_height=source_height,
+        target_width=width,
+        target_height=height,
+        fps=fps,
+        subtitle_path=subtitle_path,
+        layout_options=layout_options,
+        include_logo_input=isinstance(logo_source, str) and bool(logo_source.strip()),
+    )
+    arguments.extend(
+        [
+            "-filter_complex",
+            filter_graph,
+            "-map",
+            "[vout]",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-preset",
+            video_preset,
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-movflags",
+            "+faststart",
+            "-shortest",
+            str(destination),
+        ]
+    )
+    return FfmpegCommand(executable="ffmpeg", arguments=tuple(arguments))
+
+
 def build_clip_filter_graph(
     *,
     source_width: int | None,
@@ -188,6 +271,157 @@ def build_clip_filter_graph(
     if subtitle_path is not None:
         filters.append(f"subtitles={subtitle_path}")
     return ",".join(filters)
+
+
+def _build_podcast_spotlight_filter_graph(
+    *,
+    source_width: int | None,
+    source_height: int | None,
+    target_width: int,
+    target_height: int,
+    fps: int,
+    subtitle_path: str | Path | None,
+    layout_options: dict[str, Any],
+    include_logo_input: bool,
+) -> str:
+    panel_width = 930
+    panel_height = 690
+    panel_x = 75
+    panel_y = 540
+    crop_filter = _build_center_crop_filter(
+        source_width=source_width,
+        source_height=source_height,
+        target_width=panel_width,
+        target_height=panel_height,
+    )
+    video_filters = [part for part in [crop_filter, f"scale={panel_width}:{panel_height}", f"fps={fps}"] if part]
+    graph_parts = [
+        f"color=c=0x05070d:s={target_width}x{target_height}:d=1[base]",
+        f"[0:v]{','.join(video_filters)}[clip]",
+        "[base]drawbox=x=0:y=0:w=iw:h=ih:color=0x04060c:t=fill[bg0]",
+        "[bg0]drawbox=x=0:y=0:w=iw:h=ih:color=0x0b1220@0.22:t=18[bg1]",
+        "[bg1]drawbox=x=270:y=134:w=540:h=4:color=0xf6c343@0.95:t=fill[bg2]",
+        "[bg2]drawbox=x=120:y=332:w=840:h=3:color=0xf6c343@0.75:t=fill[bg3]",
+        f"[bg3]drawbox=x={panel_x - 10}:y={panel_y - 10}:w={panel_width + 20}:h={panel_height + 20}:color=0xf6c343@0.92:t=3[panel0]",
+        f"[panel0]drawbox=x={panel_x}:y={panel_y}:w={panel_width}:h={panel_height}:color=0x111827@0.98:t=fill[panel1]",
+        f"[panel1][clip]overlay={panel_x}:{panel_y}[canvas0]",
+        "[canvas0]drawbox=x=118:y=1298:w=844:h=252:color=0x0d1422@0.94:t=fill[quotebox0]",
+        "[quotebox0]drawbox=x=118:y=1298:w=844:h=252:color=white@0.10:t=2[quotebox1]",
+        "[quotebox1]drawbox=x=370:y=1788:w=340:h=54:color=0x0d1422@0.98:t=fill[sourcebar0]",
+        "[sourcebar0]drawbox=x=370:y=1788:w=340:h=54:color=0xf6c343@0.70:t=2[sourcebar1]",
+    ]
+
+    current_label = "sourcebar1"
+    if include_logo_input:
+        graph_parts.append("[1:v]scale=120:120[logo]")
+        graph_parts.append(f"[{current_label}][logo]overlay=220:52[canvas1]")
+        current_label = "canvas1"
+
+    current_label = _append_textfile_draw(
+        graph_parts,
+        current_label,
+        layout_options.get("channel_name_file"),
+        font_size=_resolve_font_size(layout_options.get("channel_name_size"), 32),
+        x="360",
+        y=70,
+        font_color="white@0.97",
+        output_label="canvas2",
+    )
+    current_label = _append_textfile_draw(
+        graph_parts,
+        current_label,
+        layout_options.get("channel_tagline_file"),
+        font_size=_resolve_font_size(layout_options.get("channel_tagline_size"), 24),
+        x="360",
+        y=112,
+        font_color="0xf6c343@0.97",
+        output_label="canvas3",
+    )
+    current_label = _append_textfile_draw(
+        graph_parts,
+        current_label,
+        layout_options.get("headline_file"),
+        font_size=_resolve_font_size(layout_options.get("headline_size"), 96),
+        x="(w-text_w)/2",
+        y=170,
+        font_color="white@0.98",
+        line_spacing=12,
+        output_label="canvas4",
+    )
+    current_label = _append_textfile_draw(
+        graph_parts,
+        current_label,
+        layout_options.get("quote_file"),
+        font_size=44,
+        x="(w-text_w)/2",
+        y=1380,
+        font_color="white@0.98",
+        line_spacing=14,
+        output_label="canvas5",
+    )
+    graph_parts.append(
+        f"[{current_label}]drawtext=text='“':fontcolor=0xf6c343@0.98:fontsize=112:x=(w-text_w)/2:y=1298[canvas6]"
+    )
+    current_label = "canvas6"
+    current_label = _append_textfile_draw(
+        graph_parts,
+        current_label,
+        layout_options.get("source_label_file"),
+        font_size=_resolve_font_size(layout_options.get("source_label_size"), 28),
+        x="(w-text_w)/2",
+        y=1800,
+        font_color="0xf6c343@0.97",
+        output_label="canvas7",
+    )
+
+    # This poster-style layout uses its own quote card under the video.
+    # Sidecar subtitles are still generated and uploaded separately, but we avoid
+    # burning default full-frame subtitles because they visually fight the layout.
+    graph_parts.append(f"[{current_label}]null[vout]")
+
+    return ";".join(graph_parts)
+
+
+def _append_textfile_draw(
+    graph_parts: list[str],
+    input_label: str,
+    textfile: Any,
+    *,
+    font_size: int,
+    x: str,
+    y: int,
+    font_color: str,
+    output_label: str,
+    line_spacing: int = 12,
+    box: int = 0,
+    box_color: str = "black@0.0",
+    box_borderw: int = 0,
+) -> str:
+    if not isinstance(textfile, (str, Path)) or not str(textfile).strip():
+        return input_label
+    escaped_path = _escape_filter_value(textfile)
+    graph_parts.append(
+        f"[{input_label}]drawtext=textfile='{escaped_path}':fontcolor={font_color}:fontsize={font_size}:x={x}:y={y}:line_spacing={line_spacing}:box={box}:boxcolor={box_color}:boxborderw={box_borderw}[{output_label}]"
+    )
+    return output_label
+
+
+def _resolve_font_size(value: Any, fallback: int) -> int:
+    if isinstance(value, int) and value > 0:
+        return value
+    return fallback
+
+
+def _escape_filter_value(value: str | Path) -> str:
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace(":", r"\:")
+        .replace(",", r"\,")
+        .replace("'", r"\'")
+        .replace("[", r"\[")
+        .replace("]", r"\]")
+    )
 
 
 def _build_center_crop_filter(

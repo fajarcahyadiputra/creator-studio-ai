@@ -8,6 +8,8 @@ from app.domain.contracts import ProgressEvent
 from app.infrastructure.callback_client import JobCallbackClient
 
 logger = logging.getLogger(__name__)
+MAX_WARNING_MESSAGE_LENGTH = 1800
+MAX_TECHNICAL_MESSAGE_LENGTH = 1500
 
 
 async def emit_retry_warning(
@@ -23,12 +25,18 @@ async def emit_retry_warning(
     if not job_id:
         return
 
+    technical_message = _truncate_text(str(error), MAX_TECHNICAL_MESSAGE_LENGTH)
+    warning_message = _truncate_text(
+        f"{stage} attempt failed: {type(error).__name__}: {error}",
+        MAX_WARNING_MESSAGE_LENGTH,
+    )
+
     event = ProgressEvent(
         stage=stage,
         stage_progress=stage_progress,
         overall_progress=compute_overall_progress(stage, stage_progress),
         event_type="job.warning",
-        message=f"{stage} attempt failed: {type(error).__name__}: {error}",
+        message=warning_message,
         user_message=user_message,
         status=status,
         metadata={
@@ -36,7 +44,7 @@ async def emit_retry_warning(
             "total_stage_weight": TOTAL_STAGE_WEIGHT,
             "retrying": True,
             "error_type": type(error).__name__,
-            "technical_message": str(error),
+            "technical_message": technical_message,
             **(metadata or {}),
         },
     )
@@ -52,3 +60,10 @@ async def emit_retry_warning(
             },
             exc_info=True,
         )
+
+
+def _truncate_text(value: str, limit: int) -> str:
+    normalized = value.strip()
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[: max(0, limit - 14)].rstrip()}...[truncated]"

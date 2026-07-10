@@ -54,7 +54,16 @@ export const profileSettingsSchema = z.object({
   locale: z.string().trim().min(2).max(10),
   timezone: z.string().trim().min(2).max(64),
   default_content_niche: optionalText(120),
-  default_audience: optionalText(255)
+  default_audience: optionalText(255),
+  channel_name: optionalText(160),
+  channel_tagline: optionalText(160),
+  channel_logo_object_key: optionalText(500),
+  preferred_brand_kit_id: optionalUuid()
+});
+
+export const profileLogoUploadSchema = z.object({
+  file_name: z.string().trim().min(1).max(255),
+  mime_type: z.string().trim().min(1).max(120)
 });
 
 export const aiPreferenceSettingsSchema = z.object({
@@ -84,4 +93,3 @@ export const changePasswordSchema = z.object({
   current_password: z.string().min(1).max(128),
   new_password: strongPassword
 });
-
