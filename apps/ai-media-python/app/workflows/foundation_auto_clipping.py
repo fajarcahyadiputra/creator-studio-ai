@@ -45,6 +45,33 @@ EXTERNAL_SOURCE_ACTIVITY_RETRY = RetryPolicy(
 TRANSCRIPTION_ACTIVITY_TIMEOUT = timedelta(
     seconds=max(60, int(get_settings().TRANSCRIPTION_TIMEOUT_SECONDS))
 )
+ANALYZER_ACTIVITY_TIMEOUT = timedelta(
+    seconds=max(30, int(get_settings().ANALYZER_TIMEOUT_SECONDS))
+)
+ANALYZER_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
+
+EXTERNAL_SOURCE_ACTIVITY_TIMEOUT = timedelta(
+    seconds=max(300, int(get_settings().EXTERNAL_SOURCE_MATERIALIZATION_TIMEOUT_SECONDS))
+)
+
+
+def _summarize_activity_failure(error: Exception) -> str:
+    seen: set[int] = set()
+    cursor: Exception | None = error
+    messages: list[str] = []
+
+    while cursor is not None and id(cursor) not in seen:
+        seen.add(id(cursor))
+        message = str(cursor).strip()
+        if message and message not in {"Activity task failed", "CancelledError"}:
+            messages.append(message)
+        next_cursor = getattr(cursor, "cause", None)
+        cursor = next_cursor if isinstance(next_cursor, Exception) else None
+
+    if messages:
+        return messages[-1]
+    fallback = str(error).strip()
+    return fallback or type(error).__name__
 
 
 @workflow.defn(name="FoundationAutoClippingWorkflow")
@@ -85,22 +112,17 @@ class FoundationAutoClippingWorkflow:
             input_snapshot = validated["input_snapshot"]
             if not isinstance(input_snapshot, dict):
                 current_stage = "PROBING_MEDIA"
-                await self._emit(
-                    job_id,
-                    "PROBING_MEDIA",
-                    0,
-                    "job.needs_review",
-                    "Media extraction adapters are not available for this source yet.",
-                    "This job still needs the media-processing adapters or analysis inputs to continue.",
-                    "NEEDS_REVIEW",
-                    {"phase": "FOUNDATION_PLUS", "next_phase": "AUTO_CLIPPING_MVP"},
+                return await self._fail_and_finish(
+                    job_id=job_id,
+                    stage="PROBING_MEDIA",
+                    message="Media extraction adapters are not available for this source yet.",
+                    user_message="This job cannot continue because the source payload is incomplete for auto-clipping.",
+                    metadata={
+                        "phase": "FOUNDATION_PLUS",
+                        "next_phase": "AUTO_CLIPPING_MVP",
+                        "failure_reason": "missing_analysis_inputs_or_media_source",
+                    },
                 )
-                return {
-                    "job_id": job_id,
-                    "status": "NEEDS_REVIEW",
-                    "phase": "FOUNDATION_PLUS",
-                    "message": "Analysis inputs or media-processing adapters were not available.",
-                }
 
             if "analysis_inputs" in input_snapshot:
                 current_stage = "PROBING_MEDIA"
@@ -171,27 +193,28 @@ class FoundationAutoClippingWorkflow:
                                 "project_id": input_snapshot.get("project_id"),
                                 "source_url": source_url,
                             },
-                            start_to_close_timeout=timedelta(minutes=20),
-                            heartbeat_timeout=timedelta(seconds=15),
+                            start_to_close_timeout=EXTERNAL_SOURCE_ACTIVITY_TIMEOUT,
+                            heartbeat_timeout=timedelta(seconds=60),
                             retry_policy=EXTERNAL_SOURCE_ACTIVITY_RETRY,
                         )
                     except Exception as error:
-                        await self._emit(
-                            job_id,
-                            "PROBING_MEDIA",
-                            0,
-                            "job.needs_review",
-                            f"External source import failed: {error}",
-                            "The source URL could not be imported into the workspace media library.",
-                            "NEEDS_REVIEW",
-                            {"phase": "AUTO_CLIPPING_MVP", "missing": "source.media_asset_id", "source_url": source_url},
+                        failure_summary = _summarize_activity_failure(error)
+                        return await self._fail_and_finish(
+                            job_id=job_id,
+                            stage="PROBING_MEDIA",
+                            message=f"External source import failed: {failure_summary}",
+                            user_message=(
+                                "The source URL could not be imported into the workspace media library. "
+                                f"Technical summary: {failure_summary}"
+                            ),
+                            metadata={
+                                "phase": "AUTO_CLIPPING_MVP",
+                                "missing": "source.media_asset_id",
+                                "source_url": source_url,
+                                "error_type": type(error).__name__,
+                                "technical_message": str(error),
+                            },
                         )
-                        return {
-                            "job_id": job_id,
-                            "status": "NEEDS_REVIEW",
-                            "phase": "AUTO_CLIPPING_MVP",
-                            "message": "The external source could not be materialized into a workspace media asset.",
-                        }
 
                     media_asset_id = str(materialized["media_asset_id"])
                     input_snapshot = _replace_source_with_media_asset(input_snapshot, media_asset_id)
@@ -210,22 +233,17 @@ class FoundationAutoClippingWorkflow:
                     )
 
                 if media_asset_id is None:
-                    await self._emit(
-                        job_id,
-                        "PROBING_MEDIA",
-                        0,
-                        "job.needs_review",
-                        "A source media asset is required when analysis inputs are not provided.",
-                        "This job needs a ready source media asset before auto clipping can continue.",
-                        "NEEDS_REVIEW",
-                        {"phase": "AUTO_CLIPPING_MVP", "missing": "source.media_asset_id"},
+                    return await self._fail_and_finish(
+                        job_id=job_id,
+                        stage="PROBING_MEDIA",
+                        message="A source media asset is required when analysis inputs are not provided.",
+                        user_message="This job needs a ready source media asset before auto clipping can continue.",
+                        metadata={
+                            "phase": "AUTO_CLIPPING_MVP",
+                            "missing": "source.media_asset_id",
+                            "failure_reason": "missing_source_media_asset",
+                        },
                     )
-                    return {
-                        "job_id": job_id,
-                        "status": "NEEDS_REVIEW",
-                        "phase": "AUTO_CLIPPING_MVP",
-                        "message": "A source media asset is required when analysis inputs are not provided.",
-                    }
 
                 media_context = await workflow.execute_activity(
                     prepare_media_asset_validation,
@@ -387,8 +405,8 @@ class FoundationAutoClippingWorkflow:
                     "input_snapshot": validated["input_snapshot"],
                     "analysis_inputs": analysis_inputs,
                 },
-                start_to_close_timeout=timedelta(seconds=45),
-                heartbeat_timeout=timedelta(seconds=10),
+                start_to_close_timeout=ANALYZER_ACTIVITY_TIMEOUT,
+                heartbeat_timeout=ANALYZER_HEARTBEAT_TIMEOUT,
                 retry_policy=ACTIVITY_RETRY,
             )
             candidate_count = int(output_summary["candidate_count"])
@@ -500,6 +518,32 @@ class FoundationAutoClippingWorkflow:
             start_to_close_timeout=timedelta(seconds=20),
             retry_policy=ACTIVITY_RETRY,
         )
+
+    async def _fail_and_finish(
+        self,
+        *,
+        job_id: str,
+        stage: str,
+        message: str,
+        user_message: str,
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        await self._emit(
+            job_id,
+            stage,
+            100,
+            "job.failed",
+            message,
+            user_message,
+            "FAILED",
+            metadata,
+        )
+        return {
+            "job_id": job_id,
+            "status": "FAILED",
+            **metadata,
+            "message": user_message,
+        }
 
 
 def _extract_media_asset_id(input_snapshot: dict[str, Any]) -> str | None:

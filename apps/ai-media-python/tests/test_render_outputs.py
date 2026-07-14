@@ -1,6 +1,7 @@
 import pytest
 
-from app.activities.render_outputs import execute_clip_output_render
+from app.activities.render_outputs import SubtitleCue, SubtitleCueWord, _build_subtitle_cues, _render_ass, execute_clip_output_render
+from app.domain.contracts import TranscriptSegment
 
 
 @pytest.mark.asyncio
@@ -199,3 +200,109 @@ async def test_execute_clip_output_render_executes_render_pipeline(tmp_path, mon
     assert any(b"Halo semuanya retention" in payload for _, _, payload in uploads)
     assert (tmp_path / "clip-output-renders" / "output-1" / "subtitle.vtt").exists()
     assert (tmp_path / "clip-output-renders" / "output-1" / "subtitle.json").exists()
+
+
+def test_build_subtitle_cues_normalizes_literal_backslash_n_text() -> None:
+    cues = _build_subtitle_cues(
+        transcript_segments=[
+            TranscriptSegment(
+                segment_id="segment-1",
+                start_seconds=0.0,
+                end_seconds=3.0,
+                text="Oh wow baru ngerti gue.\\nMasa kok ini apa sih?",
+                speaker_label=None,
+                confidence=0.91,
+                words=[],
+            )
+        ],
+        clip_start_seconds=0.0,
+        clip_duration_seconds=3.0,
+    )
+
+    assert cues
+    assert any("Masa kok ini apa sih?" in cue.text for cue in cues)
+    assert all("\\n" not in cue.text for cue in cues)
+
+
+def test_build_subtitle_cues_respects_max_lines_setting() -> None:
+    cues = _build_subtitle_cues(
+        transcript_segments=[
+            TranscriptSegment(
+                segment_id="segment-1",
+                start_seconds=0.0,
+                end_seconds=5.0,
+                text="satu dua tiga empat lima enam tujuh delapan sembilan sepuluh sebelas dua belas",
+                speaker_label=None,
+                confidence=0.91,
+                words=[],
+            )
+        ],
+        clip_start_seconds=0.0,
+        clip_duration_seconds=5.0,
+        max_lines=3,
+    )
+
+    assert cues
+    assert cues[0].text.count("\n") <= 2
+    reconstructed = " ".join(cue.text.replace("\n", " ") for cue in cues)
+    assert "satu dua tiga empat lima enam tujuh delapan sembilan sepuluh sebelas dua belas" in reconstructed
+
+
+def test_build_subtitle_cues_splits_to_new_cue_before_layout_overflow() -> None:
+    cues = _build_subtitle_cues(
+        transcript_segments=[
+            TranscriptSegment(
+                segment_id="segment-1",
+                start_seconds=0.0,
+                end_seconds=6.0,
+                text="kamu sedang bersama siapa dan dimana sekarang lalu kenapa belum pulang juga malam ini",
+                speaker_label=None,
+                confidence=0.91,
+                words=[],
+            )
+        ],
+        clip_start_seconds=0.0,
+        clip_duration_seconds=6.0,
+        max_lines=1,
+    )
+
+    assert len(cues) >= 2
+    reconstructed = " ".join(cue.text.replace("\n", " ") for cue in cues)
+    assert "kamu sedang bersama siapa dan dimana sekarang lalu kenapa belum pulang juga malam ini" in reconstructed
+    assert not cues[0].text.strip().lower().endswith("dan")
+    assert not cues[1].text.strip().lower().startswith("lalu")
+
+
+def test_render_ass_uses_ass_line_break_escape_for_multiline_cues() -> None:
+    rendered = _render_ass(
+        [
+            SubtitleCue(
+                start_seconds=0.0,
+                end_seconds=2.0,
+                text="Oh wow baru ngerti gue.\nMasa kok ini apa sih?",
+            )
+        ],
+        layout_template="PODCAST_SPOTLIGHT_9X16",
+    )
+
+    assert r"Oh wow baru ngerti gue.\NMasa kok ini apa sih?" in rendered
+
+
+def test_render_ass_outputs_karaoke_tags_when_word_highlight_enabled() -> None:
+    rendered = _render_ass(
+        [
+            SubtitleCue(
+                start_seconds=0.0,
+                end_seconds=1.6,
+                text="PERBATASAN JAWA",
+                words=(
+                    SubtitleCueWord(text="PERBATASAN", duration_centiseconds=80),
+                    SubtitleCueWord(text="JAWA", duration_centiseconds=80),
+                ),
+            )
+        ],
+        layout_template="PODCAST_SPOTLIGHT_9X16",
+        word_highlight=True,
+    )
+
+    assert r"{\k80}PERBATASAN {\k80}JAWA" in rendered

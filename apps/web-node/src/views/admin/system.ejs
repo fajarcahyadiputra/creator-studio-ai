@@ -1,4 +1,42 @@
 <%- include('../partials/head', { title, csrfToken }) %>
+<% 
+  const analyzerRuntime = autoClipAnalyzerRuntime ?? {
+    mode: 'openai_then_heuristic',
+    provider: 'openai',
+    model: 'gpt-5.5',
+    isPersisted: false,
+    version: null,
+    updatedAt: null
+  };
+  const analyzerProviderOptions = Array.isArray(analyzerRuntimeProviderOptions) ? analyzerRuntimeProviderOptions : [];
+  const analyzerModelOptions = Array.isArray(analyzerRuntimeModelOptions) ? analyzerRuntimeModelOptions : [];
+  const analyzerModeIsHeuristicOnly = analyzerRuntime.mode === 'heuristic';
+  const providerHealth = providerHealthSummary ?? {
+    totalProviders: 0,
+    enabledProviders: 0,
+    degradedProviders: 0,
+    structuredProviders: 0,
+    totalModels: 0
+  };
+  const analyzerModeLabel =
+    analyzerRuntime.mode === 'heuristic'
+      ? 'Heuristic only (Python local)'
+      : analyzerRuntime.mode === 'heuristic_then_openai'
+        ? 'Heuristic + OpenAI'
+        : 'OpenAI + heuristic';
+  const analyzerProviderLabel =
+    analyzerModeIsHeuristicOnly
+      ? 'Python local'
+      : analyzerRuntime.provider === 'openai'
+        ? 'OpenAI'
+        : analyzerRuntime.provider;
+  const analyzerModelLabel =
+    analyzerModeIsHeuristicOnly
+      ? 'Heuristic scorer'
+      : analyzerRuntime.model;
+  const featureFlagCategorySummary = Array.isArray(featureFlagCategories) ? featureFlagCategories.slice(0, 4) : [];
+  const systemSettingCategorySummary = Array.isArray(systemSettingCategories) ? systemSettingCategories.slice(0, 4) : [];
+%>
 <div class="app-shell"><%- include('../partials/admin-sidebar') %><main class="content-area">
   <header class="page-header">
     <div>
@@ -28,6 +66,117 @@
         <article class="clip-output-review-card"><span>Feature flags</span><strong>Fast rollout control</strong><p>Best for maintenance mode, temporary UI exposure, staged launches, and reversible operator switches.</p></article>
         <article class="clip-output-review-card"><span>System settings</span><strong>Structured runtime config</strong><p>Best for routing policy, render defaults, moderation rules, upload policy, webhooks, and other multi-field config.</p></article>
         <article class="clip-output-review-card"><span>Secret settings</span><strong>Protected on read</strong><p>Secret values are redacted in the browser. Admins can replace the full JSON, but not inspect stored secrets from this page.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Management overview</h2>
+        <p>Ringkasan area kontrol yang paling sering disentuh admin untuk runtime, keamanan, upload, dan routing provider.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="clip-output-review-grid">
+        <article class="clip-output-review-card">
+          <span>Provider routing</span>
+          <strong><%= systemSettingCategories.find((item) => item.key === 'provider-routing')?.count ?? 0 %> config</strong>
+          <p>Kelola analyzer runtime, fallback policy, dan model/provider aktif tanpa edit `.env`.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Rendering pipeline</span>
+          <strong><%= systemSettingCategories.find((item) => item.key === 'rendering')?.count ?? 0 %> config</strong>
+          <p>Kontrol aspect ratio, subtitle, clip output defaults, dan pipeline render user-facing.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Security & access</span>
+          <strong><%= featureFlagCategories.find((item) => item.key === 'security')?.count ?? 0 %> flags</strong>
+          <p>Cocok untuk maintenance mode, impersonation guard, session lock, dan operasi sensitif lainnya.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Observability</span>
+          <strong><%= systemSettingCategories.find((item) => item.key === 'observability')?.count ?? 0 %> config</strong>
+          <p>Pakai untuk log, trace, webhook, dan pengamatan error saat pipeline panjang berjalan.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Provider health snapshot</h2>
+        <p>Ringkasan cepat kondisi provider dan model yang tersedia untuk runtime AI saat ini.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="stat-grid">
+        <article class="stat-card"><span>Total providers</span><strong><%= providerHealth.totalProviders %></strong></article>
+        <article class="stat-card"><span>Enabled providers</span><strong><%= providerHealth.enabledProviders %></strong></article>
+        <article class="stat-card"><span>Degraded / down</span><strong><%= providerHealth.degradedProviders %></strong></article>
+        <article class="stat-card"><span>Structured-ready</span><strong><%= providerHealth.structuredProviders %></strong></article>
+        <article class="stat-card"><span>Total models</span><strong><%= providerHealth.totalModels %></strong></article>
+      </div>
+      <div class="clip-output-review-grid mt-4">
+        <article class="clip-output-review-card">
+          <span>Analyzer route</span>
+          <strong><%= analyzerModeLabel %></strong>
+          <p>Mode ini paling relevan kalau provider eksternal sedang degraded dan kamu perlu pindah ke Python lokal.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Structured capacity</span>
+          <strong><%= providerHealth.structuredProviders %> provider</strong>
+          <p>Jumlah provider aktif yang punya model `STRUCTURED_OUTPUT` dan siap dipakai untuk analyzer.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Fallback readiness</span>
+          <strong><%= analyzerModeIsHeuristicOnly ? 'Local only' : 'Hybrid ready' %></strong>
+          <p><%= analyzerModeIsHeuristicOnly ? 'Tidak tergantung provider eksternal untuk analisis kandidat.' : 'Bisa jatuh ke jalur alternatif saat provider utama gagal.' %></p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Runtime presets & guardrails</h2>
+        <p>Preset operasional yang bisa kamu pakai sebagai acuan saat tuning analyzer, upload, dan render pipeline.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="clip-output-review-grid">
+        <article class="clip-output-review-card">
+          <span>Preset: stability first</span>
+          <strong>Heuristic only</strong>
+          <p>Pakai saat provider eksternal bermasalah, quota habis, atau kamu butuh pipeline yang tetap jalan penuh di local Python.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Preset: quality first</span>
+          <strong>OpenAI + heuristic</strong>
+          <p>Pakai saat ingin kualitas scoring terbaik lebih dulu, tapi tetap punya jalur aman kalau structured output gagal.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Preset: low cost ramp</span>
+          <strong>Heuristic + OpenAI</strong>
+          <p>Pakai saat ingin hemat pemakaian model, lalu hanya naik ke OpenAI jika hasil heuristic dirasa kurang.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Guardrail: upload policy</span>
+          <strong>`upload_limits`</strong>
+          <p>Jadikan ini acuan untuk host allowlist, max size, dan batas part upload agar proses source import tetap terkendali.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Guardrail: render defaults</span>
+          <strong>`render_pipeline_defaults`</strong>
+          <p>Pusat default untuk aspect ratio, crop strategy, subtitle format, dan burn-in supaya output user lebih konsisten.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Guardrail: notification</span>
+          <strong>`webhook_notifications`</strong>
+          <p>Pakai untuk mengirim sinyal job lifecycle ke sistem luar tanpa harus menyentuh logic pipeline utama.</p>
+        </article>
       </div>
     </div>
   </section>
@@ -70,6 +219,129 @@
         </div>
         <div class="col-md-3 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit">Create feature flag</button></div>
         <div class="col-md-12"><label class="form-label">Rules JSON</label><textarea class="form-control font-monospace" rows="4" name="rules_json">{}</textarea></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Recommended admin tasks</h2>
+        <p>Shortcut operasional supaya admin tidak perlu menebak harus mulai dari mana saat ada isu produk atau runtime.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="clip-output-review-grid">
+        <article class="clip-output-review-card">
+          <span>Quality issue</span>
+          <strong>Check analyzer runtime</strong>
+          <p>Gunakan panel analyzer runtime untuk pindah antara OpenAI, hybrid fallback, atau heuristic full Python saat kualitas clip berubah.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Upload issue</span>
+          <strong>Review upload limits</strong>
+          <p>Buat atau update system setting `upload_limits` kalau source import, file size, atau host allowlist mulai sering bermasalah.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Launch control</span>
+          <strong>Use feature flags first</strong>
+          <p>Untuk toggle cepat seperti maintenance, preview, atau regenerate exposure, prioritaskan feature flag sebelum ubah config permanen.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Render issue</span>
+          <strong>Adjust render defaults</strong>
+          <p>Gunakan `render_pipeline_defaults` untuk menyamakan crop strategy, subtitle behavior, dan burn-in default antar job baru.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Auto-clipping analyzer runtime</h2>
+        <p>Switch candidate analysis between OpenAI structured scoring and local Python heuristic scoring without editing `.env`.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="form-message"></div>
+      <div class="clip-output-review-grid mb-4">
+        <article class="clip-output-review-card">
+          <span>Active mode</span>
+          <strong><%= analyzerModeLabel %></strong>
+          <p>Runtime analyzer saat ini untuk job auto-clipping baru dan regenerate berikutnya.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Active provider</span>
+          <strong><%= analyzerProviderLabel ?? '-' %></strong>
+          <p><%= analyzerModeIsHeuristicOnly ? 'Tidak memanggil provider eksternal.' : 'Dipakai saat jalur provider dijalankan.' %></p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Active model</span>
+          <strong><%= analyzerModelLabel ?? '-' %></strong>
+          <p><%= analyzerModeIsHeuristicOnly ? 'Scoring dikerjakan penuh oleh worker Python lokal.' : 'Model structured analysis yang sedang dipilih.' %></p>
+        </article>
+      </div>
+      <form class="row g-3" data-api-form action="/api/v1/admin/system-settings/auto-clip-analyzer-runtime" method="post">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="col-md-3">
+          <label class="form-label">Analysis mode</label>
+          <select class="form-select" name="mode" data-analyzer-mode-select>
+            <option value="openai_then_heuristic" <%= analyzerRuntime.mode === 'openai_then_heuristic' ? 'selected' : '' %>>OpenAI + heuristic</option>
+            <option value="heuristic_then_openai" <%= analyzerRuntime.mode === 'heuristic_then_openai' ? 'selected' : '' %>>Heuristic + OpenAI</option>
+            <option value="heuristic" <%= analyzerRuntime.mode === 'heuristic' ? 'selected' : '' %>>Heuristic only (Python local)</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Provider</label>
+          <select class="form-select" name="provider" data-analyzer-provider-select <% if (analyzerModeIsHeuristicOnly) { %>disabled<% } %>>
+            <% if (!analyzerProviderOptions.length) { %>
+              <option value="<%= analyzerRuntime.provider %>" selected><%= analyzerRuntime.provider %></option>
+            <% } %>
+            <% analyzerProviderOptions.forEach((provider) => { %>
+              <option value="<%= provider.code %>" <%= analyzerRuntime.provider === provider.code ? 'selected' : '' %>><%= provider.displayName %> (<%= provider.code %>)</option>
+            <% }) %>
+          </select>
+          <small class="text-muted d-block mt-1" data-analyzer-provider-hint>
+            <%= analyzerModeIsHeuristicOnly ? 'Di mode heuristic only, provider AI diabaikan karena analisis dikerjakan penuh oleh Python lokal.' : 'Pilih provider AI yang dipakai ketika mode menyertakan jalur OpenAI/provider.' %>
+          </small>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Model</label>
+          <select class="form-select" name="model" data-analyzer-model-select <% if (analyzerModeIsHeuristicOnly) { %>disabled<% } %>>
+            <% if (!analyzerModelOptions.length) { %>
+              <option value="<%= analyzerRuntime.model %>" selected><%= analyzerRuntime.model %></option>
+            <% } %>
+            <% analyzerModelOptions.forEach((model) => { %>
+              <option value="<%= model.identifier %>" data-provider-code="<%= model.providerCode %>" <%= analyzerRuntime.model === model.identifier ? 'selected' : '' %>><%= model.displayName %> (<%= model.identifier %>)</option>
+            <% }) %>
+          </select>
+          <small class="text-muted d-block mt-1" data-analyzer-model-hint>
+            <%= analyzerModeIsHeuristicOnly ? 'Model tidak dipakai saat memilih heuristic only.' : 'Daftar model ini dipakai untuk structured analysis saat mode menyertakan jalur provider.' %>
+          </small>
+        </div>
+        <div class="col-md-6">
+          <small class="text-muted d-block">
+            Mode ini hanya dipakai untuk job auto-clipping baru dan regenerate berikutnya.
+            Job yang sudah berjalan tetap memakai snapshot config saat job dibuat.
+          </small>
+          <small class="text-muted d-block mt-1">
+            Current source: <strong><%= analyzerRuntime.isPersisted ? 'system setting persisted' : 'default fallback' %></strong>
+            <% if (analyzerRuntime.version) { %>| Version <%= analyzerRuntime.version %><% } %>
+            <% if (analyzerRuntime.updatedAt) { %>| Updated <%= analyzerRuntime.updatedAt.toLocaleString() %><% } %>
+          </small>
+        </div>
+        <div class="col-md-3">
+          <div class="small text-muted">
+            <strong>Mode guide</strong><br>
+            `OpenAI + heuristic`: coba OpenAI dulu, fallback ke heuristic lokal kalau gagal atau hasilnya kurang.<br>
+            `Heuristic + OpenAI`: coba heuristic dulu, naik ke OpenAI kalau hasil heuristic kurang.<br>
+            `Heuristic`: full local Python tanpa panggil OpenAI. Provider dan model di bawah hanya jadi cadangan tersimpan, tapi tidak dijalankan.
+          </div>
+        </div>
+        <div class="col-md-3 d-flex align-items-end">
+          <button class="btn btn-primary w-100" type="submit">Save analyzer runtime</button>
+        </div>
       </form>
     </div>
   </section>
@@ -127,6 +399,17 @@
       <% if (!featureFlags.length) { %>
         <p class="text-muted mb-0">No feature flags configured yet.</p>
       <% } %>
+      <% if (featureFlagCategorySummary.length) { %>
+        <div class="clip-output-review-grid mb-4">
+          <% featureFlagCategorySummary.forEach((category) => { %>
+            <article class="clip-output-review-card">
+              <span><%= category.label %></span>
+              <strong><%= category.count %> flags</strong>
+              <p>Kelompok ini memudahkan admin fokus ke area operasi yang sama tanpa scroll seluruh daftar.</p>
+            </article>
+          <% }) %>
+        </div>
+      <% } %>
       <% featureFlagCategories.forEach((category) => { %>
         <section class="panel mb-4">
           <div class="panel-heading"><div><h2><%= category.label %></h2><p><%= category.count %> feature flag(s) in this category.</p></div></div>
@@ -164,6 +447,17 @@
     <div class="p-4">
       <% if (!systemSettings.length) { %>
         <p class="text-muted mb-0">No system settings configured yet.</p>
+      <% } %>
+      <% if (systemSettingCategorySummary.length) { %>
+        <div class="clip-output-review-grid mb-4">
+          <% systemSettingCategorySummary.forEach((category) => { %>
+            <article class="clip-output-review-card">
+              <span><%= category.label %></span>
+              <strong><%= category.count %> settings</strong>
+              <p>Gunakan grouping ini untuk memisahkan config provider, rendering, observability, dan keamanan secara lebih jelas.</p>
+            </article>
+          <% }) %>
+        </div>
       <% } %>
       <% systemSettingCategories.forEach((category) => { %>
         <section class="panel mb-4">

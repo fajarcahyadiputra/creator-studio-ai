@@ -50,3 +50,8 @@ export const adminCreateSystemSettingSchema = z.object({
 
 export const adminUpdateSystemSettingSchema = adminCreateSystemSettingSchema;
 
+export const adminAutoClipAnalyzerRuntimeSchema = z.object({
+  mode: z.enum(["openai_then_heuristic", "heuristic_then_openai", "heuristic"]),
+  provider: optionalText(80),
+  model: optionalText(160)
+});

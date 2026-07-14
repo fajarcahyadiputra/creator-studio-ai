@@ -46,6 +46,34 @@ Inspect:
 docker compose logs media-ingestion-node web-node
 ```
 
+## External source import fails with DNS or host resolution errors
+
+If auto-clipping fails with messages such as:
+
+- `Name or service not known`
+- `Temporary failure in name resolution`
+- `The read operation timed out`
+
+then the source video import worker could reach the internal app services, but failed when resolving or downloading the public media host from inside Docker.
+
+Check:
+
+- `ai-media-python` is attached to the `public` network as well as `internal`
+- Docker Desktop is running and outbound DNS works inside containers
+- after compose changes, the worker containers were recreated, not only restarted
+
+Recommended commands:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate ai-media-python ai-media-python-api media-ingestion-node web-node
+docker compose logs ai-media-python web-node media-ingestion-node
+```
+
+Notes:
+
+- The Python worker now uses more conservative `yt-dlp` download settings for long-form source imports.
+- TTS segmentation now falls back to `local_heuristic` if the OpenAI host cannot be resolved, so DNS issues should no longer hard-fail the entire TTS workflow.
+
 ## Upload part fails with signature mismatch
 
 Confirm the browser can reach the same S3 endpoint used when signing. Development may require `S3_PUBLIC_ENDPOINT=http://localhost:9000` while containers use `S3_ENDPOINT=http://minio:9000`.

@@ -116,3 +116,50 @@ def test_enrich_analysis_inputs_preserves_existing_boundaries() -> None:
     assert enriched.scenes[0].scene_id == "scene-1"
     assert len(enriched.silences) == 1
     assert enriched.silences[0].silence_id == "silence-1"
+
+
+def test_build_scene_boundaries_skips_zero_length_boundaries_after_sentence_split() -> None:
+    analysis_inputs = AnalysisInputs.model_validate(
+        {
+            "transcript": {
+                "language": "id",
+                "duration_seconds": 90,
+                "segments": [
+                    {
+                        "segment_id": "s1",
+                        "start_seconds": 60.0,
+                        "end_seconds": 71.0,
+                        "text": "Bagian pembuka ini cukup panjang dan selesai rapi.",
+                        "speaker_label": "A",
+                        "words": [],
+                    },
+                    {
+                        "segment_id": "s2",
+                        "start_seconds": 71.0,
+                        "end_seconds": 75.86,
+                        "text": "Kalimat ini ditutup penuh supaya hard break aktif.",
+                        "speaker_label": "A",
+                        "words": [],
+                    },
+                    {
+                        "segment_id": "s3",
+                        "start_seconds": 75.86,
+                        "end_seconds": 80.0,
+                        "text": "Speaker baru lanjut dari titik yang sama.",
+                        "speaker_label": "B",
+                        "words": [],
+                    },
+                ],
+            },
+            "scenes": [],
+            "silences": [],
+        }
+    )
+
+    scenes = build_scene_boundaries(analysis_inputs.transcript, max_scene_duration_seconds=20)
+
+    assert len(scenes) == 2
+    assert scenes[0].start_seconds == 60
+    assert scenes[0].end_seconds == 75.86
+    assert scenes[1].start_seconds == 75.86
+    assert scenes[1].end_seconds == 80

@@ -21,8 +21,8 @@ const stageDisplayMap = {
   UPLOADING_OUTPUTS: { key: "DELIVERY", label: "Saving outputs" }
 };
 
-function objectFromForm(form) {
-  const data = new FormData(form);
+function objectFromForm(form, formData) {
+  const data = formData instanceof FormData ? formData : new FormData(form);
   return Object.fromEntries(
     [...data.entries()]
       .filter(([key]) => key !== "_csrf")
@@ -44,6 +44,50 @@ function splitCsv(value) {
     .split(/[\n,;]+/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function buildPackagingBriefFromStructuredFields(data, manualBrief) {
+  const entries = [
+    ["headline angle", data.get("headline_angle")],
+    ["title packaging style", data.get("title_packaging_style")],
+    ["thumbnail text style", data.get("thumbnail_packaging_style")],
+    ["headline tone", data.get("headline_tone")],
+    ["title length target", data.get("title_length_target")],
+    ["forbidden title pattern", data.get("title_forbidden_pattern")]
+  ]
+    .map(([label, value]) => [label, String(value || "").trim()])
+    .filter(([, value]) => value.length > 0)
+    .map(([label, value]) => `- ${label}: ${value}`);
+
+  const manual = String(manualBrief || "").trim();
+  if (entries.length === 0) {
+    return manual || undefined;
+  }
+
+  const sections = [
+    "Structured packaging direction:",
+    ...entries
+  ];
+  if (manual) {
+    sections.push("", "Manual packaging notes:", manual);
+  }
+  return sections.join("\n");
+}
+
+function applyStructuredPackagingBrief(form, data) {
+  if (!(form instanceof HTMLFormElement) || !(data instanceof FormData)) return;
+  if (!form.hasAttribute("data-packaging-helper")) return;
+
+  const packagingBrief = buildPackagingBriefFromStructuredFields(
+    data,
+    String(data.get("packaging_brief") || "").trim()
+  );
+
+  if (packagingBrief) {
+    data.set("packaging_brief", packagingBrief);
+  } else {
+    data.delete("packaging_brief");
+  }
 }
 
 function validateShortTextList(list, options) {
@@ -69,6 +113,51 @@ function validateShortTextList(list, options) {
 
   return errors;
 }
+
+function initializeClipOutputPreviewFrames() {
+  for (const video of document.querySelectorAll('video[data-preview-frame="true"]')) {
+    if (!(video instanceof HTMLVideoElement)) continue;
+    if (video.dataset.previewFrameReady === "true") continue;
+
+    video.dataset.previewFrameReady = "true";
+
+    const primePreviewFrame = () => {
+      if (video.dataset.previewFramePrimed === "true") return;
+      if (!Number.isFinite(video.duration) || video.duration <= 0) return;
+
+      const targetTime = Math.min(0.2, Math.max(0.06, video.duration * 0.01));
+      const restorePausedState = video.paused;
+
+      const markPrimed = () => {
+        video.dataset.previewFramePrimed = "true";
+        if (restorePausedState) {
+          video.pause();
+        }
+      };
+
+      video.addEventListener("seeked", markPrimed, { once: true });
+
+      try {
+        if (video.currentTime < targetTime) {
+          video.currentTime = targetTime;
+        } else {
+          markPrimed();
+        }
+      } catch (_error) {
+        video.removeEventListener("seeked", markPrimed);
+      }
+    };
+
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      primePreviewFrame();
+    } else {
+      video.addEventListener("loadedmetadata", primePreviewFrame, { once: true });
+      video.addEventListener("loadeddata", primePreviewFrame, { once: true });
+    }
+  }
+}
+
+initializeClipOutputPreviewFrames();
 
 for (const picker of document.querySelectorAll("[data-append-to-field]")) {
   picker.addEventListener("change", () => {
@@ -148,12 +237,75 @@ for (const picker of document.querySelectorAll("[data-json-template-picker]")) {
   });
 }
 
+for (const form of document.querySelectorAll('form[action="/api/v1/admin/system-settings/auto-clip-analyzer-runtime"]')) {
+  if (!(form instanceof HTMLFormElement)) continue;
+
+  const modeSelect = form.querySelector("[data-analyzer-mode-select]");
+  const providerSelect = form.querySelector("[data-analyzer-provider-select]");
+  const modelSelect = form.querySelector("[data-analyzer-model-select]");
+  const providerHint = form.querySelector("[data-analyzer-provider-hint]");
+  const modelHint = form.querySelector("[data-analyzer-model-hint]");
+  if (
+    !(modeSelect instanceof HTMLSelectElement)
+    || !(providerSelect instanceof HTMLSelectElement)
+    || !(modelSelect instanceof HTMLSelectElement)
+  ) {
+    continue;
+  }
+
+  const syncAnalyzerModelOptions = () => {
+    const heuristicOnly = modeSelect.value === "heuristic";
+    const selectedProvider = String(providerSelect.value || "").trim();
+    const currentValue = String(modelSelect.value || "").trim();
+    let firstVisibleValue = "";
+    let selectedStillVisible = false;
+
+    providerSelect.disabled = heuristicOnly;
+    modelSelect.disabled = heuristicOnly;
+
+    if (providerHint instanceof HTMLElement) {
+      providerHint.textContent = heuristicOnly
+        ? "Di mode heuristic only, provider AI diabaikan karena analisis dikerjakan penuh oleh Python lokal."
+        : "Pilih provider AI yang dipakai ketika mode menyertakan jalur OpenAI/provider.";
+    }
+    if (modelHint instanceof HTMLElement) {
+      modelHint.textContent = heuristicOnly
+        ? "Model tidak dipakai saat memilih heuristic only."
+        : "Daftar model ini dipakai untuk structured analysis saat mode menyertakan jalur provider.";
+    }
+
+    for (const option of modelSelect.options) {
+      const optionProvider = option.getAttribute("data-provider-code");
+      const visible = !optionProvider || optionProvider === selectedProvider;
+      option.hidden = !visible;
+      option.disabled = !visible;
+      if (!visible) continue;
+      if (!firstVisibleValue) {
+        firstVisibleValue = option.value;
+      }
+      if (option.value === currentValue) {
+        selectedStillVisible = true;
+      }
+    }
+
+    if (!selectedStillVisible && firstVisibleValue) {
+      modelSelect.value = firstVisibleValue;
+    }
+  };
+
+  modeSelect.addEventListener("change", syncAnalyzerModelOptions);
+  providerSelect.addEventListener("change", syncAnalyzerModelOptions);
+  syncAnalyzerModelOptions();
+}
+
 for (const form of document.querySelectorAll("[data-api-form]")) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) {
       return;
     }
+    const formData = new FormData(form);
+    applyStructuredPackagingBrief(form, formData);
     const button = form.querySelector('button[type="submit"],button:not([type])');
     const messages = form.closest("main,section")?.querySelector(".form-message") ?? document.querySelector(".form-message");
     if (button) button.disabled = true;
@@ -165,7 +317,7 @@ for (const form of document.querySelectorAll("[data-api-form]")) {
           "x-csrf-token": csrf,
           ...(form.dataset.idempotencyKey === "true" ? { "idempotency-key": crypto.randomUUID() } : {})
         },
-        body: JSON.stringify(objectFromForm(form))
+        body: JSON.stringify(objectFromForm(form, formData))
       });
       const payload = response.status === 204 ? {} : await response.json();
       if (!response.ok) throw new Error(payload?.error?.message ?? "The request failed.");
@@ -636,6 +788,7 @@ if (autoClipForm) {
     setCheckboxValue("require_spoken_audio", config.require_spoken_audio);
     setFieldValue("subtitle_language", subtitle.language);
     setFieldValue("subtitle_primary_format", subtitle.format);
+    setCheckboxValue("subtitle_enabled", subtitle.enabled);
     setCheckboxValue("subtitle_burn_in", subtitle.burn_in);
     setFieldValue("subtitle_style", subtitle.style);
     setFieldValue("subtitle_font_family", subtitle.font_family);
@@ -699,12 +852,17 @@ if (autoClipForm) {
     const tones = [String(data.get("primary_tone") || "EDUCATIONAL"), String(data.get("secondary_tone") || "")]
       .map((value) => value.trim())
       .filter(Boolean);
-    const advancedModeEnabled = data.get("advanced_mode") === "on";
     const subtitlePosition = String(data.get("subtitle_position") || "").trim();
-    const subtitleStyle = String(data.get("subtitle_style") || "").trim();
+    const subtitleStyle = normalizeSubtitleStyleValue(data.get("subtitle_style"));
     const subtitleFontFamily = String(data.get("subtitle_font_family") || "").trim();
     const subtitlePrimaryFormat = String(data.get("subtitle_primary_format") || "ASS").trim().toUpperCase();
+    const subtitleEnabled = data.get("subtitle_enabled") === "on";
     const subtitleBurnIn = data.get("subtitle_burn_in") === "on";
+    const subtitleWordHighlight = subtitleStyleUsesWordHighlight(subtitleStyle);
+    const packagingBrief = buildPackagingBriefFromStructuredFields(
+      data,
+      String(data.get("packaging_brief") || "").trim()
+    );
     const payload = {
       source,
       content: compactObject({
@@ -734,7 +892,7 @@ if (autoClipForm) {
         virality_priorities: splitCsv(data.get("virality_priorities")),
         selection_brief: String(data.get("selection_brief") || "").trim() || undefined,
         avoidance_brief: String(data.get("avoidance_brief") || "").trim() || undefined,
-        packaging_brief: String(data.get("packaging_brief") || "").trim() || undefined,
+        packaging_brief: packagingBrief,
         hook_style: String(data.get("hook_style") || "").trim() || undefined,
         cta_preference: String(data.get("cta_preference") || "").trim() || undefined,
         standalone_priority: String(data.get("standalone_priority") || "PREFERRED").trim(),
@@ -753,7 +911,7 @@ if (autoClipForm) {
         }
       },
         subtitle: {
-          enabled: true,
+          enabled: subtitleEnabled,
           language: String(data.get("subtitle_language")),
           burn_in: subtitleBurnIn,
           format: subtitlePrimaryFormat,
@@ -768,8 +926,8 @@ if (autoClipForm) {
             safe_margin_percent: data.get("subtitle_safe_margin_percent")
               ? Number(data.get("subtitle_safe_margin_percent"))
               : undefined,
-            word_highlight: advancedModeEnabled ? data.get("subtitle_word_highlight") === "on" : undefined,
-            profanity_censor: advancedModeEnabled ? data.get("subtitle_profanity_censor") === "on" : undefined
+            word_highlight: subtitleWordHighlight,
+            profanity_censor: data.get("subtitle_profanity_censor") === "on"
           })
         },
         ai: { credential_mode: "PLATFORM" }
@@ -827,6 +985,109 @@ if (autoClipForm) {
   });
 }
 
+function countTtsWords(script) {
+  const normalized = String(script || "").trim();
+  if (!normalized) return 0;
+  const matches = normalized.match(/[A-Za-z0-9À-ÿ\u0100-\u024F\u1E00-\u1EFF]+(?:['’-][A-Za-z0-9À-ÿ\u0100-\u024F\u1E00-\u1EFF]+)*/g);
+  return matches ? matches.length : 0;
+}
+
+function estimateTtsDurationMs(script, speakingSpeed) {
+  const wordCount = countTtsWords(script);
+  if (wordCount <= 0) return null;
+
+  const speed = Number.isFinite(speakingSpeed) && speakingSpeed > 0 ? speakingSpeed : 1;
+  const baseWordsPerMinute = 145;
+  const commaPauses = (String(script || "").match(/[,;:]/g) || []).length;
+  const sentencePauses = (String(script || "").match(/[.!?]+/g) || []).length;
+  const spokenDurationMs = (wordCount / (baseWordsPerMinute * speed)) * 60_000;
+  const pauseDurationMs = (commaPauses * 140) + (sentencePauses * 280);
+  return Math.max(1500, Math.round(spokenDurationMs + pauseDurationMs));
+}
+
+const SUBTITLE_STYLES_WITH_WORD_HIGHLIGHT = new Set([
+  "PODCAST_HIGHLIGHT",
+  "NEWS_FLASH"
+]);
+
+function normalizeSubtitleStyleValue(style) {
+  const normalized = String(style || "").trim().toUpperCase();
+  return normalized || "";
+}
+
+function subtitleStyleUsesWordHighlight(style) {
+  const normalized = normalizeSubtitleStyleValue(style);
+  return normalized ? SUBTITLE_STYLES_WITH_WORD_HIGHLIGHT.has(normalized) : false;
+}
+
+function formatDurationLabel(durationMs) {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return "";
+  const totalSeconds = Math.max(1, Math.round(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${durationMs} ms (${minutes}:${String(seconds).padStart(2, "0")})`;
+}
+
+function speakingSpeedLabel(speed) {
+  if (!Number.isFinite(speed)) return "Natural";
+  if (speed <= 0.8) return "Sangat tenang";
+  if (speed <= 0.95) return "Lebih pelan";
+  if (speed <= 1.1) return "Natural";
+  if (speed <= 1.3) return "Lebih cepat";
+  return "Sangat cepat";
+}
+
+function setupTtsDurationEstimator(form) {
+  if (!(form instanceof HTMLFormElement)) return;
+
+  const scriptField = form.querySelector("[data-tts-script]");
+  const speakingSpeedField = form.querySelector("[data-tts-speaking-speed]");
+  const targetDurationHidden = form.querySelector("[data-tts-target-duration-hidden]");
+  const targetDurationDisplay = form.querySelector("[data-tts-target-duration-display]");
+  const targetDurationHelp = form.querySelector("[data-tts-target-duration-help]");
+  const speedHelp = form.querySelector("[data-tts-speed-help]");
+
+  if (
+    !(scriptField instanceof HTMLTextAreaElement) ||
+    !(speakingSpeedField instanceof HTMLInputElement) ||
+    !(targetDurationHidden instanceof HTMLInputElement) ||
+    !(targetDurationDisplay instanceof HTMLInputElement)
+  ) {
+    return;
+  }
+
+  const syncEstimate = () => {
+    const script = String(scriptField.value || "");
+    const speed = Number.parseFloat(String(speakingSpeedField.value || "1"));
+    const estimatedDurationMs = estimateTtsDurationMs(script, speed);
+    const wordCount = countTtsWords(script);
+    const resolvedSpeed = Number.isFinite(speed) && speed > 0 ? speed : 1;
+
+    if (estimatedDurationMs) {
+      targetDurationHidden.value = String(estimatedDurationMs);
+      targetDurationDisplay.value = formatDurationLabel(estimatedDurationMs);
+      if (targetDurationHelp) {
+        targetDurationHelp.textContent = `Estimasi otomatis dari ${wordCount} kata dengan speaking speed ${resolvedSpeed.toFixed(1)}.`;
+      }
+    } else {
+      targetDurationHidden.value = "";
+      targetDurationDisplay.value = "";
+      if (targetDurationHelp) {
+        targetDurationHelp.textContent = "Isi script untuk melihat estimasi target duration otomatis.";
+      }
+    }
+
+    if (speedHelp) {
+      speedHelp.textContent = `${resolvedSpeed.toFixed(1)} = ${speakingSpeedLabel(resolvedSpeed)}. Target duration dihitung otomatis dari nilai ini.`;
+    }
+  };
+
+  scriptField.addEventListener("input", syncEstimate);
+  speakingSpeedField.addEventListener("input", syncEstimate);
+  speakingSpeedField.addEventListener("change", syncEstimate);
+  syncEstimate();
+}
+
 const ttsForm = document.querySelector("#tts-form");
 if (ttsForm) {
   const presetSelector = ttsForm.querySelector("[data-tts-preset-selector]");
@@ -870,7 +1131,6 @@ if (ttsForm) {
     setIfPresent(ttsForm, "speaking_speed", config.speaking_speed);
     setIfPresent(ttsForm, "pitch", config.pitch);
     setIfPresent(ttsForm, "pause_intensity", config.pause_intensity);
-    setIfPresent(ttsForm, "target_duration_ms", config.target_duration_ms);
     setIfPresent(ttsForm, "preferred_format", config.preferred_format);
     setIfPresent(ttsForm, "segmentation_mode", config.segmentation_mode);
     setIfPresent(ttsForm, "sample_rate", config.sample_rate);
@@ -954,6 +1214,7 @@ if (ttsForm) {
   });
 
   renderLocalModelPreview();
+  setupTtsDurationEstimator(ttsForm);
 
   ttsForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -991,6 +1252,10 @@ if (ttsForm) {
       if (button) button.disabled = false;
     }
   });
+}
+
+for (const form of document.querySelectorAll('form[action^="/api/v1/tts/jobs/"][action$="/regenerate"]')) {
+  setupTtsDurationEstimator(form);
 }
 
 const jobStreamRoot = document.querySelector("[data-job-stream]");

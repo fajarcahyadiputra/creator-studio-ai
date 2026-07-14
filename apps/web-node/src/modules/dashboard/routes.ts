@@ -30,6 +30,29 @@ function resolveRequestOrigin(request: { protocol: string; get(name: string): st
   return host ? `${request.protocol}://${host}` : undefined;
 }
 
+function normalizeAnalyzerModeLabel(mode: string | null) {
+  if (!mode) return null;
+  if (mode === "heuristic") return "Heuristic only (Python local)";
+  if (mode === "heuristic_then_openai") return "Heuristic + OpenAI";
+  if (mode === "openai_then_heuristic") return "OpenAI + heuristic";
+  return mode;
+}
+
+function normalizeAnalyzerProviderLabel(provider: string | null, mode: string | null) {
+  if (mode === "heuristic") return "Python local";
+  if (!provider) return null;
+  if (provider === "openai") return "OpenAI";
+  if (provider === "python-local") return "Python local";
+  return provider;
+}
+
+function normalizeAnalyzerModelLabel(model: string | null, mode: string | null) {
+  if (mode === "heuristic") return "Heuristic scorer";
+  if (!model) return null;
+  if (model === "heuristic-local") return "Heuristic scorer";
+  return model;
+}
+
 dashboardRouter.get(
   "/app/dashboard",
   requireAuth,
@@ -213,7 +236,6 @@ dashboardRouter.get(
   "/app/jobs/:jobId",
   requireAuth,
   asyncHandler(async (request, response) => {
-    const requestOrigin = resolveRequestOrigin(request);
     const jobId = String(request.params.jobId);
     const job = await prisma.job.findFirst({
       where: { id: jobId, userId: request.identity!.effectiveUserId, deletedAt: null },
@@ -237,6 +259,12 @@ dashboardRouter.get(
         clipCandidates: { orderBy: [{ rank: "asc" }, { createdAt: "asc" }] },
         clipOutputs: {
           include: {
+            candidate: {
+              select: {
+                finalViralScore: true,
+                title: true
+              }
+            },
             subtitles: {
               orderBy: { createdAt: "desc" },
               take: 5
@@ -281,14 +309,14 @@ dashboardRouter.get(
         ? (outputSummary.analyzer as Record<string, unknown>)
         : null;
     const sourceMediaPlaybackUrl = job.sourceMediaAsset?.objectKey
-      ? await createPublicSignedObjectReadUrl(job.sourceMediaAsset.objectKey, undefined, requestOrigin)
+      ? await createPublicSignedObjectReadUrl(job.sourceMediaAsset.objectKey)
       : null;
     const latestTtsOutput =
       job.ttsRequest?.outputs.find((output) => output.status === "READY" && output.mediaAsset?.objectKey)
       ?? job.ttsRequest?.outputs.find((output) => Boolean(output.mediaAsset?.objectKey))
       ?? null;
     const ttsAudioPlaybackUrl = latestTtsOutput?.mediaAsset.objectKey
-      ? await createPublicSignedObjectReadUrl(latestTtsOutput.mediaAsset.objectKey, undefined, requestOrigin)
+      ? await createPublicSignedObjectReadUrl(latestTtsOutput.mediaAsset.objectKey)
       : null;
     const strategyConfig = toJsonRecord(job.autoClipRequest?.strategyConfig);
     const visualConfig = toJsonRecord(job.autoClipRequest?.visualConfig);
@@ -325,6 +353,10 @@ dashboardRouter.get(
           qualityReport.validation && typeof qualityReport.validation === "object" && !Array.isArray(qualityReport.validation)
             ? (qualityReport.validation as Record<string, unknown>)
             : {};
+        const latestAttempt =
+          qualityReport.latest_attempt && typeof qualityReport.latest_attempt === "object" && !Array.isArray(qualityReport.latest_attempt)
+            ? (qualityReport.latest_attempt as Record<string, unknown>)
+            : {};
         const qualityChecks =
           qualityValidation.checks &&
           typeof qualityValidation.checks === "object" &&
@@ -352,18 +384,40 @@ dashboardRouter.get(
         const validationWarnings = Array.isArray(qualityValidation.warnings)
           ? qualityValidation.warnings.filter((warning): warning is string => typeof warning === "string" && warning.trim().length > 0)
           : [];
+        const latestAttemptMessage =
+          typeof latestAttempt.message === "string" && latestAttempt.message.trim().length > 0
+            ? latestAttempt.message
+            : null;
+        const warningMessage =
+          typeof qualityReport.warning_message === "string" && qualityReport.warning_message.trim().length > 0
+            ? qualityReport.warning_message
+            : null;
+        const reconciledQualityStatus =
+          output.qualityStatus === "NEEDS_REVIEW"
+          && typeof qualityValidation.status === "string"
+          && qualityValidation.status === "passed"
+          && Boolean(output.finalObjectKey)
+          && qualityChecks.playable === true
+            ? "PASSED"
+            : output.qualityStatus;
         const previewPlaybackUrl = output.previewObjectKey
-          ? await createPublicSignedObjectReadUrl(output.previewObjectKey, undefined, requestOrigin)
+          ? await createPublicSignedObjectReadUrl(output.previewObjectKey)
           : null;
         const finalPlaybackUrl = output.finalObjectKey
-          ? await createPublicSignedObjectReadUrl(output.finalObjectKey, undefined, requestOrigin)
+          ? await createPublicSignedObjectReadUrl(output.finalObjectKey)
           : null;
         return {
           id: output.id,
           candidateId: output.candidateId,
           candidateTitle:
-            typeof qualityCandidate.title === "string" ? qualityCandidate.title : null,
-          qualityStatus: output.qualityStatus,
+            typeof qualityCandidate.title === "string"
+              ? qualityCandidate.title
+              : output.candidate?.title ?? null,
+          finalViralScore:
+            output.candidate?.finalViralScore != null
+              ? Number(output.candidate.finalViralScore)
+              : null,
+          qualityStatus: reconciledQualityStatus,
           durationMs: output.durationMs,
           version: output.version,
           width: output.width,
@@ -403,6 +457,7 @@ dashboardRouter.get(
             typeof qualityReport.status === "string"
               ? String(qualityReport.status)
               : null,
+          latestAttemptMessage: latestAttemptMessage ?? warningMessage,
           validationStatus:
             typeof qualityValidation.status === "string" ? String(qualityValidation.status) : null,
           validationWarnings,
@@ -542,18 +597,34 @@ dashboardRouter.get(
           selectedCandidates: candidates.filter((candidate) => candidate.selected).length,
           clipOutputs: job.clipOutputs.length
         },
-        analyzer: analyzer
-          ? {
-              analysisMode: typeof analyzer.analysis_mode === "string" ? analyzer.analysis_mode : null,
-              promptVersion: typeof analyzer.prompt_version === "string" ? analyzer.prompt_version : null,
-              provider: typeof analyzer.provider === "string" ? analyzer.provider : null,
-              model: typeof analyzer.model === "string" ? analyzer.model : null,
-              providerRequestId: typeof analyzer.provider_request_id === "string" ? analyzer.provider_request_id : null,
-              requestId: typeof analyzer.request_id === "string" ? analyzer.request_id : null,
-              latencyMs: typeof analyzer.latency_ms === "number" ? analyzer.latency_ms : null,
-              fallbackReason: typeof analyzer.fallback_reason === "string" ? analyzer.fallback_reason : null
-            }
-          : null,
+        analyzer: (() => {
+          if (!analyzer) return null;
+
+          const analysisMode = typeof analyzer.analysis_mode === "string" ? analyzer.analysis_mode : null;
+          const provider = typeof analyzer.provider === "string" ? analyzer.provider : null;
+          const model = typeof analyzer.model === "string" ? analyzer.model : null;
+          const attemptedProvider =
+            typeof analyzer.attempted_provider === "string" ? analyzer.attempted_provider : null;
+          const attemptedModel = typeof analyzer.attempted_model === "string" ? analyzer.attempted_model : null;
+
+          return {
+            analysisMode,
+            analysisModeLabel: normalizeAnalyzerModeLabel(analysisMode),
+            promptVersion: typeof analyzer.prompt_version === "string" ? analyzer.prompt_version : null,
+            provider,
+            providerLabel: normalizeAnalyzerProviderLabel(provider, analysisMode),
+            model,
+            modelLabel: normalizeAnalyzerModelLabel(model, analysisMode),
+            attemptedProvider,
+            attemptedProviderLabel: normalizeAnalyzerProviderLabel(attemptedProvider, null),
+            attemptedModel,
+            attemptedModelLabel: normalizeAnalyzerModelLabel(attemptedModel, null),
+            providerRequestId: typeof analyzer.provider_request_id === "string" ? analyzer.provider_request_id : null,
+            requestId: typeof analyzer.request_id === "string" ? analyzer.request_id : null,
+            latencyMs: typeof analyzer.latency_ms === "number" ? analyzer.latency_ms : null,
+            fallbackReason: typeof analyzer.fallback_reason === "string" ? analyzer.fallback_reason : null
+          };
+        })(),
         tts: ttsSummary
           ? {
               segmentCount: typeof ttsSummary.segment_count === "number" ? ttsSummary.segment_count : 0,
@@ -693,7 +764,10 @@ dashboardRouter.get(
                 style: toOptionalString(toJsonRecord(subtitleConfig.settings).style),
                 fontFamily: toOptionalString(toJsonRecord(subtitleConfig.settings).font_family),
                 position: toOptionalString(toJsonRecord(subtitleConfig.settings).position),
-                maxLines: toOptionalNumber(toJsonRecord(subtitleConfig.settings).max_lines)
+                maxLines: toOptionalNumber(toJsonRecord(subtitleConfig.settings).max_lines),
+                safeMarginPercent: toOptionalNumber(toJsonRecord(subtitleConfig.settings).safe_margin_percent),
+                profanityCensor: toOptionalBoolean(toJsonRecord(subtitleConfig.settings).profanity_censor),
+                wordHighlight: toOptionalBoolean(toJsonRecord(subtitleConfig.settings).word_highlight)
               },
               provider: {
                 credentialMode: toOptionalString(providerConfig.credential_mode),
@@ -1128,17 +1202,21 @@ function buildAutoClipFormDefaults(
       "Jika ada beberapa kandidat, utamakan yang durasinya paling pendek tetapi tetap utuh secara makna.",
       "Hindari opening yang masih basa-basi, filler berulang, jeda kosong, transisi yang tidak penting, atau bagian yang baru menarik setelah terlalu lama setup.",
       "Jangan pilih momen hanya karena keyword. Pilih karena ada emosi, konflik, ironi, insight, atau curiosity gap yang jelas.",
+      "Jangan pernah memotong saat pembicara masih mulai menjelaskan, masih menjawab setengah, masih menggantung dengan kata sambung seperti karena, jadi, makanya, kalau, atau saat kalimat sesudahnya jelas masih menyelesaikan poin utama.",
+      "Untuk konten edukatif, utamakan clip yang benar-benar menyelesaikan penjelasan inti, meski perlu tambahan 2-8 detik, selama hasilnya tetap tajam dan tidak melewati batas durasi.",
       "Cari ending yang bisa memicu komentar, share, save, atau diskusi, bukan ending yang menggantung tanpa payoff.",
       "Kalau sumber videonya edukatif, pilih bagian yang menyederhanakan ide rumit menjadi kalimat yang tajam dan mudah dipotong menjadi clip mandiri.",
-      "Kalau ada istilah teknis, utamakan bagian yang paling jelas, paling quotable, dan paling relevan untuk audience Indonesia."
+      "Kalau ada istilah teknis, utamakan bagian yang paling jelas, paling quotable, dan paling relevan untuk audience Indonesia.",
+      "Jika akhir clip masih terasa seperti setup untuk kalimat berikutnya, anggap kandidat itu gagal dan pilih atau perpanjang sampai jawabannya benar-benar landing."
     ].join(" "),
     sensitiveTopics: "klaim medis, saran legal, data pribadi",
     aspectRatio: "9:16",
     cropStrategy: "AUTO_REFRAME",
     subtitleLanguage: "id",
     subtitlePrimaryFormat: "ASS",
+    subtitleEnabled: true,
     subtitleBurnIn: true,
-    subtitleStyle: "Bold Clean",
+    subtitleStyle: "PODCAST_HIGHLIGHT",
     subtitleFontFamily: "Montserrat",
     subtitlePosition: "BOTTOM",
     subtitleMaxLines: 2,
@@ -1233,6 +1311,7 @@ function mergeAutoClipDefaults(
       toStringValue(subtitleConfig.format)
       ?? toStringArray(subtitleConfig.export_formats)[0]
       ?? baseDefaults.subtitlePrimaryFormat,
+    subtitleEnabled: toOptionalBoolean(subtitleConfig.enabled) ?? baseDefaults.subtitleEnabled,
     subtitleBurnIn: toOptionalBoolean(subtitleConfig.burn_in) ?? baseDefaults.subtitleBurnIn,
     subtitleStyle: toStringValue(subtitleConfig.style) ?? baseDefaults.subtitleStyle,
     subtitleFontFamily:

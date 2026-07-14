@@ -49,52 +49,49 @@ async def analyze_phase2_candidates_with_fallback(
     config = build_pipeline_config(input_snapshot)
     prompt_payload = build_candidate_analyzer_payload(analysis_inputs, input_snapshot)
     system_prompt = build_candidate_analyzer_system_prompt()
+    runtime_config = _resolve_analyzer_runtime_config(input_snapshot)
 
-    provider_code = settings.AUTO_CLIP_ANALYZER_PROVIDER or "openai"
-    model_identifier = settings.AUTO_CLIP_ANALYZER_MODEL or "gpt-5.5"
-    analysis_mode = settings.AUTO_CLIP_ANALYZER_MODE.lower()
+    provider_code = runtime_config["provider"]
+    model_identifier = runtime_config["model"]
+    configured_mode = runtime_config["mode"]
 
     usage: dict[str, Any] | None = None
     provider_request_id: str | None = None
     fallback_reason: str | None = None
+    fallback_trigger: str | None = None
 
-    if analysis_mode == "openai":
+    if configured_mode == "openai_then_heuristic":
         try:
-            selected_provider = provider or _resolve_provider(provider_code)
-            provider_result = await selected_provider.generate_structured(
-                context=ProviderRequestContext(
-                    provider_code=provider_code,
-                    model_identifier=model_identifier,
-                    credential_reference="env:OPENAI_API_KEY",
-                    request_id=request_id,
-                ),
-                system_prompt=system_prompt,
-                input_payload=prompt_payload,
-                schema=load_clip_analyzer_schema(),
-                schema_name="auto_clip_candidate_batch",
-            )
-            batch = CandidateBatchOutput.model_validate(provider_result["output"])
-            candidates = _limit_and_score_candidates(batch.candidates, analysis_inputs, config)
-            summary = build_output_summary(candidates, source_summary=batch.source_summary)
-            usage = provider_result.get("usage") if isinstance(provider_result.get("usage"), dict) else None
-            provider_request_id = (
-                str(provider_result.get("provider_request_id"))
-                if provider_result.get("provider_request_id") is not None
-                else None
-            )
-            return _finalize_summary(
-                summary=summary,
-                analysis_mode="openai",
-                prompt_version=AUTO_CLIP_ANALYZER_PROMPT_VERSION,
-                provider=provider_code,
-                model=model_identifier,
+            summary, usage, provider_request_id = await _run_openai_analysis(
+                provider=provider,
+                provider_code=provider_code,
+                model_identifier=model_identifier,
                 request_id=request_id,
-                provider_request_id=provider_request_id,
-                usage=usage,
-                latency_ms=round((perf_counter() - started) * 1000, 2),
+                system_prompt=system_prompt,
+                prompt_payload=prompt_payload,
                 analysis_inputs=analysis_inputs,
-                fallback_reason=None,
+                config=config,
             )
+            accepted, rejection_reason = _should_accept_summary(summary, config)
+            if accepted:
+                return _finalize_summary(
+                    summary=summary,
+                    analysis_mode="openai",
+                    configured_mode=configured_mode,
+                    prompt_version=AUTO_CLIP_ANALYZER_PROMPT_VERSION,
+                    provider=provider_code,
+                    model=model_identifier,
+                    attempted_provider=provider_code,
+                    attempted_model=model_identifier,
+                    request_id=request_id,
+                    provider_request_id=provider_request_id,
+                    usage=usage,
+                    latency_ms=round((perf_counter() - started) * 1000, 2),
+                    analysis_inputs=analysis_inputs,
+                    fallback_reason=None,
+                    fallback_trigger=None,
+                )
+            fallback_trigger = rejection_reason
         except Exception as error:
             fallback_reason = type(error).__name__
             logger.warning(
@@ -106,23 +103,88 @@ async def analyze_phase2_candidates_with_fallback(
                     "error_type": type(error).__name__,
                 },
             )
+            fallback_trigger = fallback_trigger or "openai_failed"
 
-    candidates = build_candidate_analyses(analysis_inputs, config)
-    summary = build_output_summary(candidates)
-    provider_name = provider_code if analysis_mode == "openai" else None
-    model_name = model_identifier if analysis_mode == "openai" else None
+        summary = _run_heuristic_analysis(analysis_inputs, config)
+        return _finalize_summary(
+            summary=summary,
+            analysis_mode="heuristic",
+            configured_mode=configured_mode,
+            prompt_version=AUTO_CLIP_ANALYZER_PROMPT_VERSION,
+            provider=None,
+            model=None,
+            attempted_provider=provider_code,
+            attempted_model=model_identifier,
+            request_id=request_id,
+            provider_request_id=provider_request_id,
+            usage=usage,
+            latency_ms=round((perf_counter() - started) * 1000, 2),
+            analysis_inputs=analysis_inputs,
+            fallback_reason=fallback_reason,
+            fallback_trigger=fallback_trigger,
+        )
+
+    summary = _run_heuristic_analysis(analysis_inputs, config)
+    accepted, rejection_reason = _should_accept_summary(summary, config)
+    if configured_mode == "heuristic_then_openai" and not accepted:
+        fallback_trigger = rejection_reason
+        try:
+            summary, usage, provider_request_id = await _run_openai_analysis(
+                provider=provider,
+                provider_code=provider_code,
+                model_identifier=model_identifier,
+                request_id=request_id,
+                system_prompt=system_prompt,
+                prompt_payload=prompt_payload,
+                analysis_inputs=analysis_inputs,
+                config=config,
+            )
+            return _finalize_summary(
+                summary=summary,
+                analysis_mode="openai",
+                configured_mode=configured_mode,
+                prompt_version=AUTO_CLIP_ANALYZER_PROMPT_VERSION,
+                provider=provider_code,
+                model=model_identifier,
+                attempted_provider=provider_code,
+                attempted_model=model_identifier,
+                request_id=request_id,
+                provider_request_id=provider_request_id,
+                usage=usage,
+                latency_ms=round((perf_counter() - started) * 1000, 2),
+                analysis_inputs=analysis_inputs,
+                fallback_reason=None,
+                fallback_trigger=fallback_trigger,
+            )
+        except Exception as error:
+            fallback_reason = type(error).__name__
+            logger.warning(
+                "Heuristic phase2 analyzer produced insufficient candidates; OpenAI fallback failed, keeping heuristic result",
+                extra={
+                    "request_id": request_id,
+                    "provider": provider_code,
+                    "model": model_identifier,
+                    "error_type": type(error).__name__,
+                    "fallback_trigger": fallback_trigger,
+                },
+            )
+
     return _finalize_summary(
         summary=summary,
         analysis_mode="heuristic",
+        configured_mode=configured_mode,
         prompt_version=AUTO_CLIP_ANALYZER_PROMPT_VERSION,
-        provider=provider_name,
-        model=model_name,
+        provider=None,
+        model=None,
+        attempted_provider=provider_code if fallback_reason or configured_mode == "heuristic_then_openai" and not accepted else None,
+        attempted_model=model_identifier if fallback_reason or configured_mode == "heuristic_then_openai" and not accepted else None,
         request_id=request_id,
         provider_request_id=provider_request_id,
         usage=usage,
         latency_ms=round((perf_counter() - started) * 1000, 2),
         analysis_inputs=analysis_inputs,
         fallback_reason=fallback_reason,
+        fallback_trigger=fallback_trigger,
     )
 
 
@@ -154,7 +216,13 @@ def _limit_and_score_candidates(
         and candidate.duration_seconds >= config.minimum_duration_seconds
         and candidate.duration_seconds <= config.maximum_duration_seconds
     ]
-    normalized = normalize_candidates(filtered, analysis_inputs.scenes, analysis_inputs.silences)
+    normalized = normalize_candidates(
+        filtered,
+        analysis_inputs.scenes,
+        analysis_inputs.silences,
+        analysis_inputs.transcript.segments,
+        float(config.maximum_duration_seconds),
+    )
     return deduplicate_and_rank(normalized, config.candidate_pool_count)
 
 
@@ -162,21 +230,28 @@ def _finalize_summary(
     *,
     summary: dict[str, Any],
     analysis_mode: str,
+    configured_mode: str,
     prompt_version: str,
     provider: str | None,
     model: str | None,
+    attempted_provider: str | None,
+    attempted_model: str | None,
     request_id: str,
     provider_request_id: str | None,
     usage: dict[str, Any] | None,
     latency_ms: float,
     analysis_inputs: AnalysisInputs,
     fallback_reason: str | None,
+    fallback_trigger: str | None,
 ) -> dict[str, Any]:
     analyzer_metadata = {
         "analysis_mode": analysis_mode,
+        "configured_mode": configured_mode,
         "prompt_version": prompt_version,
         "provider": provider,
         "model": model,
+        "attempted_provider": attempted_provider,
+        "attempted_model": attempted_model,
         "request_id": request_id,
         "provider_request_id": provider_request_id,
         "latency_ms": latency_ms,
@@ -186,6 +261,7 @@ def _finalize_summary(
         "input_scene_count": len(analysis_inputs.scenes),
         "input_silence_count": len(analysis_inputs.silences),
         "fallback_reason": fallback_reason,
+        "fallback_trigger": fallback_trigger,
     }
     summary["analysis_version"] = "2.4"
     summary["analyzer"] = analyzer_metadata
@@ -196,6 +272,7 @@ def _finalize_summary(
             "request_id": request_id,
             "provider_request_id": provider_request_id,
             "analysis_mode": analysis_mode,
+            "configured_mode": configured_mode,
             "prompt_version": prompt_version,
             "provider": provider,
             "model": model,
@@ -203,6 +280,88 @@ def _finalize_summary(
             "candidate_count": summary["candidate_count"],
             "token_usage": usage,
             "fallback_reason": fallback_reason,
+            "fallback_trigger": fallback_trigger,
         },
     )
     return summary
+
+
+def _resolve_analyzer_runtime_config(input_snapshot: dict[str, Any]) -> dict[str, Any]:
+    settings = get_settings()
+    default_mode = str(settings.AUTO_CLIP_ANALYZER_MODE).strip().lower()
+    if default_mode == "openai":
+        default_mode = "openai_then_heuristic"
+    elif default_mode not in {"openai_then_heuristic", "heuristic_then_openai", "heuristic"}:
+        default_mode = "openai_then_heuristic"
+    defaults = {
+        "mode": default_mode,
+        "provider": settings.AUTO_CLIP_ANALYZER_PROVIDER or "openai",
+        "model": settings.AUTO_CLIP_ANALYZER_MODEL or "gpt-5.5",
+    }
+
+    ai = input_snapshot.get("ai")
+    if not isinstance(ai, dict):
+        return defaults
+
+    runtime = ai.get("analyzer_runtime")
+    if not isinstance(runtime, dict):
+        return defaults
+
+    mode = runtime.get("mode")
+    provider = runtime.get("provider")
+    model = runtime.get("model")
+    return {
+        "mode": mode if mode in {"openai_then_heuristic", "heuristic_then_openai", "heuristic"} else defaults["mode"],
+        "provider": provider.strip().lower() if isinstance(provider, str) and provider.strip() else defaults["provider"],
+        "model": model.strip() if isinstance(model, str) and model.strip() else defaults["model"],
+    }
+
+
+async def _run_openai_analysis(
+    *,
+    provider: StructuredOutputProvider | None,
+    provider_code: str,
+    model_identifier: str,
+    request_id: str,
+    system_prompt: str,
+    prompt_payload: dict[str, Any],
+    analysis_inputs: AnalysisInputs,
+    config: PipelineConfig,
+) -> tuple[dict[str, Any], dict[str, Any] | None, str | None]:
+    selected_provider = provider or _resolve_provider(provider_code)
+    provider_result = await selected_provider.generate_structured(
+        context=ProviderRequestContext(
+            provider_code=provider_code,
+            model_identifier=model_identifier,
+            credential_reference="env:OPENAI_API_KEY",
+            request_id=request_id,
+        ),
+        system_prompt=system_prompt,
+        input_payload=prompt_payload,
+        schema=load_clip_analyzer_schema(),
+        schema_name="auto_clip_candidate_batch",
+    )
+    batch = CandidateBatchOutput.model_validate(provider_result["output"])
+    candidates = _limit_and_score_candidates(batch.candidates, analysis_inputs, config)
+    summary = build_output_summary(candidates, source_summary=batch.source_summary)
+    usage = provider_result.get("usage") if isinstance(provider_result.get("usage"), dict) else None
+    provider_request_id = (
+        str(provider_result.get("provider_request_id"))
+        if provider_result.get("provider_request_id") is not None
+        else None
+    )
+    return summary, usage, provider_request_id
+
+
+def _run_heuristic_analysis(analysis_inputs: AnalysisInputs, config: PipelineConfig) -> dict[str, Any]:
+    candidates = build_candidate_analyses(analysis_inputs, config)
+    return build_output_summary(candidates)
+
+
+def _should_accept_summary(summary: dict[str, Any], config: PipelineConfig) -> tuple[bool, str | None]:
+    candidate_count = int(summary.get("candidate_count", 0))
+    if candidate_count <= 0:
+        return False, "no_candidates"
+    if candidate_count < max(1, config.desired_clip_count):
+        return False, "insufficient_candidates"
+    return True, None

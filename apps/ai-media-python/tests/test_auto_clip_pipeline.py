@@ -11,9 +11,10 @@ from app.domain.auto_clip_pipeline import (
     build_output_summary,
     build_pipeline_config,
     deduplicate_and_rank,
+    normalize_candidates,
 )
 from app.domain.auto_clip_stages import compute_overall_progress
-from app.domain.contracts import AnalysisInputs
+from app.domain.contracts import AnalysisInputs, CandidateAnalysis
 from app.providers.base import ProviderRequestContext, StructuredOutputProvider
 
 
@@ -89,6 +90,7 @@ def test_pipeline_builds_ranked_candidates() -> None:
     assert candidates[0].suggested_hashtags
     assert candidates[0].retention_level in {"very_high", "high", "medium", "low"}
     assert candidates[0].punchline_second <= candidates[0].duration_seconds
+    assert candidates[0].duration_seconds >= 15
 
 
 def test_output_summary_is_json_ready() -> None:
@@ -131,6 +133,263 @@ def test_pipeline_applies_strategy_preferences_to_candidates() -> None:
     assert candidates[0].suggested_cta == "Save this and follow for part two."
     assert any("sensitive topic" in note.lower() for note in candidates[0].safety_notes)
     assert candidates[0].scores["final_viral_score"] >= candidates[0].scores["base_viral_score"] - 0.5
+
+
+def test_pipeline_title_avoids_weak_filler_opening_words() -> None:
+    short_input = AnalysisInputs.model_validate(
+        {
+            "transcript": {
+                "language": "id",
+                "duration_seconds": 25.0,
+                "segments": [
+                    {
+                        "segment_id": "s1",
+                        "start_seconds": 0.0,
+                        "end_seconds": 8.0,
+                        "text": "Oke jadi kalau pipa dikasih tekanan tinggi, jadinya kayak gimana mas?",
+                        "speaker_label": "SPEAKER_01",
+                    },
+                    {
+                        "segment_id": "s2",
+                        "start_seconds": 8.0,
+                        "end_seconds": 18.0,
+                        "text": "Kalau tekanannya kelewatan, pipanya bisa retak atau bahkan pecah.",
+                        "speaker_label": "SPEAKER_01",
+                    },
+                ],
+            },
+            "scenes": [{"scene_id": "scene-1", "start_seconds": 0.0, "end_seconds": 18.0}],
+            "silences": [],
+        }
+    )
+    config = build_pipeline_config(
+        {
+            "strategy": {
+                "desired_clip_count": 1,
+                "minimum_duration_seconds": 12,
+                "maximum_duration_seconds": 30,
+                "minimum_viral_score": 6.0,
+            }
+        }
+    )
+
+    candidates = build_candidate_analyses(short_input, config)
+
+    assert candidates
+    assert candidates[0].title.lower() != "oke"
+    assert "tekanan" in candidates[0].title.lower() or "pecah" in candidates[0].title.lower()
+
+
+def test_pipeline_rejects_internal_reintro_and_topic_reset_segments() -> None:
+    reset_input = AnalysisInputs.model_validate(
+        {
+            "transcript": {
+                "language": "id",
+                "duration_seconds": 44.0,
+                "segments": [
+                    {
+                        "segment_id": "s1",
+                        "start_seconds": 0.0,
+                        "end_seconds": 8.0,
+                        "text": "Kenapa doom scrolling bisa bikin stress level naik terus setiap hari?",
+                        "speaker_label": "SPEAKER_01",
+                    },
+                    {
+                        "segment_id": "s2",
+                        "start_seconds": 8.0,
+                        "end_seconds": 16.0,
+                        "text": "Karena sistemnya nge-loop, badan merasa ancamannya tidak pernah selesai.",
+                        "speaker_label": "SPEAKER_01",
+                    },
+                    {
+                        "segment_id": "s3",
+                        "start_seconds": 16.0,
+                        "end_seconds": 20.0,
+                        "text": "Makanya orang bisa capek mental walau cuma scroll berita terus.",
+                        "speaker_label": "SPEAKER_01",
+                    },
+                    {
+                        "segment_id": "s4",
+                        "start_seconds": 26.12,
+                        "end_seconds": 34.16,
+                        "text": "Halo para pemabuk, balik lagi di podcast kita bersama gue Bigeli Muria.",
+                        "speaker_label": "SPEAKER_02",
+                    },
+                    {
+                        "segment_id": "s5",
+                        "start_seconds": 34.16,
+                        "end_seconds": 42.56,
+                        "text": "Dan hari ini kita mau ngobrolin topik yang relevan banget buat semua orang.",
+                        "speaker_label": "SPEAKER_02",
+                    },
+                ],
+            },
+            "scenes": [{"scene_id": "scene-1", "start_seconds": 0.0, "end_seconds": 42.56}],
+            "silences": [],
+        }
+    )
+    config = build_pipeline_config(
+        {
+            "strategy": {
+                "desired_clip_count": 2,
+                "minimum_duration_seconds": 12,
+                "maximum_duration_seconds": 45,
+                "minimum_viral_score": 6.0,
+            }
+        }
+    )
+
+    candidates = build_candidate_analyses(reset_input, config)
+
+    assert all(candidate.end_seconds <= 20.0 for candidate in candidates)
+    assert all("halo para pemabuk" not in candidate.summary.lower() for candidate in candidates)
+    assert all("podcast kita" not in candidate.summary.lower() for candidate in candidates)
+
+
+def test_normalize_candidates_does_not_extend_into_reintro() -> None:
+    transcript_segments = AnalysisInputs.model_validate(
+        {
+            "transcript": {
+                "language": "id",
+                "duration_seconds": 28.0,
+                "segments": [
+                    {
+                        "segment_id": "s1",
+                        "start_seconds": 0.0,
+                        "end_seconds": 7.0,
+                        "text": "Kalau stress terus, badannya ngira ancamannya belum selesai.",
+                        "speaker_label": "SPEAKER_01",
+                    },
+                    {
+                        "segment_id": "s2",
+                        "start_seconds": 7.0,
+                        "end_seconds": 14.0,
+                        "text": "Makanya hormon waspadanya terus tinggi dan orang susah tenang karena",
+                        "speaker_label": "SPEAKER_01",
+                    },
+                    {
+                        "segment_id": "s3",
+                        "start_seconds": 14.0,
+                        "end_seconds": 18.0,
+                        "text": "halo teman-teman, balik lagi di podcast kita.",
+                        "speaker_label": "SPEAKER_02",
+                    },
+                ],
+            },
+            "scenes": [{"scene_id": "scene-1", "start_seconds": 0.0, "end_seconds": 18.0}],
+            "silences": [],
+        }
+    ).transcript.segments
+    candidate = CandidateAnalysis.model_validate(
+        {
+            "candidate_id": "candidate-reintro-cutoff-01",
+            "start_seconds": 0.0,
+            "end_seconds": 14.0,
+            "duration_seconds": 14.0,
+            "title": "Stress bikin badan siaga terus",
+            "hook_text": "Kalau stress terus, badannya ngira ancamannya belum selesai.",
+            "ending_text": "Makanya hormon waspadanya terus tinggi dan orang susah tenang karena",
+            "summary": "Clip edukasi tentang stress dan sistem tubuh.",
+            "why_it_works": ["Ada hook dan payoff."],
+            "content_category": "insight",
+            "context_complete": True,
+            "safety_notes": [],
+            "suggested_caption": "Clip edukasi tentang stress dan sistem tubuh.",
+            "suggested_cta": "Comment your take.",
+            "suggested_hashtags": ["#creatorstudio"],
+            "thumbnail_text": "Stress bikin badan siaga terus",
+            "speaker_ids": ["SPEAKER_01"],
+            "scene_ids": ["scene-1"],
+            "hook_second": 0.0,
+            "main_point_second": 5.0,
+            "punchline_second": 14.0,
+            "retention_level": "high",
+            "requires_context": False,
+            "can_standalone": True,
+            "scores": {
+                "hook": 8.2,
+                "conflict": 7.2,
+                "emotion": 7.0,
+                "novelty": 7.0,
+                "comment_potential": 7.2,
+                "base_viral_score": 7.9,
+                "final_viral_score": 7.9,
+                "penalties": {
+                    "context": 0,
+                    "weak_ending": 0.35,
+                    "slow_start": 0,
+                    "duplicate": 0,
+                    "unsafe_or_misleading": 0,
+                    "cut_quality": 0,
+                },
+            },
+        }
+    )
+
+    normalized = normalize_candidates([candidate], [], [], transcript_segments, 30.0)
+
+    assert normalized[0].end_seconds == 14.0
+    assert "halo teman-teman" not in normalized[0].ending_text.lower()
+
+
+def test_normalize_candidates_extends_incomplete_explanatory_endings() -> None:
+    inputs = analysis_inputs()
+    candidate = CandidateAnalysis.model_validate(
+        {
+            "candidate_id": "candidate-cutoff-01",
+            "start_seconds": 12.0,
+            "end_seconds": 28.0,
+            "duration_seconds": 16.0,
+            "title": "Padahal pembuka yang penting",
+            "hook_text": "Padahal justru bagian pembuka yang menentukan retention paling besar.",
+            "ending_text": "Kalau hook-nya lambat, penonton sudah pergi sebelum insight utamanya muncul karena",
+            "summary": "Clip berhenti saat penjelasan masih menggantung.",
+            "why_it_works": ["Ada hook dan insight."],
+            "content_category": "insight",
+            "context_complete": True,
+            "safety_notes": [],
+            "suggested_caption": "Clip berhenti saat penjelasan masih menggantung.",
+            "suggested_cta": "Comment your take.",
+            "suggested_hashtags": ["#creatorstudio"],
+            "thumbnail_text": "Padahal pembuka yang penting",
+            "speaker_ids": ["SPEAKER_01"],
+            "scene_ids": ["scene-1"],
+            "hook_second": 0.0,
+            "main_point_second": 4.0,
+            "punchline_second": 16.0,
+            "retention_level": "high",
+            "requires_context": False,
+            "can_standalone": True,
+            "scores": {
+                "hook": 8.5,
+                "conflict": 7.5,
+                "emotion": 6.9,
+                "novelty": 7.0,
+                "comment_potential": 7.4,
+                "base_viral_score": 8.0,
+                "final_viral_score": 8.0,
+                "penalties": {
+                    "context": 0,
+                    "weak_ending": 0.35,
+                    "slow_start": 0,
+                    "duplicate": 0,
+                    "unsafe_or_misleading": 0,
+                    "cut_quality": 0,
+                },
+            },
+        }
+    )
+
+    normalized = normalize_candidates(
+        [candidate],
+        inputs.scenes,
+        inputs.silences,
+        inputs.transcript.segments,
+        45.0,
+    )
+
+    assert normalized[0].end_seconds > candidate.end_seconds
+    assert "Makanya banyak creator gagal" in normalized[0].ending_text
 
 
 def test_shared_clip_analyzer_schema_is_available() -> None:

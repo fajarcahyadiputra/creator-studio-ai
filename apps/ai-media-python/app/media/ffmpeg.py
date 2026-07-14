@@ -284,10 +284,10 @@ def _build_podcast_spotlight_filter_graph(
     layout_options: dict[str, Any],
     include_logo_input: bool,
 ) -> str:
-    panel_width = 930
-    panel_height = 690
-    panel_x = 75
-    panel_y = 540
+    panel_width = 924
+    panel_height = 520
+    panel_x = 78
+    panel_y = 646
     crop_filter = _build_center_crop_filter(
         source_width=source_width,
         source_height=source_height,
@@ -299,31 +299,32 @@ def _build_podcast_spotlight_filter_graph(
         f"color=c=0x05070d:s={target_width}x{target_height}:d=1[base]",
         f"[0:v]{','.join(video_filters)}[clip]",
         "[base]drawbox=x=0:y=0:w=iw:h=ih:color=0x04060c:t=fill[bg0]",
-        "[bg0]drawbox=x=0:y=0:w=iw:h=ih:color=0x0b1220@0.22:t=18[bg1]",
-        "[bg1]drawbox=x=270:y=134:w=540:h=4:color=0xf6c343@0.95:t=fill[bg2]",
-        "[bg2]drawbox=x=120:y=332:w=840:h=3:color=0xf6c343@0.75:t=fill[bg3]",
-        f"[bg3]drawbox=x={panel_x - 10}:y={panel_y - 10}:w={panel_width + 20}:h={panel_height + 20}:color=0xf6c343@0.92:t=3[panel0]",
-        f"[panel0]drawbox=x={panel_x}:y={panel_y}:w={panel_width}:h={panel_height}:color=0x111827@0.98:t=fill[panel1]",
+        "[bg0]drawbox=x=0:y=0:w=iw:h=ih:color=0x0b1220@0.12:t=22[bg1]",
+        "[bg1]drawbox=x=0:y=0:w=iw:h=ih:color=0x0b1220@0.06:t=60[bg2]",
+        "[bg2]drawbox=x=172:y=546:w=268:h=3:color=0xf6c343@0.86:t=fill[bg3]",
+        f"[bg3]drawbox=x={panel_x - 14}:y={panel_y - 14}:w={panel_width + 28}:h={panel_height + 28}:color=0x000000@0.26:t=fill[panel_shadow]",
+        f"[panel_shadow]drawbox=x={panel_x - 2}:y={panel_y - 2}:w={panel_width + 4}:h={panel_height + 4}:color=0xf6c343@0.82:t=2[panel0]",
+        f"[panel0]drawbox=x={panel_x}:y={panel_y}:w={panel_width}:h={panel_height}:color=0x101724@0.98:t=fill[panel1]",
         f"[panel1][clip]overlay={panel_x}:{panel_y}[canvas0]",
-        "[canvas0]drawbox=x=118:y=1298:w=844:h=252:color=0x0d1422@0.94:t=fill[quotebox0]",
-        "[quotebox0]drawbox=x=118:y=1298:w=844:h=252:color=white@0.10:t=2[quotebox1]",
-        "[quotebox1]drawbox=x=370:y=1788:w=340:h=54:color=0x0d1422@0.98:t=fill[sourcebar0]",
-        "[sourcebar0]drawbox=x=370:y=1788:w=340:h=54:color=0xf6c343@0.70:t=2[sourcebar1]",
+        "[canvas0]drawbox=x=344:y=1750:w=392:h=56:color=0x0b1020@0.98:t=fill[sourcebar0]",
+        "[sourcebar0]drawbox=x=344:y=1750:w=392:h=56:color=0xf6c343@0.42:t=1[sourcebar1]",
     ]
 
     current_label = "sourcebar1"
     if include_logo_input:
-        graph_parts.append("[1:v]scale=120:120[logo]")
-        graph_parts.append(f"[{current_label}][logo]overlay=220:52[canvas1]")
+        graph_parts.append("[1:v]scale=86:86,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2),(W/2)*(H/2)),255,0)'[logo]")
+        graph_parts.append("[sourcebar1][logo]overlay=126:98[canvas1]")
         current_label = "canvas1"
 
+    graph_parts.append(f"[{current_label}]drawbox=x=242:y=108:w=2:h=72:color=0xf6c343@0.82:t=fill[brandline]")
+    current_label = "brandline"
     current_label = _append_textfile_draw(
         graph_parts,
         current_label,
         layout_options.get("channel_name_file"),
-        font_size=_resolve_font_size(layout_options.get("channel_name_size"), 32),
-        x="360",
-        y=70,
+        font_size=_resolve_font_size(layout_options.get("channel_name_size"), 28),
+        x="270",
+        y=102,
         font_color="white@0.97",
         output_label="canvas2",
     )
@@ -331,53 +332,55 @@ def _build_podcast_spotlight_filter_graph(
         graph_parts,
         current_label,
         layout_options.get("channel_tagline_file"),
-        font_size=_resolve_font_size(layout_options.get("channel_tagline_size"), 24),
-        x="360",
-        y=112,
+        font_size=_resolve_font_size(layout_options.get("channel_tagline_size"), 20),
+        x="270",
+        y=140,
         font_color="0xf6c343@0.97",
         output_label="canvas3",
     )
     current_label = _append_textfile_draw(
         graph_parts,
         current_label,
-        layout_options.get("headline_file"),
-        font_size=_resolve_font_size(layout_options.get("headline_size"), 96),
-        x="(w-text_w)/2",
-        y=170,
+        layout_options.get("headline_primary_file"),
+        font_size=_resolve_font_size(layout_options.get("headline_primary_size"), 72),
+        x="142",
+        y=_resolve_font_size(layout_options.get("headline_primary_y"), 220),
         font_color="white@0.98",
-        line_spacing=12,
+        line_spacing=2,
         output_label="canvas4",
     )
     current_label = _append_textfile_draw(
         graph_parts,
         current_label,
-        layout_options.get("quote_file"),
-        font_size=44,
-        x="(w-text_w)/2",
-        y=1380,
-        font_color="white@0.98",
-        line_spacing=14,
+        layout_options.get("headline_emphasis_file"),
+        font_size=_resolve_font_size(layout_options.get("headline_emphasis_size"), 82),
+        x="142",
+        y=_resolve_font_size(layout_options.get("headline_emphasis_y"), 366),
+        font_color="0xf6c343@0.99",
+        line_spacing=0,
         output_label="canvas5",
     )
     graph_parts.append(
-        f"[{current_label}]drawtext=text='“':fontcolor=0xf6c343@0.98:fontsize=112:x=(w-text_w)/2:y=1298[canvas6]"
+        f"[{current_label}]drawbox=x=136:y={_resolve_font_size(layout_options.get('headline_divider_y'), 520)}:w=684:h=3:color=0xf6c343@0.78:t=fill[canvas6]"
     )
-    current_label = "canvas6"
+    graph_parts.append("[canvas6]drawbox=x=252:y=1278:w=576:h=3:color=0xf6c343@0.56:t=fill[canvas7]")
+    current_label = "canvas7"
     current_label = _append_textfile_draw(
         graph_parts,
         current_label,
         layout_options.get("source_label_file"),
-        font_size=_resolve_font_size(layout_options.get("source_label_size"), 28),
+        font_size=_resolve_font_size(layout_options.get("source_label_size"), 22),
         x="(w-text_w)/2",
-        y=1800,
+        y=1764,
         font_color="0xf6c343@0.97",
-        output_label="canvas7",
+        output_label="canvas8",
     )
 
-    # This poster-style layout uses its own quote card under the video.
-    # Sidecar subtitles are still generated and uploaded separately, but we avoid
-    # burning default full-frame subtitles because they visually fight the layout.
-    graph_parts.append(f"[{current_label}]null[vout]")
+    if subtitle_path is not None:
+        escaped_subtitle = _escape_filter_value(subtitle_path)
+        graph_parts.append(f"[{current_label}]subtitles='{escaped_subtitle}'[vout]")
+    else:
+        graph_parts.append(f"[{current_label}]null[vout]")
 
     return ";".join(graph_parts)
 

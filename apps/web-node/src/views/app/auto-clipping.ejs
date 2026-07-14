@@ -1,6 +1,6 @@
 <%- include('../partials/head', { title, csrfToken }) %>
 <div class="workspace-shell"><%- include('../partials/user-topbar') %><main class="workspace-main content-area">
-  <header class="page-header"><div><span class="eyebrow">Tools</span><h1>Auto Clipping</h1><p>Submit from an uploaded media asset or an allowed external URL. For YouTube and supported sources, the worker now imports the source into your workspace before transcript and clip analysis begin.</p></div></header>
+  <header class="page-header"><div><span class="eyebrow">Tools</span><h1>Auto Clipping</h1><p>Buat short clip dari video panjang dengan alur yang lebih rapi: pilih source, atur strategi inti, lalu tambahkan arahan editor hanya kalau memang perlu.</p></div></header>
   <div class="alert alert-info">Phase 2 analysis can now materialize supported external URLs into workspace media automatically. Final render output is still handled by the downstream render pipeline.</div>
   <div class="form-message"></div>
   <form id="auto-clip-form" class="wizard-panel">
@@ -10,7 +10,7 @@
     <div class="d-flex justify-content-between align-items-center mb-4 gap-3">
       <div>
         <span class="eyebrow">Mode</span>
-        <p class="mb-0 text-secondary">Quick Mode keeps only the core inputs. Advanced Mode exposes extra Phase 2 planning fields.</p>
+        <p class="mb-0 text-secondary">Quick Mode hanya menampilkan input penting. Advanced Mode membuka field teknis dan arahan detail untuk editor power user.</p>
       </div>
       <label class="form-check form-switch">
         <input class="form-check-input" type="checkbox" name="advanced_mode">
@@ -26,7 +26,7 @@
             <option value="<%= preset.id %>" <%= selectedPresetId === preset.id ? 'selected' : '' %>><%= preset.name %><%= preset.isDefault ? ' (default)' : '' %></option>
           <% }) %>
         </select>
-        <div class="form-text">Preset akan mengisi platform, durasi, hook style, CTA, dan setting subtitle dasar.</div>
+        <div class="form-text">Preset akan mengisi strategi inti dan style default agar form tidak perlu diisi dari nol.</div>
       </div>
       <div class="col-md-6">
         <label class="form-label">Brand kit</label>
@@ -69,7 +69,7 @@
         <option value="MEDIA_ASSET" <%= assets.length ? '' : 'disabled' %>>Uploaded media asset</option>
         <option value="EXTERNAL_URL" <%= assets.length ? '' : 'selected' %>>External source URL</option>
       </select>
-      <div class="form-text">Uploaded assets are the fastest path. External URLs are checked before the job is created, then imported into your workspace media storage when supported.</div>
+      <div class="form-text">Pilih video dari asset workspace atau masukkan URL publik yang didukung. Sistem akan memproses source lalu hanya menyimpan hasil clip akhirnya.</div>
 
       <div class="mt-3" data-source-panel="MEDIA_ASSET" <%= assets.length ? '' : 'hidden' %>>
         <label class="form-label">Ready video asset</label>
@@ -95,34 +95,126 @@
       <% } %>
 
       <div class="row g-3 mt-1">
-        <div class="col-md-4"><label class="form-label">Source language</label><input class="form-control" name="source_language" value="<%= formDefaults.sourceLanguage %>"></div>
-        <div class="col-md-4"><label class="form-label">Speaker count</label><input class="form-control" name="speaker_count" type="number" min="1" max="20" value="<%= formDefaults.speakerCount %>"></div>
-        <div class="col-md-4"><label class="form-label">Custom vocabulary</label><input class="form-control" name="custom_vocabulary" value="<%= formDefaults.customVocabulary %>" placeholder="Brand, product, keyword"><div class="form-text">Pisahkan dengan koma, titik koma, atau baris baru. Maks 200 item, tiap item maks 100 karakter.</div></div>
+        <div class="col-md-4"><label class="form-label">Bahasa source</label><input class="form-control" name="source_language" value="<%= formDefaults.sourceLanguage %>"></div>
+        <div class="col-md-4"><label class="form-label">Jumlah speaker</label><input class="form-control" name="speaker_count" type="number" min="1" max="20" value="<%= formDefaults.speakerCount %>"></div>
+        <div class="col-md-4"><label class="form-label">Kata penting / custom vocabulary</label><input class="form-control" name="custom_vocabulary" value="<%= formDefaults.customVocabulary %>" placeholder="Nama brand, produk, istilah teknis"><div class="form-text">Opsional. Dipakai untuk membantu transcript dan analisis mengenali istilah penting.</div></div>
       </div>
       <label class="form-check mt-3"><input class="form-check-input" type="checkbox" name="rights_confirmed" required><span class="form-check-label">I own or have permission to process this content.</span></label>
     </div></section>
     <section class="wizard-step"><div class="step-number">2</div><div class="step-body"><h2>Content strategy</h2><div class="row g-3">
-      <div class="col-md-6"><label class="form-label">Title</label><input class="form-control" name="title" maxlength="255"></div>
-      <div class="col-md-6"><label class="form-label">Preferred topic</label><input class="form-control" name="topic" maxlength="255" value="<%= formDefaults.topic %>" placeholder="Optional"></div>
-      <div class="col-md-6"><label class="form-label">Niche</label><input class="form-control" name="niche" maxlength="120" value="<%= formDefaults.niche %>" placeholder="Marketing, finance, creator education"></div>
-      <div class="col-md-6"><label class="form-label">Target audience</label><input class="form-control" name="target_audience" maxlength="255" value="<%= formDefaults.targetAudience %>" placeholder="Founders, beginner creators, students"></div>
-      <div class="col-md-3"><label class="form-label">Platform</label><select class="form-select" name="platform"><option <%= formDefaults.platform === 'YOUTUBE_SHORTS' ? 'selected' : '' %>>YOUTUBE_SHORTS</option><option <%= formDefaults.platform === 'TIKTOK' ? 'selected' : '' %>>TIKTOK</option><option <%= formDefaults.platform === 'INSTAGRAM_REELS' ? 'selected' : '' %>>INSTAGRAM_REELS</option><option <%= formDefaults.platform === 'FACEBOOK_REELS' ? 'selected' : '' %>>FACEBOOK_REELS</option></select></div>
-      <div class="col-md-3"><label class="form-label">Objective</label><select class="form-select" name="objective"><option <%= formDefaults.objective === 'EDUCATION' ? 'selected' : '' %>>EDUCATION</option><option <%= formDefaults.objective === 'ENGAGEMENT' ? 'selected' : '' %>>ENGAGEMENT</option><option <%= formDefaults.objective === 'STORYTELLING' ? 'selected' : '' %>>STORYTELLING</option><option <%= formDefaults.objective === 'CONTROVERSY' ? 'selected' : '' %>>CONTROVERSY</option></select></div>
-      <div class="col-md-3"><label class="form-label">Primary tone</label><select class="form-select" name="primary_tone"><option <%= formDefaults.primaryTone === 'EDUCATIONAL' ? 'selected' : '' %>>EDUCATIONAL</option><option <%= formDefaults.primaryTone === 'SERIOUS' ? 'selected' : '' %>>SERIOUS</option><option <%= formDefaults.primaryTone === 'DIRECT' ? 'selected' : '' %>>DIRECT</option><option <%= formDefaults.primaryTone === 'CASUAL' ? 'selected' : '' %>>CASUAL</option><option <%= formDefaults.primaryTone === 'CONTROVERSIAL' ? 'selected' : '' %>>CONTROVERSIAL</option></select></div>
-      <div class="col-md-3"><label class="form-label">Secondary tone</label><select class="form-select" name="secondary_tone"><option value="" <%= !formDefaults.secondaryTone ? 'selected' : '' %>>None</option><option <%= formDefaults.secondaryTone === 'SERIOUS' ? 'selected' : '' %>>SERIOUS</option><option <%= formDefaults.secondaryTone === 'CASUAL' ? 'selected' : '' %>>CASUAL</option><option <%= formDefaults.secondaryTone === 'EMOTIONAL' ? 'selected' : '' %>>EMOTIONAL</option><option <%= formDefaults.secondaryTone === 'CONFIDENT' ? 'selected' : '' %>>CONFIDENT</option></select></div>
-      <div class="col-md-4"><label class="form-label">Number of clips</label><input class="form-control" name="clip_count" type="number" min="1" max="30" value="<%= formDefaults.clipCount %>"></div>
-      <div class="col-md-4"><label class="form-label">Candidate pool count</label><input class="form-control" name="candidate_pool_count" type="number" min="1" max="30" value="<%= formDefaults.candidatePoolCount %>"><div class="form-text">Berapa kandidat terbaik yang harus dianalisis dan disimpan sebelum sistem auto-select top clip untuk render.</div></div>
-      <div class="col-md-4"><label class="form-label">Minimum duration</label><input class="form-control" name="min_duration" type="number" min="10" max="180" value="<%= formDefaults.minDuration %>"></div>
-      <div class="col-md-4"><label class="form-label">Maximum duration</label><input class="form-control" name="max_duration" type="number" min="15" max="180" value="<%= formDefaults.maxDuration %>"></div>
-      <div class="col-md-4"><label class="form-label">Minimum viral score</label><input class="form-control" name="minimum_viral_score" type="number" min="0" max="10" step="0.1" value="<%= formDefaults.minimumViralScore %>"></div>
-      <div class="col-md-4"><label class="form-label">Hook style</label><select class="form-select" name="hook_style"><option value="" <%= !formDefaults.hookStyle ? 'selected' : '' %>>Auto</option><option <%= formDefaults.hookStyle === 'QUESTION' ? 'selected' : '' %>>QUESTION</option><option <%= formDefaults.hookStyle === 'SHOCK' ? 'selected' : '' %>>SHOCK</option><option <%= formDefaults.hookStyle === 'DIRECT_CHALLENGE' ? 'selected' : '' %>>DIRECT_CHALLENGE</option><option <%= formDefaults.hookStyle === 'STORY_OPEN' ? 'selected' : '' %>>STORY_OPEN</option><option <%= formDefaults.hookStyle === 'MYTH_BUSTING' ? 'selected' : '' %>>MYTH_BUSTING</option></select></div>
-      <div class="col-md-4"><label class="form-label">CTA preference</label><select class="form-select" name="cta_preference"><option value="" <%= !formDefaults.ctaPreference ? 'selected' : '' %>>Auto</option><option <%= formDefaults.ctaPreference === 'COMMENT' ? 'selected' : '' %>>COMMENT</option><option <%= formDefaults.ctaPreference === 'SHARE' ? 'selected' : '' %>>SHARE</option><option <%= formDefaults.ctaPreference === 'FOLLOW' ? 'selected' : '' %>>FOLLOW</option><option <%= formDefaults.ctaPreference === 'SAVE' ? 'selected' : '' %>>SAVE</option></select></div>
-      <div class="col-md-4"><label class="form-label">Standalone priority</label><select class="form-select" name="standalone_priority"><option <%= formDefaults.standalonePriority === 'REQUIRED' ? 'selected' : '' %>>REQUIRED</option><option <%= formDefaults.standalonePriority === 'PREFERRED' ? 'selected' : '' %>>PREFERRED</option><option <%= formDefaults.standalonePriority === 'FLEXIBLE' ? 'selected' : '' %>>FLEXIBLE</option></select></div>
-      <div class="col-md-4"><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="require_spoken_audio" <%= formDefaults.requireSpokenAudio ? 'checked' : '' %>><span class="form-check-label">Wajib fokus ke momen dengan suara/dialog yang jelas</span></label></div>
+      <div class="col-12">
+        <div class="border rounded-4 p-3 bg-light-subtle">
+          <h3 class="h5 mb-3">Core setup</h3>
+          <div class="row g-3">
+            <div class="col-md-6"><label class="form-label">Judul video source</label><input class="form-control" name="title" maxlength="255" placeholder="Judul asli video atau topik episode"></div>
+            <div class="col-md-6"><label class="form-label">Topik utama konten</label><input class="form-control" name="topic" maxlength="255" value="<%= formDefaults.topic %>" placeholder="Contoh: ekonomi, kesehatan, bisnis, personal finance"><div class="form-text">Ini topik utama video, bukan daftar prioritas clip.</div></div>
+            <div class="col-md-6"><label class="form-label">Niche</label><input class="form-control" name="niche" maxlength="120" value="<%= formDefaults.niche %>" placeholder="Marketing, finance, creator education"></div>
+            <div class="col-md-6"><label class="form-label">Target audience</label><input class="form-control" name="target_audience" maxlength="255" value="<%= formDefaults.targetAudience %>" placeholder="Founders, beginner creators, students"></div>
+            <div class="col-md-3"><label class="form-label">Platform</label><select class="form-select" name="platform"><option <%= formDefaults.platform === 'YOUTUBE_SHORTS' ? 'selected' : '' %>>YOUTUBE_SHORTS</option><option <%= formDefaults.platform === 'TIKTOK' ? 'selected' : '' %>>TIKTOK</option><option <%= formDefaults.platform === 'INSTAGRAM_REELS' ? 'selected' : '' %>>INSTAGRAM_REELS</option><option <%= formDefaults.platform === 'FACEBOOK_REELS' ? 'selected' : '' %>>FACEBOOK_REELS</option></select></div>
+            <div class="col-md-3"><label class="form-label">Objective</label><select class="form-select" name="objective"><option <%= formDefaults.objective === 'EDUCATION' ? 'selected' : '' %>>EDUCATION</option><option <%= formDefaults.objective === 'ENGAGEMENT' ? 'selected' : '' %>>ENGAGEMENT</option><option <%= formDefaults.objective === 'STORYTELLING' ? 'selected' : '' %>>STORYTELLING</option><option <%= formDefaults.objective === 'CONTROVERSY' ? 'selected' : '' %>>CONTROVERSY</option></select></div>
+            <div class="col-md-3"><label class="form-label">Primary tone</label><select class="form-select" name="primary_tone"><option <%= formDefaults.primaryTone === 'EDUCATIONAL' ? 'selected' : '' %>>EDUCATIONAL</option><option <%= formDefaults.primaryTone === 'SERIOUS' ? 'selected' : '' %>>SERIOUS</option><option <%= formDefaults.primaryTone === 'DIRECT' ? 'selected' : '' %>>DIRECT</option><option <%= formDefaults.primaryTone === 'CASUAL' ? 'selected' : '' %>>CASUAL</option><option <%= formDefaults.primaryTone === 'CONTROVERSIAL' ? 'selected' : '' %>>CONTROVERSIAL</option></select></div>
+            <div class="col-md-3"><label class="form-label">Secondary tone</label><select class="form-select" name="secondary_tone"><option value="" <%= !formDefaults.secondaryTone ? 'selected' : '' %>>None</option><option <%= formDefaults.secondaryTone === 'SERIOUS' ? 'selected' : '' %>>SERIOUS</option><option <%= formDefaults.secondaryTone === 'CASUAL' ? 'selected' : '' %>>CASUAL</option><option <%= formDefaults.secondaryTone === 'EMOTIONAL' ? 'selected' : '' %>>EMOTIONAL</option><option <%= formDefaults.secondaryTone === 'CONFIDENT' ? 'selected' : '' %>>CONFIDENT</option></select></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12">
+        <div class="border rounded-4 p-3">
+          <h3 class="h5 mb-3">Clip selection and virality</h3>
+          <div class="row g-3">
+            <div class="col-md-4"><label class="form-label">Jumlah clip final</label><input class="form-control" name="clip_count" type="number" min="1" max="30" value="<%= formDefaults.clipCount %>"></div>
+            <div class="col-md-4"><label class="form-label">Jumlah kandidat dianalisis</label><input class="form-control" name="candidate_pool_count" type="number" min="1" max="30" value="<%= formDefaults.candidatePoolCount %>"><div class="form-text">Semakin besar angkanya, semakin banyak opsi kandidat sebelum dipilih yang terbaik.</div></div>
+            <div class="col-md-4"><label class="form-label">Minimum viral score</label><input class="form-control" name="minimum_viral_score" type="number" min="0" max="10" step="0.1" value="<%= formDefaults.minimumViralScore %>"></div>
+            <div class="col-md-4"><label class="form-label">Durasi minimum</label><input class="form-control" name="min_duration" type="number" min="10" max="180" value="<%= formDefaults.minDuration %>"></div>
+            <div class="col-md-4"><label class="form-label">Durasi maksimum</label><input class="form-control" name="max_duration" type="number" min="15" max="180" value="<%= formDefaults.maxDuration %>"></div>
+            <div class="col-md-4"><label class="form-label">Prioritas clip mandiri</label><select class="form-select" name="standalone_priority"><option <%= formDefaults.standalonePriority === 'REQUIRED' ? 'selected' : '' %>>REQUIRED</option><option <%= formDefaults.standalonePriority === 'PREFERRED' ? 'selected' : '' %>>PREFERRED</option><option <%= formDefaults.standalonePriority === 'FLEXIBLE' ? 'selected' : '' %>>FLEXIBLE</option></select><div class="form-text">Pilih <strong>REQUIRED</strong> jika clip harus tetap jelas walau ditonton tanpa konteks video panjang.</div></div>
+            <div class="col-md-4"><label class="form-label">Gaya hook</label><select class="form-select" name="hook_style"><option value="" <%= !formDefaults.hookStyle ? 'selected' : '' %>>Auto</option><option <%= formDefaults.hookStyle === 'QUESTION' ? 'selected' : '' %>>QUESTION</option><option <%= formDefaults.hookStyle === 'SHOCK' ? 'selected' : '' %>>SHOCK</option><option <%= formDefaults.hookStyle === 'DIRECT_CHALLENGE' ? 'selected' : '' %>>DIRECT_CHALLENGE</option><option <%= formDefaults.hookStyle === 'STORY_OPEN' ? 'selected' : '' %>>STORY_OPEN</option><option <%= formDefaults.hookStyle === 'MYTH_BUSTING' ? 'selected' : '' %>>MYTH_BUSTING</option></select></div>
+            <div class="col-md-4"><label class="form-label">Arah CTA</label><select class="form-select" name="cta_preference"><option value="" <%= !formDefaults.ctaPreference ? 'selected' : '' %>>Auto</option><option <%= formDefaults.ctaPreference === 'COMMENT' ? 'selected' : '' %>>COMMENT</option><option <%= formDefaults.ctaPreference === 'SHARE' ? 'selected' : '' %>>SHARE</option><option <%= formDefaults.ctaPreference === 'FOLLOW' ? 'selected' : '' %>>FOLLOW</option><option <%= formDefaults.ctaPreference === 'SAVE' ? 'selected' : '' %>>SAVE</option></select></div>
+            <div class="col-md-4"><label class="form-label">Profanity handling</label><select class="form-select" name="profanity_handling"><option <%= formDefaults.profanityHandling === 'KEEP' ? 'selected' : '' %>>KEEP</option><option <%= formDefaults.profanityHandling === 'MUTE' ? 'selected' : '' %>>MUTE</option><option <%= formDefaults.profanityHandling === 'BLEEP' ? 'selected' : '' %>>BLEEP</option><option <%= formDefaults.profanityHandling === 'SUBTITLE_CENSOR' ? 'selected' : '' %>>SUBTITLE_CENSOR</option></select></div>
+            <div class="col-md-4"><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="require_spoken_audio" <%= formDefaults.requireSpokenAudio ? 'checked' : '' %>><span class="form-check-label">Wajib fokus ke momen dengan suara/dialog yang jelas</span></label></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12">
+        <div class="border rounded-4 p-3 bg-light-subtle">
+          <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+            <div>
+              <label class="form-label mb-1">Packaging helper</label>
+              <div class="form-text mt-0">Pilih arah headline supaya AI lebih konsisten membuat <strong>title</strong>, <strong>thumbnail text</strong>, dan <strong>hook text</strong> yang cocok untuk template 9:16.</div>
+            </div>
+            <span class="badge text-bg-light border">Structured helper</span>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">Headline angle</label>
+              <select class="form-select" name="headline_angle">
+                <option value="">Auto</option>
+                <option value="PROBLEM_TO_CAUSE">Problem -> cause</option>
+                <option value="PROBLEM_TO_SOLUTION">Problem -> solution</option>
+                <option value="QUESTION_TO_ANSWER">Question -> answer</option>
+                <option value="MYTH_TO_FACT">Myth -> fact</option>
+                <option value="RISK_TO_WARNING">Risk -> warning</option>
+                <option value="CONTRADICTION_TO_EXPLANATION">Contradiction -> explanation</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Title packaging style</label>
+              <select class="form-select" name="title_packaging_style">
+                <option value="">Auto</option>
+                <option value="SHORT_PUNCHY">Short punchy</option>
+                <option value="CLEAR_EXPLANATORY">Clear explanatory</option>
+                <option value="HIGH_CURIOSITY">High curiosity</option>
+                <option value="RISK_FOCUSED">Risk focused</option>
+                <option value="DEBATE_FOCUSED">Debate focused</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Thumbnail text style</label>
+              <select class="form-select" name="thumbnail_packaging_style">
+                <option value="">Auto</option>
+                <option value="ULTRA_SHORT">Ultra short</option>
+                <option value="KEY_RISK">Key risk</option>
+                <option value="KEY_QUESTION">Key question</option>
+                <option value="KEY_PAYOFF">Key payoff</option>
+                <option value="OBJECT_AND_CONSEQUENCE">Object and consequence</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Headline tone</label>
+              <select class="form-select" name="headline_tone">
+                <option value="">Auto</option>
+                <option value="DIRECT">Direct</option>
+                <option value="URGENT">Urgent</option>
+                <option value="SERIOUS">Serious</option>
+                <option value="EDUCATIONAL">Educational</option>
+                <option value="CONTROVERSIAL">Controversial</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Title length target</label>
+              <select class="form-select" name="title_length_target">
+                <option value="">Auto</option>
+                <option value="VERY_SHORT">Very short 2-4 words</option>
+                <option value="SHORT">Short 4-6 words</option>
+                <option value="MEDIUM">Medium 6-9 words</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Forbidden title pattern</label>
+              <select class="form-select" name="title_forbidden_pattern">
+                <option value="">Auto</option>
+                <option value="NO_FILLER_OPENING">No filler opening</option>
+                <option value="NO_VAGUE_CLICKBAIT">No vague clickbait</option>
+                <option value="NO_CUT_OFF_ENDING">No cut-off ending</option>
+                <option value="NO_GENERIC_SUMMARY">No generic summary</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="col-md-6">
-        <label class="form-label">Clip style tags</label>
+        <label class="form-label">Style clip</label>
         <input class="form-control" name="clip_style_tags" value="<%= formDefaults.clipStyleTags %>" placeholder="storytelling, edukasi, cinematic, shocking">
-        <div class="form-text">Gaya clip yang ingin diprioritaskan. Anda tetap bisa isi manual, tapi opsi cepat tersedia di bawah.</div>
+        <div class="form-text">Pilih gaya edit yang ingin diprioritaskan. Bisa isi manual atau pakai opsi cepat di bawah.</div>
         <select class="form-select mt-2" data-append-to-field="clip_style_tags">
           <option value="">Tambah style preset...</option>
           <option value="storytelling">storytelling</option>
@@ -138,44 +230,77 @@
           <option value="direct_answer">direct_answer</option>
         </select>
       </div>
-      <div class="col-md-6"><label class="form-label">Virality priorities</label><input class="form-control" name="virality_priorities" value="<%= formDefaults.viralityPriorities %>" placeholder="hook 0-2 detik, konflik, punchline, ending komentar"><div class="form-text">Elemen viral yang paling Anda utamakan untuk job ini.</div></div>
-      <div class="col-12" data-advanced-field hidden><label class="form-label">Clip selection brief</label><textarea class="form-control" name="selection_brief" rows="4" maxlength="12000" placeholder="Tuliskan bagaimana AI harus memilih kandidat clip terbaik: tipe hook, emosi, konflik, payoff, sudut narasi, urutan prioritas, atau referensi editorial lain."><%= formDefaults.selectionBrief %></textarea><div class="form-text">Gunakan ini untuk arahan panjang tentang cara memilih kandidat clip. Ini tidak dipaksa menjadi list pendek.</div></div>
-      <div class="col-12" data-advanced-field hidden><label class="form-label">Avoidance brief</label><textarea class="form-control" name="avoidance_brief" rows="3" maxlength="12000" placeholder="Tulis pola clip yang harus dihindari: intro lambat, konteks terlalu panjang, bercanda internal, filler, jargon berat, dan sebagainya."><%= formDefaults.avoidanceBrief %></textarea><div class="form-text">Cocok untuk guardrail panjang yang tidak muat di field short tags.</div></div>
-      <div class="col-12" data-advanced-field hidden><label class="form-label">Packaging brief</label><textarea class="form-control" name="packaging_brief" rows="3" maxlength="12000" placeholder="Arahkan gaya hook text, caption, thumbnail text, hashtag, CTA, atau packaging output lain untuk short video ini."><%= formDefaults.packagingBrief %></textarea><div class="form-text">Dipakai untuk mengarahkan bagaimana hasil clip dikemas setelah kandidat terpilih.</div></div>
-      <div class="col-md-4"><label class="form-label">Profanity handling</label><select class="form-select" name="profanity_handling"><option <%= formDefaults.profanityHandling === 'KEEP' ? 'selected' : '' %>>KEEP</option><option <%= formDefaults.profanityHandling === 'MUTE' ? 'selected' : '' %>>MUTE</option><option <%= formDefaults.profanityHandling === 'BLEEP' ? 'selected' : '' %>>BLEEP</option><option <%= formDefaults.profanityHandling === 'SUBTITLE_CENSOR' ? 'selected' : '' %>>SUBTITLE_CENSOR</option></select></div>
-      <div class="col-md-4"><label class="form-label">Preferred topics</label><input class="form-control" name="preferred_topics" value="<%= formDefaults.preferredTopics %>" placeholder="Hook 3 detik pertama, audience retention, CTA komentar"><div class="form-text">Opsional. Ini untuk tag/topik pendek, bukan prompt panjang. Pisahkan dengan koma, titik koma, atau baris baru.</div><div class="form-text mt-1" data-list-helper="preferred_topics"></div></div>
-      <div class="col-md-4"><label class="form-label">Topics to avoid</label><input class="form-control" name="topics_to_avoid" value="<%= formDefaults.topicsToAvoid %>" placeholder="Politik partisan, SARA, klaim medis berisiko"><div class="form-text">Opsional. Isi dengan daftar singkat hal yang perlu dihindari. Untuk instruksi panjang, gunakan field prompt di bawah.</div><div class="form-text mt-1" data-list-helper="topics_to_avoid"></div></div>
-      <div class="col-12" data-advanced-field hidden><label class="form-label">Analysis prompt / editor brief</label><textarea class="form-control" name="content_context" rows="5" maxlength="20000" placeholder="Tulis brief panjang untuk AI di sini: gaya editing, tipe hook yang diinginkan, sudut narasi, hal yang harus diprioritaskan, cara memilih clip, pola subtitle, hal yang harus dihindari, dan konteks tambahan lain."><%= formDefaults.contentContext %></textarea><div class="form-text">Field ini untuk prompt bebas yang panjang. Cocok untuk arahan editor detail, referensi gaya, dan konteks analisis.</div></div>
-      <div class="col-md-6" data-advanced-field hidden><label class="form-label">Sensitive topics</label><input class="form-control" name="sensitive_topics" value="<%= formDefaults.sensitiveTopics %>" placeholder="Trauma, klaim medis, isu hukum"><div class="form-text">Opsional. Pakai hanya untuk label sensitif pendek, bukan deskripsi panjang.</div></div>
-      <div class="col-md-3" data-advanced-field hidden><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="remove_long_silence" checked><span class="form-check-label">Remove long silence</span></label></div>
-      <div class="col-md-3" data-advanced-field hidden><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="remove_filler_words"><span class="form-check-label">Remove filler words</span></label></div>
+      <div class="col-md-4"><label class="form-label">Topik yang ingin diprioritaskan</label><input class="form-control" name="preferred_topics" value="<%= formDefaults.preferredTopics %>" placeholder="Hook cepat, insight praktis, konflik jelas"><div class="form-text">Isi dengan daftar singkat. Jangan dipakai untuk prompt panjang.</div><div class="form-text mt-1" data-list-helper="preferred_topics"></div></div>
+      <div class="col-md-4"><label class="form-label">Topik yang harus dihindari</label><input class="form-control" name="topics_to_avoid" value="<%= formDefaults.topicsToAvoid %>" placeholder="SARA, klaim medis berisiko, inside joke"><div class="form-text">Isi dengan daftar singkat hal yang tidak mau muncul di clip.</div><div class="form-text mt-1" data-list-helper="topics_to_avoid"></div></div>
+      <div class="col-12"><label class="form-label">Brief editor utama</label><textarea class="form-control" name="content_context" rows="5" maxlength="20000" placeholder="Tulis arahan utama untuk AI: jenis hook yang diinginkan, gaya pembukaan, angle narasi, payoff yang dicari, tipe ending, dan kualitas clip seperti apa yang harus diprioritaskan."><%= formDefaults.contentContext %></textarea><div class="form-text">Field ini adalah arahan utama untuk AI. Kalau hanya isi satu prompt panjang, isi di sini saja.</div></div>
+      <div class="col-12" data-advanced-field hidden>
+        <details class="border rounded-4 p-3">
+          <summary class="fw-semibold">Advanced editor controls</summary>
+          <p class="text-secondary small mt-2 mb-3">Pakai bagian ini hanya kalau ingin memisahkan arahan menjadi beberapa komponen. Kalau tidak perlu, cukup isi <strong>Brief editor utama</strong> di atas.</p>
+          <div class="row g-3">
+            <div class="col-md-6"><label class="form-label">Prioritas viral</label><input class="form-control" name="virality_priorities" value="<%= formDefaults.viralityPriorities %>" placeholder="hook 0-2 detik, konflik, punchline, ending komentar"><div class="form-text">Opsional. Isi hanya kalau ingin menekankan aspek viral tertentu.</div></div>
+            <div class="col-md-6"><label class="form-label">Sensitive topics</label><input class="form-control" name="sensitive_topics" value="<%= formDefaults.sensitiveTopics %>" placeholder="Trauma, klaim medis, isu hukum"><div class="form-text">Pakai hanya untuk label sensitif pendek.</div></div>
+            <div class="col-12"><label class="form-label">Selection brief</label><textarea class="form-control" name="selection_brief" rows="4" maxlength="12000" placeholder="Cara AI memilih kandidat clip terbaik: tipe hook, emosi, konflik, payoff, sudut narasi, atau urutan prioritas."><%= formDefaults.selectionBrief %></textarea></div>
+            <div class="col-12"><label class="form-label">Avoidance brief</label><textarea class="form-control" name="avoidance_brief" rows="3" maxlength="12000" placeholder="Pola clip yang harus dihindari: intro lambat, konteks terlalu panjang, filler, jargon berat, bercanda internal, dll."><%= formDefaults.avoidanceBrief %></textarea></div>
+            <div class="col-12"><label class="form-label">Packaging brief</label><textarea class="form-control" name="packaging_brief" rows="3" maxlength="12000" placeholder="Arahkan gaya title, hook text, caption, thumbnail text, hashtag, atau CTA."><%= formDefaults.packagingBrief %></textarea></div>
+            <div class="col-md-3"><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="remove_long_silence" checked><span class="form-check-label">Remove long silence</span></label></div>
+            <div class="col-md-3"><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="remove_filler_words"><span class="form-check-label">Remove filler words</span></label></div>
+          </div>
+        </details>
+      </div>
     </div></div></section>
     <section class="wizard-step"><div class="step-number">3</div><div class="step-body"><h2>Visual and subtitle</h2><div class="row g-3">
       <div class="col-md-4"><label class="form-label">Aspect ratio</label><select class="form-select" name="aspect_ratio"><option <%= formDefaults.aspectRatio === '9:16' ? 'selected' : '' %>>9:16</option><option <%= formDefaults.aspectRatio === '1:1' ? 'selected' : '' %>>1:1</option><option <%= formDefaults.aspectRatio === '4:5' ? 'selected' : '' %>>4:5</option><option <%= formDefaults.aspectRatio === '16:9' ? 'selected' : '' %>>16:9</option></select></div>
       <div class="col-md-4"><label class="form-label">Crop strategy</label><select class="form-select" name="crop_strategy"><option <%= formDefaults.cropStrategy === 'AUTO_REFRAME' ? 'selected' : '' %>>AUTO_REFRAME</option><option <%= formDefaults.cropStrategy === 'CENTER' ? 'selected' : '' %>>CENTER</option><option <%= formDefaults.cropStrategy === 'ACTIVE_SPEAKER' ? 'selected' : '' %>>ACTIVE_SPEAKER</option><option <%= formDefaults.cropStrategy === 'FACE_TRACKING' ? 'selected' : '' %>>FACE_TRACKING</option></select></div>
       <div class="col-md-4"><label class="form-label">Subtitle language</label><input class="form-control" name="subtitle_language" value="<%= formDefaults.subtitleLanguage %>"></div>
       <div class="col-md-6" data-layout-panel="9:16"><label class="form-label">9:16 layout template</label><select class="form-select" name="layout_template"><option value="STANDARD" <%= formDefaults.layoutTemplate === 'STANDARD' ? 'selected' : '' %>>STANDARD</option><option value="PODCAST_SPOTLIGHT_9X16" <%= formDefaults.layoutTemplate === 'PODCAST_SPOTLIGHT_9X16' ? 'selected' : '' %>>PODCAST_SPOTLIGHT_9X16</option></select><div class="form-text">Template podcast vertikal dengan header channel, headline besar, framed video, dan quote area bawah.</div></div>
-      <div class="col-md-6" data-layout-panel="9:16"><label class="form-label">Channel branding source</label><div class="form-control bg-light d-flex align-items-center"><span><strong><%= formDefaults.channelName || 'Display name user' %></strong><%= formDefaults.channelTagline ? ` · ${formDefaults.channelTagline}` : '' %></span></div><div class="form-text">Nama channel diambil dari Settings user. Logo akan mengikuti brand kit yang dipilih atau default brand kit Anda.</div></div>
-      <div class="col-md-3" data-advanced-field hidden><label class="form-label">Primary subtitle format</label><select class="form-select" name="subtitle_primary_format"><option <%= formDefaults.subtitlePrimaryFormat === 'ASS' ? 'selected' : '' %>>ASS</option><option <%= formDefaults.subtitlePrimaryFormat === 'SRT' ? 'selected' : '' %>>SRT</option><option <%= formDefaults.subtitlePrimaryFormat === 'VTT' ? 'selected' : '' %>>VTT</option><option <%= formDefaults.subtitlePrimaryFormat === 'JSON' ? 'selected' : '' %>>JSON</option></select><div class="form-text">Format utama dipakai untuk sidecar utama dan default download.</div></div>
-      <div class="col-md-3" data-advanced-field hidden><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="subtitle_burn_in" <%= formDefaults.subtitleBurnIn ? 'checked' : '' %>><span class="form-check-label">Burn subtitle into video</span></label></div>
-      <div class="col-md-3" data-advanced-field hidden>
-        <label class="form-label">Subtitle style</label>
-        <select class="form-select" name="subtitle_style">
-          <option value="" <%= !formDefaults.subtitleStyle ? 'selected' : '' %>>Auto / brand kit default</option>
-          <option value="DEFAULT" <%= formDefaults.subtitleStyle === 'DEFAULT' ? 'selected' : '' %>>DEFAULT</option>
-          <option value="BOLD_KINETIC" <%= formDefaults.subtitleStyle === 'BOLD_KINETIC' ? 'selected' : '' %>>BOLD_KINETIC</option>
-          <option value="CLEAN_MINIMAL" <%= formDefaults.subtitleStyle === 'CLEAN_MINIMAL' ? 'selected' : '' %>>CLEAN_MINIMAL</option>
-          <option value="PODCAST_HIGHLIGHT" <%= formDefaults.subtitleStyle === 'PODCAST_HIGHLIGHT' ? 'selected' : '' %>>PODCAST_HIGHLIGHT</option>
-          <option value="NEWS_FLASH" <%= formDefaults.subtitleStyle === 'NEWS_FLASH' ? 'selected' : '' %>>NEWS_FLASH</option>
-          <option value="CINEMATIC_QUOTE" <%= formDefaults.subtitleStyle === 'CINEMATIC_QUOTE' ? 'selected' : '' %>>CINEMATIC_QUOTE</option>
+      <div class="col-md-6" data-layout-panel="9:16"><label class="form-label">Channel branding source</label><div class="form-control bg-light d-flex align-items-center"><span><strong><%= formDefaults.channelName || 'Display name user' %></strong><%= formDefaults.channelTagline ? ` - ${formDefaults.channelTagline}` : '' %></span></div><div class="form-text">Nama channel diambil dari Settings user. Logo akan mengikuti logo channel di Settings, lalu fallback ke brand kit jika tersedia.</div></div>
+      <div class="col-md-3"><label class="form-label">Primary subtitle format</label><select class="form-select" name="subtitle_primary_format"><option <%= formDefaults.subtitlePrimaryFormat === 'ASS' ? 'selected' : '' %>>ASS</option><option <%= formDefaults.subtitlePrimaryFormat === 'SRT' ? 'selected' : '' %>>SRT</option><option <%= formDefaults.subtitlePrimaryFormat === 'VTT' ? 'selected' : '' %>>VTT</option><option <%= formDefaults.subtitlePrimaryFormat === 'JSON' ? 'selected' : '' %>>JSON</option></select><div class="form-text">Format utama dipakai untuk sidecar utama dan default download.</div></div>
+      <div class="col-md-3">
+        <label class="form-label">Subtitle position</label>
+        <select class="form-select" name="subtitle_position">
+          <option <%= formDefaults.subtitlePosition === 'BOTTOM' ? 'selected' : '' %>>BOTTOM</option>
+          <option <%= formDefaults.subtitlePosition === 'CENTER' ? 'selected' : '' %>>CENTER</option>
+          <option <%= formDefaults.subtitlePosition === 'TOP' ? 'selected' : '' %>>TOP</option>
         </select>
       </div>
-      <div class="col-md-3" data-advanced-field hidden><label class="form-label">Font</label><input class="form-control" name="subtitle_font_family" value="<%= formDefaults.subtitleFontFamily %>" placeholder="Montserrat"></div>
-      <div class="col-md-2" data-advanced-field hidden><label class="form-label">Position</label><select class="form-select" name="subtitle_position"><option <%= formDefaults.subtitlePosition === 'BOTTOM' ? 'selected' : '' %>>BOTTOM</option><option <%= formDefaults.subtitlePosition === 'CENTER' ? 'selected' : '' %>>CENTER</option><option <%= formDefaults.subtitlePosition === 'TOP' ? 'selected' : '' %>>TOP</option></select></div>
-      <div class="col-md-2" data-advanced-field hidden><label class="form-label">Max lines</label><input class="form-control" name="subtitle_max_lines" type="number" min="1" max="4" value="<%= formDefaults.subtitleMaxLines %>"></div>
-      <div class="col-md-2" data-advanced-field hidden><label class="form-label">Safe margin %</label><input class="form-control" name="subtitle_safe_margin_percent" type="number" min="0" max="30" value="<%= formDefaults.subtitleSafeMarginPercent %>"></div>
-      <div class="col-md-3" data-advanced-field hidden><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="subtitle_word_highlight" checked><span class="form-check-label">Word highlight</span></label></div>
-      <div class="col-md-3" data-advanced-field hidden><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="subtitle_profanity_censor"><span class="form-check-label">Profanity censor</span></label></div>
+      <div class="col-md-3"><label class="form-label">Subtitle max lines</label><input class="form-control" name="subtitle_max_lines" type="number" min="1" max="4" value="<%= formDefaults.subtitleMaxLines %>"><div class="form-text">Batas maksimum baris subtitle per cue.</div></div>
+      <div class="col-md-3"><label class="form-label">Subtitle safe margin %</label><input class="form-control" name="subtitle_safe_margin_percent" type="number" min="0" max="30" value="<%= formDefaults.subtitleSafeMarginPercent %>"></div>
+      <div class="col-md-4">
+        <label class="form-label">Subtitle style</label>
+        <select class="form-select" name="subtitle_style">
+          <option value="PODCAST_HIGHLIGHT" <%= formDefaults.subtitleStyle === 'PODCAST_HIGHLIGHT' ? 'selected' : '' %>>Podcast Highlight - default highlight per kata</option>
+          <option value="DEFAULT" <%= formDefaults.subtitleStyle === 'DEFAULT' ? 'selected' : '' %>>Default clean</option>
+          <option value="BOLD_KINETIC" <%= formDefaults.subtitleStyle === 'BOLD_KINETIC' ? 'selected' : '' %>>Bold kinetic</option>
+          <option value="CLEAN_MINIMAL" <%= formDefaults.subtitleStyle === 'CLEAN_MINIMAL' ? 'selected' : '' %>>Clean minimal</option>
+          <option value="NEWS_FLASH" <%= formDefaults.subtitleStyle === 'NEWS_FLASH' ? 'selected' : '' %>>News flash - highlight per kata</option>
+          <option value="CINEMATIC_QUOTE" <%= formDefaults.subtitleStyle === 'CINEMATIC_QUOTE' ? 'selected' : '' %>>Cinematic quote</option>
+        </select>
+        <div class="form-text">Style ini sekaligus menentukan apakah subtitle memakai highlight per kata. Default: <strong>Podcast Highlight</strong>.</div>
+      </div>
+      <div class="col-md-4" data-advanced-field hidden><label class="form-label">Font</label><input class="form-control" name="subtitle_font_family" value="<%= formDefaults.subtitleFontFamily %>" placeholder="Montserrat"></div>
+      <div class="col-md-4">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-check mt-2">
+              <input class="form-check-input" type="checkbox" name="subtitle_enabled" <%= formDefaults.subtitleEnabled !== false ? 'checked' : '' %>>
+              <span class="form-check-label">Subtitle enabled</span>
+            </label>
+          </div>
+          <div class="col-12">
+            <label class="form-check">
+              <input class="form-check-input" type="checkbox" name="subtitle_burn_in" <%= formDefaults.subtitleBurnIn ? 'checked' : '' %>>
+              <span class="form-check-label">Burn subtitle into video</span>
+            </label>
+          </div>
+          <div class="col-12">
+            <label class="form-check">
+              <input class="form-check-input" type="checkbox" name="subtitle_profanity_censor">
+              <span class="form-check-label">Profanity censor</span>
+            </label>
+          </div>
+        </div>
+      </div>
     </div></div></section>
     <section class="wizard-step"><div class="step-number">4</div><div class="step-body"><h2>Review and submit</h2><p class="text-secondary">Submission uses an idempotency key so retries from the browser cannot create duplicate jobs.</p><div class="alert alert-light border">Quick summary: source, strategy, and subtitle preferences will be snapshotted with the job so the analyzer and downstream render pipeline can reuse the same intent.</div>
       <div class="job-summary-grid mt-3" data-auto-clip-submit-summary>
@@ -187,12 +312,12 @@
         <article class="job-summary-card">
           <span>Strategy</span>
           <strong data-submit-summary-strategy>YOUTUBE_SHORTS | EDUCATION</strong>
-          <p class="mb-0 mt-1 text-secondary small" data-submit-summary-duration>10-45 detik · 3 clip</p>
+          <p class="mb-0 mt-1 text-secondary small" data-submit-summary-duration>10-45 detik - 3 clip</p>
         </article>
         <article class="job-summary-card">
           <span>Subtitle & visual</span>
           <strong data-submit-summary-subtitle>id | ASS</strong>
-          <p class="mb-0 mt-1 text-secondary small" data-submit-summary-visual>9:16 · AUTO_REFRAME</p>
+          <p class="mb-0 mt-1 text-secondary small" data-submit-summary-visual>9:16 - AUTO_REFRAME</p>
         </article>
         <article class="job-summary-card">
           <span>Mode</span>

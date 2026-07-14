@@ -147,9 +147,12 @@ async function ensureDefaultClippingPreset(userId: string): Promise<void> {
       "Prioritaskan momen dengan hook kuat di 1-3 detik pertama, konflik atau rasa penasaran yang jelas, insight praktis, bahasa natural, dan payoff yang selesai dengan rapi.",
       "Jika ada beberapa kandidat, utamakan yang durasinya paling pendek tetapi tetap utuh secara makna.",
       "Hindari opening yang masih basa-basi, filler berulang, jeda kosong, transisi yang tidak penting, atau bagian yang baru menarik setelah terlalu lama setup.",
+      "Jangan pernah memotong saat pembicara masih mulai menjelaskan, masih menjawab setengah, masih menggantung dengan kata sambung seperti karena, jadi, makanya, kalau, atau saat kalimat sesudahnya jelas masih menyelesaikan poin utama.",
+      "Untuk konten edukatif, utamakan clip yang benar-benar menyelesaikan penjelasan inti, meski perlu tambahan 2-8 detik, selama hasilnya tetap tajam dan tidak melewati batas durasi.",
       "Cari ending yang bisa memicu komentar, share, save, atau diskusi, bukan ending yang menggantung tanpa payoff.",
       "Kalau sumber videonya edukatif, pilih bagian yang menyederhanakan ide rumit menjadi kalimat yang tajam dan mudah dipotong menjadi clip mandiri.",
-      "Kalau ada istilah teknis, utamakan bagian yang paling jelas, paling quotable, dan paling relevan untuk audience Indonesia."
+      "Kalau ada istilah teknis, utamakan bagian yang paling jelas, paling quotable, dan paling relevan untuk audience Indonesia.",
+      "Jika akhir clip masih terasa seperti setup untuk kalimat berikutnya, anggap kandidat itu gagal dan pilih atau perpanjang sampai jawabannya benar-benar landing."
     ].join(" "),
     subtitle: {
       language: "id",

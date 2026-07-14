@@ -11,7 +11,8 @@
     "candidate_count": { "type": "integer", "minimum": 0, "maximum": 30 },
     "analyzer": {
       "type": "object",
-      "additionalProperties": true
+      "additionalProperties": false,
+      "properties": {}
     },
     "candidates": {
       "type": "array",

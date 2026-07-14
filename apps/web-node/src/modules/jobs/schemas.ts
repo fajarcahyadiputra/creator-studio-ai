@@ -259,7 +259,9 @@ export const regenerateAutoClipJobSchema = z
     subtitle_style: optionalText(80),
     subtitle_font_family: optionalText(120),
     subtitle_position: z.enum(["TOP", "CENTER", "BOTTOM"]).optional(),
-    subtitle_max_lines: optionalInteger(1, 4)
+    subtitle_max_lines: optionalInteger(1, 4),
+    subtitle_safe_margin_percent: optionalNumber(0, 30),
+    subtitle_profanity_censor: booleanField(false)
   })
   .refine((value) => !value.tones_text || value.tones_text.length >= 1, {
     message: "At least one tone is required.",

@@ -5,6 +5,7 @@ import { writeAudit } from "../audit/audit-service.js";
 import { requireAuth, requirePermission } from "../auth/identity-middleware.js";
 import type { AdminSystemService } from "./admin-system-service.js";
 import {
+  adminAutoClipAnalyzerRuntimeSchema,
   adminCreateFeatureFlagSchema,
   adminCreateSystemSettingSchema,
   adminUpdateFeatureFlagSchema,
@@ -77,6 +78,29 @@ export function adminSystemRouter(adminSystemService: AdminSystemService): Route
   );
 
   router.post(
+    "/api/v1/admin/system-settings/auto-clip-analyzer-runtime",
+    requireAuth,
+    requirePermission("admin.system.manage"),
+    validateBody(adminAutoClipAnalyzerRuntimeSchema),
+    asyncHandler(async (request, response) => {
+      const systemSetting = await adminSystemService.upsertAutoClipAnalyzerRuntime(request.validatedBody as never);
+      await writeAudit({
+        actorUserId: request.identity!.actorUserId,
+        action: "ADMIN_SYSTEM_SETTING_UPDATED",
+        resourceType: "SystemSetting",
+        resourceId: systemSetting.id,
+        afterData: {
+          key: systemSetting.key,
+          is_secret: systemSetting.isSecret,
+          version: systemSetting.version
+        },
+        request
+      });
+      response.json({ data: { message: "Auto-clipping analyzer runtime updated successfully." } });
+    })
+  );
+
+  router.post(
     "/api/v1/admin/system-settings",
     requireAuth,
     requirePermission("admin.system.manage"),
@@ -126,4 +150,3 @@ export function adminSystemRouter(adminSystemService: AdminSystemService): Route
 
   return router;
 }
-

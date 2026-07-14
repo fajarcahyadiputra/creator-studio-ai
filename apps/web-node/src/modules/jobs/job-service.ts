@@ -11,6 +11,10 @@ import {
 import { temporalClient } from "../../infrastructure/temporal/client.js";
 import { env } from "../../config/env.js";
 import { AppError, ConflictError, NotFoundError } from "../../shared/errors/app-error.js";
+import {
+  AUTO_CLIP_ANALYZER_RUNTIME_KEY,
+  buildAutoClipAnalyzerRuntimeSettingValue
+} from "../admin/system-runtime-config.js";
 
 const CREATE_AUTO_CLIP_ATTEMPT_OPERATION_KEY = "CREATE_AUTO_CLIP_JOB_ATTEMPT";
 const RETRY_JOB_ATTEMPT_OPERATION_KEY = "RETRY_JOB_ATTEMPT";
@@ -112,6 +116,8 @@ interface RegenerateAutoClipInput {
   subtitle_font_family?: string;
   subtitle_position?: "TOP" | "CENTER" | "BOTTOM";
   subtitle_max_lines?: number;
+  subtitle_safe_margin_percent?: number;
+  subtitle_profanity_censor: boolean;
 }
 
 interface RegenerateTtsInput {
@@ -133,6 +139,22 @@ interface RegenerateTtsInput {
   delivery_goal?: string;
   segment_length_preference?: "SHORT" | "BALANCED" | "LONG";
   breathing_style?: "MINIMAL" | "NATURAL" | "DRAMATIC";
+}
+
+const SUBTITLE_STYLES_WITH_WORD_HIGHLIGHT = new Set([
+  "PODCAST_HIGHLIGHT",
+  "NEWS_FLASH"
+]);
+
+function normalizeSubtitleStyle(style: string | undefined): string | undefined {
+  const normalized = style?.trim().toUpperCase();
+  return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+function subtitleStyleUsesWordHighlight(style: string | undefined): boolean | undefined {
+  const normalizedStyle = normalizeSubtitleStyle(style);
+  if (!normalizedStyle) return undefined;
+  return SUBTITLE_STYLES_WITH_WORD_HIGHLIGHT.has(normalizedStyle);
 }
 
 interface UpdateClipCandidateSelectionInput {
@@ -196,6 +218,53 @@ interface JobOutputsExportIndex {
   jobId: string;
   status: string;
   clipOutputs: JobOutputsExportIndexItem[];
+}
+
+function reconcileClipOutputQualityStatus(params: {
+  persistedQualityStatus: string;
+  qualityReport: unknown;
+  hasFinalObject: boolean;
+}) {
+  const qualityReport =
+    params.qualityReport && typeof params.qualityReport === "object" && !Array.isArray(params.qualityReport)
+      ? (params.qualityReport as Record<string, unknown>)
+      : {};
+  const validation =
+    qualityReport.validation && typeof qualityReport.validation === "object" && !Array.isArray(qualityReport.validation)
+      ? (qualityReport.validation as Record<string, unknown>)
+      : {};
+  const checks =
+    validation.checks && typeof validation.checks === "object" && !Array.isArray(validation.checks)
+      ? (validation.checks as Record<string, unknown>)
+      : {};
+  const validationStatus = typeof validation.status === "string" ? validation.status : null;
+  const playable = checks.playable === true;
+
+  if (
+    params.persistedQualityStatus === "NEEDS_REVIEW"
+    && validationStatus === "passed"
+    && params.hasFinalObject
+    && playable
+  ) {
+    return "PASSED";
+  }
+
+  return params.persistedQualityStatus;
+}
+
+function reconcileJobOutputsStatus(params: {
+  persistedJobStatus: string;
+  clipOutputStatuses: string[];
+}) {
+  if (
+    params.persistedJobStatus === "NEEDS_REVIEW"
+    && params.clipOutputStatuses.length > 0
+    && params.clipOutputStatuses.every((status) => status === "PASSED")
+  ) {
+    return "COMPLETED";
+  }
+
+  return params.persistedJobStatus;
 }
 
 interface TtsSegmentationExport {
@@ -515,7 +584,14 @@ export class JobService {
       where: { id: params.jobId, userId: params.userId, deletedAt: null },
       include: {
         attempts: { orderBy: { attemptNumber: "desc" }, take: 1 },
-        autoClipRequest: true
+        autoClipRequest: true,
+        sourceMediaAsset: {
+          select: {
+            id: true,
+            status: true,
+            deletedAt: true,
+          },
+        },
       }
     });
     if (!job) throw new NotFoundError("Job");
@@ -540,7 +616,11 @@ export class JobService {
       );
     }
 
-    const retryInputSnapshot = restoreExternalSourceSnapshot(job.inputSnapshot, job.autoClipRequest);
+    const retryInputSnapshot = restoreRunnableAutoClipSnapshot({
+      inputSnapshot: job.inputSnapshot,
+      autoClipRequest: job.autoClipRequest,
+      sourceMediaAsset: job.sourceMediaAsset,
+    });
     const attemptNumber = (job.attempts[0]?.attemptNumber ?? 0) + 1;
     const workflowId = `${job.id}:attempt:${attemptNumber}`;
     await prisma.$transaction([
@@ -630,13 +710,26 @@ export class JobService {
   public async duplicate(userId: string, jobId: string, idempotencyKey: string) {
     const job = await prisma.job.findFirst({
       where: { id: jobId, userId, deletedAt: null },
-      include: { autoClipRequest: true }
+      include: {
+        autoClipRequest: true,
+        sourceMediaAsset: {
+          select: {
+            id: true,
+            status: true,
+            deletedAt: true,
+          },
+        },
+      }
     });
     if (!job || job.type !== "AUTO_CLIPPING") throw new NotFoundError("Auto clipping job");
     return this.createAutoClippingJob({
       userId,
       idempotencyKey,
-      input: restoreExternalSourceSnapshot(job.inputSnapshot, job.autoClipRequest) as unknown as CreateAutoClipInput
+      input: restoreRunnableAutoClipSnapshot({
+        inputSnapshot: job.inputSnapshot,
+        autoClipRequest: job.autoClipRequest,
+        sourceMediaAsset: job.sourceMediaAsset,
+      }) as unknown as CreateAutoClipInput
     });
   }
 
@@ -691,10 +784,31 @@ export class JobService {
       job.inputSnapshot,
       job.autoClipRequest
     ) as unknown as CreateAutoClipInput;
+    const runnableSnapshot = restoreRunnableAutoClipSnapshot({
+      inputSnapshot: currentSnapshot,
+      autoClipRequest: job.autoClipRequest,
+      sourceMediaAsset: job.sourceMediaAsset,
+    }) as unknown as CreateAutoClipInput;
     const nextInput = await prepareAutoClippingInput(
       params.userId,
-      buildRegeneratedAutoClippingInput(currentSnapshot, params.input)
+      buildRegeneratedAutoClippingInput(runnableSnapshot, params.input)
     );
+    if (nextInput.source.media_asset_id) {
+      const asset = await prisma.mediaAsset.findFirst({
+        where: {
+          id: nextInput.source.media_asset_id,
+          userId: params.userId,
+          deletedAt: null,
+          status: "READY",
+        },
+      });
+      if (!asset) {
+        throw new ConflictError(
+          "SOURCE_MEDIA_ASSET_UNAVAILABLE",
+          "The source media asset is no longer available for regenerate. Use the preserved source URL or upload the source again."
+        );
+      }
+    }
     const attemptNumber = (job.attempts[0]?.attemptNumber ?? 0) + 1;
     const workflowId = `${job.id}:attempt:${attemptNumber}`;
     const cleanup = collectGeneratedArtifactsForJob(job);
@@ -734,7 +848,10 @@ export class JobService {
         },
       });
 
-      if (cleanup.deletableSourceMediaAssetId) {
+      if (
+        cleanup.deletableSourceMediaAssetId
+        && cleanup.deletableSourceMediaAssetId !== nextInput.source.media_asset_id
+      ) {
         await tx.mediaAsset.delete({
           where: { id: cleanup.deletableSourceMediaAssetId },
         });
@@ -1086,7 +1203,7 @@ export class JobService {
       ...job.errors.map((error) => error.stackObjectKey),
     ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
 
-    const deletableSourceMediaAssetId = shouldDeleteImportedSourceMediaAsset(job)
+    const deletableSourceMediaAssetId = shouldDeleteJobSourceMediaAsset(job)
       ? job.sourceMediaAssetId
       : null;
     if (deletableSourceMediaAssetId && job.sourceMediaAsset?.objectKey) {
@@ -1406,7 +1523,11 @@ export class JobService {
       clipOutputId: clipOutput.id,
       jobId: clipOutput.jobId,
       candidateId: clipOutput.candidateId,
-      qualityStatus: clipOutput.qualityStatus,
+      qualityStatus: reconcileClipOutputQualityStatus({
+        persistedQualityStatus: clipOutput.qualityStatus,
+        qualityReport: clipOutput.qualityReport,
+        hasFinalObject: Boolean(clipOutput.finalObjectKey)
+      }),
       artifacts
     };
   }
@@ -1459,17 +1580,25 @@ export class JobService {
         });
       }
 
+      const reconciledQualityStatus = reconcileClipOutputQualityStatus({
+        persistedQualityStatus: clipOutput.qualityStatus,
+        qualityReport: clipOutput.qualityReport,
+        hasFinalObject: Boolean(clipOutput.finalObjectKey)
+      });
       clipOutputs.push({
         clipOutputId: clipOutput.id,
         candidateId: clipOutput.candidateId,
-        qualityStatus: clipOutput.qualityStatus,
+        qualityStatus: reconciledQualityStatus,
         artifacts
       });
     }
 
     return {
       jobId: job.id,
-      status: job.status,
+      status: reconcileJobOutputsStatus({
+        persistedJobStatus: job.status,
+        clipOutputStatuses: clipOutputs.map((clipOutput) => clipOutput.qualityStatus)
+      }),
       clipOutputs
     };
   }
@@ -1768,10 +1897,13 @@ function buildRegeneratedAutoClippingInput(
       export_formats: subtitleExportFormats,
       settings: compactRecord({
         ...currentSubtitleSettings,
-        style: input.subtitle_style,
+        style: normalizeSubtitleStyle(input.subtitle_style),
         font_family: input.subtitle_font_family,
         position: input.subtitle_position,
-        max_lines: input.subtitle_max_lines
+        max_lines: input.subtitle_max_lines,
+        safe_margin_percent: input.subtitle_safe_margin_percent,
+        word_highlight: subtitleStyleUsesWordHighlight(input.subtitle_style),
+        profanity_censor: input.subtitle_profanity_censor
       })
     },
     ai:
@@ -1906,7 +2038,7 @@ function collectGeneratedArtifactsForJob(job: {
     ...job.errors.map((error) => error.stackObjectKey),
   ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
 
-  const deletableSourceMediaAssetId = shouldDeleteImportedSourceMediaAsset(job)
+  const deletableSourceMediaAssetId = shouldDeleteJobSourceMediaAsset(job)
     ? job.sourceMediaAssetId
     : null;
   if (deletableSourceMediaAssetId && job.sourceMediaAsset?.objectKey) {
@@ -1933,16 +2065,14 @@ function canRegenerateJob(status: string) {
   return ["COMPLETED", "PARTIALLY_COMPLETED"].includes(status);
 }
 
-function shouldDeleteImportedSourceMediaAsset(job: {
+function shouldDeleteJobSourceMediaAsset(job: {
   id: string;
   sourceMediaAssetId: string | null;
-  autoClipRequest: { sourceType: string } | null;
   sourceMediaAsset: { objectKey: string; sourceJobs: Array<{ id: string }> } | null;
 }) {
-  if (!job.sourceMediaAssetId || !job.autoClipRequest || !job.sourceMediaAsset) return false;
-  if (job.autoClipRequest.sourceType !== "EXTERNAL_URL") return false;
+  if (!job.sourceMediaAssetId || !job.sourceMediaAsset) return false;
   if (job.sourceMediaAsset.sourceJobs.length > 1) return false;
-  return job.sourceMediaAsset.objectKey.includes(`/imports/${job.id}/source/`);
+  return true;
 }
 
 function normalizeLayoutTemplate(layoutTemplate: string | undefined, aspectRatio: string | undefined): string {
@@ -2038,6 +2168,11 @@ export async function prepareAutoClippingInput(userId: string, input: CreateAuto
     typeof visual.aspect_ratio === "string" ? visual.aspect_ratio : undefined
   );
   const branding = await resolveAutoClipBrandingContext(userId, visualSettings);
+  const analyzerRuntime = await resolveAutoClipAnalyzerRuntimeSnapshot();
+  const ai =
+    input.ai && typeof input.ai === "object" && !Array.isArray(input.ai)
+      ? { ...input.ai }
+      : {};
 
   return {
     ...input,
@@ -2049,8 +2184,21 @@ export async function prepareAutoClippingInput(userId: string, input: CreateAuto
         layout_template: layoutTemplate,
         branding
       })
-    }
+    },
+    ai: compactRecord({
+      ...ai,
+      analyzer_runtime: analyzerRuntime
+    })
   } as CreateAutoClipInput;
+}
+
+async function resolveAutoClipAnalyzerRuntimeSnapshot() {
+  const setting = await prisma.systemSetting.findUnique({
+    where: { key: AUTO_CLIP_ANALYZER_RUNTIME_KEY },
+    select: { value: true }
+  });
+
+  return buildAutoClipAnalyzerRuntimeSettingValue(setting?.value as Prisma.JsonValue | undefined);
 }
 
 function restoreExternalSourceSnapshot(
@@ -2090,6 +2238,51 @@ function restoreExternalSourceSnapshot(
   };
 }
 
+function restoreRunnableAutoClipSnapshot(params: {
+  inputSnapshot: unknown;
+  autoClipRequest:
+    | {
+        sourceType: string;
+        sourceUrl: string | null;
+      }
+    | null
+    | undefined;
+  sourceMediaAsset:
+    | {
+        id: string;
+        status: string;
+        deletedAt: Date | null;
+      }
+    | null
+    | undefined;
+}) {
+  const snapshot = restoreExternalSourceSnapshot(params.inputSnapshot, params.autoClipRequest);
+  const source =
+    snapshot.source && typeof snapshot.source === "object" && !Array.isArray(snapshot.source)
+      ? { ...(snapshot.source as Record<string, unknown>) }
+      : {};
+  const reusableMediaAssetId =
+    params.sourceMediaAsset
+    && params.sourceMediaAsset.deletedAt === null
+    && params.sourceMediaAsset.status === "READY"
+      ? params.sourceMediaAsset.id
+      : null;
+
+  if (!reusableMediaAssetId) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    source: {
+      ...source,
+      type: "MEDIA_ASSET",
+      media_asset_id: reusableMediaAssetId,
+      url: undefined,
+    },
+  };
+}
+
 interface ClipOutputArtifactSource {
   previewObjectKey: string | null;
   finalObjectKey: string | null;
@@ -2116,7 +2309,43 @@ export function assertIdempotencyKey(value: string | undefined): string {
 }
 
 export function serializeJob<T extends { eventSequence?: bigint }>(job: T): Record<string, unknown> {
-  return { ...job, eventSequence: job.eventSequence?.toString() };
+  const base = { ...job, eventSequence: job.eventSequence?.toString() } as Record<string, unknown>;
+  const outputSummary =
+    base.outputSummary && typeof base.outputSummary === "object" && !Array.isArray(base.outputSummary)
+      ? (base.outputSummary as Record<string, unknown>)
+      : null;
+  const analyzer =
+    outputSummary &&
+    outputSummary.analyzer &&
+    typeof outputSummary.analyzer === "object" &&
+    !Array.isArray(outputSummary.analyzer)
+      ? (outputSummary.analyzer as Record<string, unknown>)
+      : null;
+
+  if (!outputSummary || !analyzer) {
+    return base;
+  }
+
+  const analysisMode = typeof analyzer.analysis_mode === "string" ? analyzer.analysis_mode : null;
+  const provider = typeof analyzer.provider === "string" ? analyzer.provider : null;
+  const model = typeof analyzer.model === "string" ? analyzer.model : null;
+  const attemptedProvider = typeof analyzer.attempted_provider === "string" ? analyzer.attempted_provider : null;
+  const attemptedModel = typeof analyzer.attempted_model === "string" ? analyzer.attempted_model : null;
+
+  return {
+    ...base,
+    outputSummary: {
+      ...outputSummary,
+      analyzer: {
+        ...analyzer,
+        analysis_mode_label: normalizeAnalyzerModeLabel(analysisMode),
+        provider_label: normalizeAnalyzerProviderLabel(provider, analysisMode),
+        model_label: normalizeAnalyzerModelLabel(model, analysisMode),
+        attempted_provider_label: normalizeAnalyzerProviderLabel(attemptedProvider, null),
+        attempted_model_label: normalizeAnalyzerModelLabel(attemptedModel, null)
+      }
+    }
+  };
 }
 
 export function buildRenderSettings(source: RenderSettingsSource): Record<string, unknown> {
@@ -2188,9 +2417,35 @@ export function buildRenderSettings(source: RenderSettingsSource): Record<string
       analysis_mode: typeof analyzerMetadata.analysis_mode === "string" ? analyzerMetadata.analysis_mode : null,
       prompt_version: typeof analyzerMetadata.prompt_version === "string" ? analyzerMetadata.prompt_version : null,
       provider: typeof analyzerMetadata.provider === "string" ? analyzerMetadata.provider : null,
-      model: typeof analyzerMetadata.model === "string" ? analyzerMetadata.model : null
+      model: typeof analyzerMetadata.model === "string" ? analyzerMetadata.model : null,
+      attempted_provider:
+        typeof analyzerMetadata.attempted_provider === "string" ? analyzerMetadata.attempted_provider : null,
+      attempted_model: typeof analyzerMetadata.attempted_model === "string" ? analyzerMetadata.attempted_model : null
     }
   };
+}
+
+function normalizeAnalyzerModeLabel(mode: string | null) {
+  if (!mode) return null;
+  if (mode === "heuristic") return "Heuristic only (Python local)";
+  if (mode === "heuristic_then_openai") return "Heuristic + OpenAI";
+  if (mode === "openai_then_heuristic") return "OpenAI + heuristic";
+  return mode;
+}
+
+function normalizeAnalyzerProviderLabel(provider: string | null, mode: string | null) {
+  if (mode === "heuristic") return "Python local";
+  if (!provider) return null;
+  if (provider === "openai") return "OpenAI";
+  if (provider === "python-local") return "Python local";
+  return provider;
+}
+
+function normalizeAnalyzerModelLabel(model: string | null, mode: string | null) {
+  if (mode === "heuristic") return "Heuristic scorer";
+  if (!model) return null;
+  if (model === "heuristic-local") return "Heuristic scorer";
+  return model;
 }
 
 function normalizeSubtitleRenderSettings(subtitle: Record<string, unknown>) {

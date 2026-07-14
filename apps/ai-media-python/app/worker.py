@@ -41,9 +41,12 @@ from app.workflows.media_asset_validation import MediaAssetValidationWorkflow
 async def main() -> None:
     configure_logging()
     settings = get_settings()
-    if settings.AUTO_CLIP_ANALYZER_MODE.lower() == "openai" and not settings.OPENAI_API_KEY:
+    analyzer_mode = str(settings.AUTO_CLIP_ANALYZER_MODE).strip().lower()
+    if analyzer_mode == "openai":
+        analyzer_mode = "openai_then_heuristic"
+    if analyzer_mode in {"openai_then_heuristic", "heuristic_then_openai"} and not settings.OPENAI_API_KEY:
         logging.getLogger(__name__).warning(
-            "OpenAI analyzer mode is enabled without OPENAI_API_KEY; heuristic fallback will be used"
+            "OpenAI analyzer path is enabled without OPENAI_API_KEY; local heuristic mode will be used when OpenAI is required"
         )
     client = await Client.connect(settings.TEMPORAL_ADDRESS, namespace=settings.TEMPORAL_NAMESPACE)
     worker = Worker(

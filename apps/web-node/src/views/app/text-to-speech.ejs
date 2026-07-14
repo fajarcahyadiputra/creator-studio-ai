@@ -50,7 +50,13 @@
           </div>
           <div class="col-md-4">
             <label class="form-label">Speaking style</label>
-            <input class="form-control" name="speaking_style" value="<%= formDefaults.speakingStyle %>" placeholder="documentary, calm, assertive">
+            <select class="form-select" name="speaking_style">
+              <option value="" <%= !formDefaults.speakingStyle ? 'selected' : '' %>>Auto</option>
+              <% ['NARRATION','CONVERSATIONAL','CALM','ENERGETIC','DRAMATIC','AUTHORITATIVE'].forEach((value) => { %>
+                <option value="<%= value %>" <%= formDefaults.speakingStyle === value ? 'selected' : '' %>><%= value %></option>
+              <% }) %>
+            </select>
+            <div class="form-text">Pilih karakter delivery utama. Fine-tuning tetap bisa diarahkan lewat tone notes dan delivery goal.</div>
           </div>
           <div class="col-md-4">
             <label class="form-label">Emotion baseline</label>
@@ -62,11 +68,21 @@
           </div>
           <div class="col-md-4">
             <label class="form-label">Target duration ms</label>
-            <input class="form-control" name="target_duration_ms" type="number" min="1" max="14400000" value="<%= formDefaults.targetDurationMs %>" placeholder="Optional">
+            <input type="hidden" name="target_duration_ms" value="<%= formDefaults.targetDurationMs %>" data-tts-target-duration-hidden>
+            <input
+              class="form-control"
+              type="text"
+              value="<%= formDefaults.targetDurationMs ? `${formDefaults.targetDurationMs} ms` : '' %>"
+              placeholder="Terhitung otomatis dari script + speaking speed"
+              disabled
+              data-tts-target-duration-display
+            >
+            <div class="form-text" data-tts-target-duration-help>Estimasi durasi akan dihitung otomatis dari panjang script dan speaking speed.</div>
           </div>
           <div class="col-md-4">
             <label class="form-label">Speaking speed</label>
-            <input class="form-control" name="speaking_speed" type="number" min="0.5" max="3" step="0.1" value="<%= formDefaults.speakingSpeed %>">
+            <input class="form-control" name="speaking_speed" type="number" min="0.5" max="3" step="0.1" value="<%= formDefaults.speakingSpeed %>" data-tts-speaking-speed>
+            <div class="form-text" data-tts-speed-help>1.0 = natural. Naikkan jika ingin delivery lebih cepat, turunkan jika ingin lebih tenang.</div>
           </div>
           <div class="col-md-4">
             <label class="form-label">Pitch</label>
@@ -112,7 +128,7 @@
         <div class="row g-3">
           <div class="col-12">
             <label class="form-label">Narration script</label>
-            <textarea class="form-control" name="script" rows="12" maxlength="100000" placeholder="Masukkan script narasi lengkap di sini..." required></textarea>
+            <textarea class="form-control" name="script" rows="12" maxlength="100000" placeholder="Masukkan script narasi lengkap di sini..." required data-tts-script></textarea>
             <div class="form-text">Prompt TTS akan menjaga wording tetap sama. Model hanya boleh membagi script menjadi segmen narasi alami.</div>
           </div>
           <div class="col-md-6">

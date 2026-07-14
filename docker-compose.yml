@@ -16,7 +16,7 @@ services:
       retries: 20
     networks: [internal]
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
 
   redis:
     image: redis:7.4.5-bookworm
@@ -30,7 +30,7 @@ services:
       retries: 20
     networks: [internal]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
 
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
@@ -79,7 +79,16 @@ services:
       DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/docker.yaml
       ENABLE_ES: "false"
     healthcheck:
-      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "temporal:7233"]
+      test:
+        [
+          "CMD",
+          "temporal",
+          "operator",
+          "cluster",
+          "health",
+          "--address",
+          "temporal:7233",
+        ]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -139,10 +148,19 @@ services:
       temporal:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health/ready').then(r=>{if(!r.ok)process.exit(1)})"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/health/ready').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
       interval: 10s
       timeout: 5s
       retries: 20
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     networks: [public, internal]
     ports:
       - "3000:3000"
@@ -170,10 +188,19 @@ services:
       web-node:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3100/health/ready').then(r=>{if(!r.ok)process.exit(1)})"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3100/health/ready').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
       interval: 10s
       timeout: 5s
       retries: 20
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     networks: [public, internal]
 
   ai-media-python:
@@ -191,10 +218,19 @@ services:
         condition: service_healthy
     command: ["python", "-m", "app.worker"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket;s=socket.create_connection(('temporal',7233),5);s.close()"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket;s=socket.create_connection(('temporal',7233),5);s.close()",
+        ]
       interval: 15s
       timeout: 5s
       retries: 20
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     networks: [public, internal]
 
   ai-media-python-api:
@@ -203,12 +239,16 @@ services:
     env_file: .env
     volumes:
       - ./model_tts:/models/tts:ro
-    command: ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    command:
+      ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 20
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     networks: [internal]
 
   mailpit:
@@ -221,7 +261,11 @@ services:
   prometheus:
     profiles: ["observability"]
     image: prom/prometheus:v3.5.0
-    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    command:
+      [
+        "--config.file=/etc/prometheus/prometheus.yml",
+        "--storage.tsdb.path=/prometheus",
+      ]
     volumes:
       - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus

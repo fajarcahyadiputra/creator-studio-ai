@@ -42,36 +42,18 @@ def build_scene_boundaries(
         hard_sentence_break = _ends_scene(segment.text)
 
         if speaker_changed or duration_exceeded:
-            scenes.append(
-                SceneBoundary(
-                    scene_id=f"scene-{len(scenes) + 1}",
-                    start_seconds=round(current_start, 2),
-                    end_seconds=round(current_end, 2),
-                )
-            )
+            _append_scene_boundary(scenes, current_start, current_end)
             current_start = segment.start_seconds
 
         current_end = segment.end_seconds
         current_speaker = segment.speaker_label
 
         if hard_sentence_break and (current_end - current_start) >= 4.0:
-            scenes.append(
-                SceneBoundary(
-                    scene_id=f"scene-{len(scenes) + 1}",
-                    start_seconds=round(current_start, 2),
-                    end_seconds=round(current_end, 2),
-                )
-            )
+            _append_scene_boundary(scenes, current_start, current_end)
             current_start = current_end
 
     if current_end > current_start:
-        scenes.append(
-            SceneBoundary(
-                scene_id=f"scene-{len(scenes) + 1}",
-                start_seconds=round(current_start, 2),
-                end_seconds=round(current_end, 2),
-            )
-        )
+        _append_scene_boundary(scenes, current_start, current_end)
 
     return _merge_short_adjacent_scenes(scenes)
 
@@ -119,6 +101,31 @@ def _merge_short_adjacent_scenes(scenes: list[SceneBoundary]) -> list[SceneBound
         )
         for index, scene in enumerate(merged, start=1)
     ]
+
+
+def _append_scene_boundary(scenes: list[SceneBoundary], start_seconds: float, end_seconds: float) -> None:
+    start_seconds = round(start_seconds, 2)
+    end_seconds = round(end_seconds, 2)
+
+    if end_seconds <= start_seconds:
+        return
+
+    if scenes:
+        previous = scenes[-1]
+        if previous.start_seconds == start_seconds and previous.end_seconds == end_seconds:
+            return
+        if start_seconds < previous.end_seconds:
+            start_seconds = previous.end_seconds
+            if end_seconds <= start_seconds:
+                return
+
+    scenes.append(
+        SceneBoundary(
+            scene_id=f"scene-{len(scenes) + 1}",
+            start_seconds=start_seconds,
+            end_seconds=end_seconds,
+        )
+    )
 
 
 def _ends_scene(text: str) -> bool:

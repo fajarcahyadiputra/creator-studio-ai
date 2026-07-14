@@ -1,6 +1,14 @@
 import type { Prisma } from "../../generated/prisma/client.js";
+import { AiCapability } from "../../generated/prisma/enums.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
 import { NotFoundError } from "../../shared/errors/app-error.js";
+import {
+  AUTO_CLIP_ANALYZER_RUNTIME_KEY,
+  buildAutoClipAnalyzerRuntimeSettingValue,
+  DEFAULT_AUTO_CLIP_ANALYZER_RUNTIME_CONFIG,
+  normalizeAutoClipAnalyzerRuntimeConfig,
+  type AutoClipAnalyzerMode
+} from "./system-runtime-config.js";
 
 interface AdminSystemServiceDeps {
   prisma: typeof prisma;
@@ -20,14 +28,72 @@ interface SystemSettingInput {
   value_json: Record<string, unknown>;
 }
 
+interface AutoClipAnalyzerRuntimeInput {
+  mode: AutoClipAnalyzerMode;
+  provider?: string;
+  model?: string;
+}
+
+interface AnalyzerProviderOption {
+  code: string;
+  displayName: string;
+}
+
+interface AnalyzerModelOption {
+  providerCode: string;
+  identifier: string;
+  displayName: string;
+}
+
+interface ProviderHealthSummary {
+  totalProviders: number;
+  enabledProviders: number;
+  degradedProviders: number;
+  structuredProviders: number;
+  totalModels: number;
+}
+
 export class AdminSystemService {
   public constructor(private readonly deps: AdminSystemServiceDeps = { prisma }) {}
 
   public async getSystemManagementPageData() {
-    const [featureFlags, systemSettings] = await Promise.all([
+    const [featureFlags, systemSettings, analyzerProviders, providerHealthSummary] = await Promise.all([
       this.deps.prisma.featureFlag.findMany({ orderBy: { key: "asc" } }),
-      this.deps.prisma.systemSetting.findMany({ orderBy: { key: "asc" } })
+      this.deps.prisma.systemSetting.findMany({ orderBy: { key: "asc" } }),
+      this.deps.prisma.aiProvider.findMany({
+        where: {
+          enabled: true,
+          models: {
+            some: {
+              enabled: true,
+              capabilities: {
+                some: {
+                  capability: AiCapability.STRUCTURED_OUTPUT,
+                  enabled: true
+                }
+              }
+            }
+          }
+        },
+        include: {
+          models: {
+            where: {
+              enabled: true,
+              capabilities: {
+                some: {
+                  capability: AiCapability.STRUCTURED_OUTPUT,
+                  enabled: true
+                }
+              }
+            },
+            orderBy: { displayName: "asc" }
+          }
+        },
+        orderBy: { displayName: "asc" }
+      }),
+      this.getProviderHealthSummary()
     ]);
+    const analyzerRuntimeSetting = systemSettings.find((setting) => setting.key === AUTO_CLIP_ANALYZER_RUNTIME_KEY) ?? null;
 
     const mappedFeatureFlags = featureFlags.map((flag) => ({
       id: flag.id,
@@ -50,6 +116,22 @@ export class AdminSystemService {
       updatedAt: setting.updatedAt
     }));
 
+    const analyzerRuntimeProviderOptions = mergeAnalyzerProviderOptions(
+      analyzerProviders.map((provider) => ({
+        code: provider.code,
+        displayName: provider.displayName
+      }))
+    );
+    const analyzerRuntimeModelOptions = mergeAnalyzerModelOptions(
+      analyzerProviders.flatMap((provider) =>
+        provider.models.map((model) => ({
+          providerCode: provider.code,
+          identifier: model.identifier,
+          displayName: model.displayName
+        }))
+      )
+    );
+
     return {
       featureFlags: mappedFeatureFlags,
       systemSettings: mappedSystemSettings,
@@ -62,8 +144,85 @@ export class AdminSystemService {
       featureFlagCategories: groupAdminSettingsByCategory(mappedFeatureFlags),
       systemSettingCategories: groupAdminSettingsByCategory(mappedSystemSettings),
       featureFlagTemplates: FEATURE_FLAG_TEMPLATES,
-      systemSettingTemplates: SYSTEM_SETTING_TEMPLATES
+      systemSettingTemplates: SYSTEM_SETTING_TEMPLATES,
+      autoClipAnalyzerRuntime: {
+        ...normalizeAutoClipAnalyzerRuntimeConfig(analyzerRuntimeSetting?.value as Prisma.JsonValue | undefined),
+        key: AUTO_CLIP_ANALYZER_RUNTIME_KEY,
+        description:
+          analyzerRuntimeSetting?.description ??
+          "Controls whether auto-clipping candidate analysis uses OpenAI structured output or local heuristic scoring.",
+        version: analyzerRuntimeSetting?.version ?? null,
+        updatedAt: analyzerRuntimeSetting?.updatedAt ?? null,
+        isPersisted: Boolean(analyzerRuntimeSetting)
+      },
+      providerHealthSummary,
+      analyzerRuntimeProviderOptions,
+      analyzerRuntimeModelOptions
     };
+  }
+
+  private async getProviderHealthSummary(): Promise<ProviderHealthSummary> {
+    const [totalProviders, enabledProviders, degradedProviders, structuredProviders, totalModels] = await Promise.all([
+      this.deps.prisma.aiProvider.count(),
+      this.deps.prisma.aiProvider.count({ where: { enabled: true } }),
+      this.deps.prisma.aiProvider.count({
+        where: {
+          OR: [{ healthStatus: "DEGRADED" }, { healthStatus: "DOWN" }]
+        }
+      }),
+      this.deps.prisma.aiProvider.count({
+        where: {
+          enabled: true,
+          models: {
+            some: {
+              enabled: true,
+              capabilities: {
+                some: {
+                  capability: AiCapability.STRUCTURED_OUTPUT,
+                  enabled: true
+                }
+              }
+            }
+          }
+        }
+      }),
+      this.deps.prisma.aiModel.count()
+    ]);
+
+    return {
+      totalProviders,
+      enabledProviders,
+      degradedProviders,
+      structuredProviders,
+      totalModels
+    };
+  }
+
+  public async upsertAutoClipAnalyzerRuntime(input: AutoClipAnalyzerRuntimeInput) {
+    const normalized = normalizeAutoClipAnalyzerRuntimeConfig({
+      mode: input.mode,
+      provider: input.provider,
+      model: input.model
+    });
+    const valueJson = buildAutoClipAnalyzerRuntimeSettingValue(normalized);
+
+    return this.deps.prisma.systemSetting.upsert({
+      where: { key: AUTO_CLIP_ANALYZER_RUNTIME_KEY },
+      update: {
+        description:
+          "Controls whether auto-clipping candidate analysis uses OpenAI structured output or local heuristic scoring.",
+        isSecret: false,
+        value: valueJson as Prisma.InputJsonValue,
+        version: { increment: 1 }
+      },
+      create: {
+        key: AUTO_CLIP_ANALYZER_RUNTIME_KEY,
+        description:
+          "Controls whether auto-clipping candidate analysis uses OpenAI structured output or local heuristic scoring.",
+        isSecret: false,
+        value: valueJson as Prisma.InputJsonValue
+      }
+    });
   }
 
   public async createFeatureFlag(input: FeatureFlagInput) {
@@ -148,6 +307,9 @@ type AdminSettingCategory =
 function classifyAdminSettingKey(key: string): AdminSettingCategory {
   const normalized = key.trim().toLowerCase();
   if (normalized.includes("provider") || normalized.includes("routing") || normalized.includes("model")) {
+    return "provider-routing";
+  }
+  if (normalized.includes("analyzer")) {
     return "provider-routing";
   }
   if (normalized.includes("upload") || normalized.includes("ingestion") || normalized.includes("download")) {
@@ -235,7 +397,73 @@ const FEATURE_FLAG_TEMPLATES = [
   }
 ] as const;
 
+const BUILT_IN_ANALYZER_PROVIDER_OPTIONS: AnalyzerProviderOption[] = [
+  {
+    code: "openai",
+    displayName: "OpenAI"
+  }
+];
+
+const BUILT_IN_OPENAI_ANALYZER_MODELS: AnalyzerModelOption[] = [
+  { providerCode: "openai", identifier: "gpt-5.6", displayName: "GPT-5.6" },
+  { providerCode: "openai", identifier: "gpt-5.5", displayName: "GPT-5.5" },
+  { providerCode: "openai", identifier: "gpt-5.4-mini", displayName: "GPT-5.4 Mini" },
+  { providerCode: "openai", identifier: "gpt-5", displayName: "GPT-5" },
+  { providerCode: "openai", identifier: "gpt-5-mini", displayName: "GPT-5 Mini" },
+  { providerCode: "openai", identifier: "gpt-5-nano", displayName: "GPT-5 Nano" },
+  { providerCode: "openai", identifier: "gpt-4.1", displayName: "GPT-4.1" },
+  { providerCode: "openai", identifier: "gpt-4.1-mini", displayName: "GPT-4.1 Mini" },
+  { providerCode: "openai", identifier: "gpt-4.1-nano", displayName: "GPT-4.1 Nano" },
+  { providerCode: "openai", identifier: "gpt-4o", displayName: "GPT-4o" },
+  { providerCode: "openai", identifier: "gpt-4o-mini", displayName: "GPT-4o Mini" },
+  { providerCode: "openai", identifier: "o3", displayName: "o3" },
+  { providerCode: "openai", identifier: "o3-mini", displayName: "o3 Mini" },
+  { providerCode: "openai", identifier: "o4-mini", displayName: "o4 Mini" }
+];
+
+function mergeAnalyzerProviderOptions(options: AnalyzerProviderOption[]) {
+  const merged = new Map<string, AnalyzerProviderOption>();
+
+  for (const option of [...BUILT_IN_ANALYZER_PROVIDER_OPTIONS, ...options]) {
+    const code = option.code.trim().toLowerCase();
+    if (!code) continue;
+    merged.set(code, {
+      code,
+      displayName: option.displayName.trim() || code
+    });
+  }
+
+  return [...merged.values()].sort((left, right) => left.displayName.localeCompare(right.displayName));
+}
+
+function mergeAnalyzerModelOptions(options: AnalyzerModelOption[]) {
+  const merged = new Map<string, AnalyzerModelOption>();
+
+  for (const option of [...BUILT_IN_OPENAI_ANALYZER_MODELS, ...options]) {
+    const providerCode = option.providerCode.trim().toLowerCase();
+    const identifier = option.identifier.trim();
+    if (!providerCode || !identifier) continue;
+    merged.set(`${providerCode}:${identifier.toLowerCase()}`, {
+      providerCode,
+      identifier,
+      displayName: option.displayName.trim() || identifier
+    });
+  }
+
+  return [...merged.values()].sort((left, right) => {
+    const providerCompare = left.providerCode.localeCompare(right.providerCode);
+    if (providerCompare !== 0) return providerCompare;
+    return left.displayName.localeCompare(right.displayName);
+  });
+}
+
 const SYSTEM_SETTING_TEMPLATES = [
+  {
+    key: AUTO_CLIP_ANALYZER_RUNTIME_KEY,
+    description: "Switch auto-clipping candidate analysis between OpenAI structured output and local heuristic mode.",
+    is_secret: false,
+    value_json: buildAutoClipAnalyzerRuntimeSettingValue(DEFAULT_AUTO_CLIP_ANALYZER_RUNTIME_CONFIG)
+  },
   {
     key: "provider_routing",
     description: "Primary provider routing and fallback order per tool.",

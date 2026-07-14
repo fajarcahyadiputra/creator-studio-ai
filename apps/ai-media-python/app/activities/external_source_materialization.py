@@ -5,6 +5,7 @@ import hashlib
 import logging
 import mimetypes
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ import httpx
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 
 from app.config import get_settings
 from app.activities.media_validation import build_media_asset_validation_result, run_ffprobe_json
@@ -20,6 +22,51 @@ from app.infrastructure.media_asset_client import MediaAssetClient
 from app.media.ffmpeg import summarize_ffprobe_payload
 
 logger = logging.getLogger(__name__)
+
+
+def _build_ytdlp_options(*, skip_download: bool, output_template: str | None = None) -> dict[str, Any]:
+    options: dict[str, Any] = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+            }
+        },
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
+        },
+        "socket_timeout": 120,
+        "retries": 10,
+        "fragment_retries": 10,
+        "file_access_retries": 5,
+        "extractor_retries": 5,
+    }
+
+    if skip_download:
+        options["skip_download"] = True
+        return options
+
+    options.update(
+        {
+            # Auto-clipping only needs a stable source for audio extraction and clip renders.
+            # Capping to 720p reduces failure rates and disk pressure versus fetching the best stream.
+            "format": (
+                "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/"
+                "best[height<=720][ext=mp4]/best[ext=mp4]/best[height<=720]/best"
+            ),
+            "merge_output_format": "mp4",
+            "outtmpl": output_template,
+            "restrictfilenames": True,
+            "continuedl": True,
+        }
+    )
+    return options
 
 
 @activity.defn
@@ -32,63 +79,77 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
         raise ApplicationError("project_id must be a string when provided", non_retryable=True, type="InvalidInput")
 
     settings = get_settings()
-    workdir = Path(settings.TEMP_WORKDIR) / user_id / job_id / "external-source"
+    workdir = Path(settings.TEMP_WORKDIR) / user_id / job_id / "external-source" / _build_activity_workdir_name()
     workdir.mkdir(parents=True, exist_ok=True)
-
-    info = await _await_with_heartbeat(
-        asyncio.to_thread(_extract_source_info, source_url),
-        {
-            "job_id": job_id,
-            "stage": "PROBING_MEDIA",
-            "action": "extracting_external_source_info",
-            "source_url": source_url,
-        },
-        interval_seconds=10,
-    )
-    base_name = _safe_file_stem(info.get("title")) or f"external-source-{job_id[:8]}"
-    download_template = str(workdir / f"{base_name}.%(ext)s")
-    downloaded_path = await _await_with_heartbeat(
-        asyncio.to_thread(_download_source_media, source_url, download_template),
-        {
-            "job_id": job_id,
-            "stage": "PROBING_MEDIA",
-            "action": "downloading_external_source",
-            "source_url": source_url,
-        },
-        interval_seconds=10,
-    )
-
-    original_file_name = downloaded_path.name
-    extension = downloaded_path.suffix.lstrip(".").lower() or "mp4"
-    mime_type = mimetypes.guess_type(downloaded_path.name)[0] or "video/mp4"
-    display_name = _safe_display_name(info.get("title")) or downloaded_path.stem
+    stage = "extract-info"
 
     client = MediaAssetClient()
-    import_context = await client.create_external_source_import(
-        job_id=job_id,
-        user_id=user_id,
-        project_id=project_id,
-        source_url=source_url,
-        display_name=display_name,
-        original_file_name=original_file_name,
-        mime_type=mime_type,
-        extension=extension,
-    )
-
-    activity.heartbeat(
-        {
-            "job_id": job_id,
-            "media_asset_id": import_context.media_asset_id,
-            "stage": "PROBING_MEDIA",
-            "action": "downloaded_external_source",
-            "path": str(downloaded_path),
-        }
-    )
-
-    checksum_sha256: str | None = _hash_file(downloaded_path)
-    size_bytes: int | None = downloaded_path.stat().st_size
-
+    info: dict[str, Any] = {}
+    display_name = ""
+    original_file_name = ""
+    extension = "mp4"
+    mime_type = "video/mp4"
+    import_context = None
+    checksum_sha256: str | None = None
+    size_bytes: int | None = None
+    downloaded_path: Path | None = None
     try:
+        info = await _await_with_heartbeat(
+            asyncio.to_thread(_extract_source_info, source_url),
+            {
+                "job_id": job_id,
+                "stage": "PROBING_MEDIA",
+                "action": "extracting_external_source_info",
+                "source_url": source_url,
+            },
+            interval_seconds=10,
+        )
+        base_name = _safe_file_stem(info.get("title")) or f"external-source-{job_id[:8]}"
+        download_template = str(workdir / f"{base_name}.%(ext)s")
+
+        stage = "download"
+        downloaded_path = await _await_with_heartbeat(
+            asyncio.to_thread(_download_source_media, source_url, download_template),
+            {
+                "job_id": job_id,
+                "stage": "PROBING_MEDIA",
+                "action": "downloading_external_source",
+                "source_url": source_url,
+            },
+            interval_seconds=10,
+        )
+
+        original_file_name = downloaded_path.name
+        extension = downloaded_path.suffix.lstrip(".").lower() or "mp4"
+        mime_type = mimetypes.guess_type(downloaded_path.name)[0] or "video/mp4"
+        display_name = _safe_display_name(info.get("title")) or downloaded_path.stem
+
+        stage = "create-import"
+        import_context = await client.create_external_source_import(
+            job_id=job_id,
+            user_id=user_id,
+            project_id=project_id,
+            source_url=source_url,
+            display_name=display_name,
+            original_file_name=original_file_name,
+            mime_type=mime_type,
+            extension=extension,
+        )
+
+        activity.heartbeat(
+            {
+                "job_id": job_id,
+                "media_asset_id": import_context.media_asset_id,
+                "stage": "PROBING_MEDIA",
+                "action": "downloaded_external_source",
+                "path": str(downloaded_path),
+            }
+        )
+
+        checksum_sha256 = _hash_file(downloaded_path)
+        size_bytes = downloaded_path.stat().st_size
+
+        stage = "upload"
         await _await_with_heartbeat(
             _upload_file(import_context.upload_url, downloaded_path, mime_type),
             {
@@ -99,6 +160,7 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
             },
             interval_seconds=10,
         )
+        stage = "verify-upload"
         await _await_with_heartbeat(
             _verify_uploaded_object(import_context.read_url),
             {
@@ -110,6 +172,7 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
             },
             interval_seconds=10,
         )
+        stage = "probe"
         probe_payload = await run_ffprobe_json(str(downloaded_path), timeout_seconds=settings.MEDIA_PROBE_TIMEOUT_SECONDS)
         summary = summarize_ffprobe_payload(probe_payload)
         result = build_media_asset_validation_result(
@@ -124,6 +187,7 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
             },
         )
 
+        stage = "complete-import"
         await client.complete_external_source_import(
             import_context.media_asset_id,
             status=result.status,
@@ -153,10 +217,16 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
             "checksum_sha256": checksum_sha256,
         }
     except Exception as error:
+        failure_reason = _summarize_materialization_error(stage=stage, error=error)
         logger.warning(
             "external source materialization failed",
-            extra={"job_id": job_id, "source_url": source_url},
-            exc_info=True,
+            extra={
+                "job_id": job_id,
+                "source_url": source_url,
+                "materialization_stage": stage,
+                "failure_reason": failure_reason,
+                "error_type": type(error).__name__,
+            },
         )
         failure_result = {
             "status": "FAILED",
@@ -172,49 +242,48 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
                 "source": "external-url-import",
                 "source_url": source_url,
                 "provider": "yt-dlp",
+                "materialization_stage": stage,
+                "error_type": type(error).__name__,
             },
-            "failure_reason": str(error),
+            "failure_reason": failure_reason,
         }
-        if 'import_context' in locals():
-            await client.complete_external_source_import(
-                import_context.media_asset_id,
-                status="FAILED",
-                size_bytes=size_bytes if downloaded_path.exists() else None,
-                checksum_sha256=checksum_sha256 if downloaded_path.exists() else None,
-                mime_type=mime_type,
-                extension=extension,
-                display_name=display_name,
-                original_file_name=original_file_name,
-                result=MediaAssetValidationResult.model_validate(failure_result),
-            )
-        raise
+        if import_context is not None:
+            try:
+                await client.complete_external_source_import(
+                    import_context.media_asset_id,
+                    status="FAILED",
+                    size_bytes=size_bytes if downloaded_path and downloaded_path.exists() else None,
+                    checksum_sha256=checksum_sha256 if downloaded_path and downloaded_path.exists() else None,
+                    mime_type=mime_type,
+                    extension=extension,
+                    display_name=display_name or f"external-source-{job_id[:8]}",
+                    original_file_name=original_file_name or f"external-source-{job_id[:8]}.{extension}",
+                    result=MediaAssetValidationResult.model_validate(failure_result),
+                )
+            except Exception as completion_error:
+                logger.warning(
+                    "failed to persist external source import failure",
+                    extra={
+                        "job_id": job_id,
+                        "media_asset_id": import_context.media_asset_id,
+                        "materialization_stage": "complete-import-failure",
+                        "failure_reason": _summarize_materialization_error(
+                            stage="complete-import-failure",
+                            error=completion_error,
+                        ),
+                    },
+                )
+        raise ApplicationError(
+            failure_reason,
+            non_retryable=True,
+            type="ExternalSourceImportFailed",
+        ) from error
     finally:
-        for child in workdir.glob("*"):
-            if child.is_file():
-                child.unlink(missing_ok=True)
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 def _extract_source_info(source_url: str) -> dict[str, Any]:
-    with YoutubeDL(
-        {
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "noplaylist": True,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "web"],
-                }
-            },
-            "http_headers": {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
-                ),
-                "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
-            },
-        }
-    ) as ydl:
+    with YoutubeDL(_build_ytdlp_options(skip_download=True)) as ydl:
         info = ydl.extract_info(source_url, download=False)
     if not isinstance(info, dict):
         raise RuntimeError("yt-dlp did not return a source info document")
@@ -222,29 +291,7 @@ def _extract_source_info(source_url: str) -> dict[str, Any]:
 
 
 def _download_source_media(source_url: str, output_template: str) -> Path:
-    with YoutubeDL(
-        {
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
-            "format": "bv*+ba/b",
-            "merge_output_format": "mp4",
-            "outtmpl": output_template,
-            "restrictfilenames": True,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "web"],
-                }
-            },
-            "http_headers": {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
-                ),
-                "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
-            },
-        }
-    ) as ydl:
+    with YoutubeDL(_build_ytdlp_options(skip_download=False, output_template=output_template)) as ydl:
         ydl.download([source_url])
 
     candidates = sorted(Path(output_template).parent.iterdir())
@@ -252,6 +299,15 @@ def _download_source_media(source_url: str, output_template: str) -> Path:
     if not files:
         raise RuntimeError("yt-dlp completed without producing a local media file")
     return max(files, key=lambda item: item.stat().st_size)
+
+
+def _build_activity_workdir_name() -> str:
+    try:
+        info = activity.info()
+        activity_id = re.sub(r"[^a-zA-Z0-9._-]+", "-", info.activity_id).strip("-") or "activity"
+        return f"{activity_id}-attempt-{info.attempt}"
+    except Exception:
+        return "activity-attempt-1"
 
 
 async def _await_with_heartbeat(
@@ -266,6 +322,9 @@ async def _await_with_heartbeat(
             return await asyncio.wait_for(asyncio.shield(task), timeout=interval_seconds)
         except TimeoutError:
             activity.heartbeat(details)
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
 
 
 async def _upload_file(upload_url: str, file_path: Path, content_type: str) -> None:
@@ -314,3 +373,23 @@ def _safe_file_stem(value: Any) -> str:
         return ""
     normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("._-")
     return normalized[:120]
+
+
+def _summarize_materialization_error(*, stage: str, error: Exception) -> str:
+    message = str(error).strip() or type(error).__name__
+    if isinstance(error, DownloadError):
+        return f"{stage}: yt-dlp download failed: {message}"
+    if isinstance(error, httpx.HTTPStatusError):
+        return (
+            f"{stage}: upstream HTTP {error.response.status_code} "
+            f"from {error.request.method} {error.request.url}"
+        )
+    if isinstance(error, httpx.RequestError):
+        request = error.request
+        method = request.method if request is not None else "REQUEST"
+        url = str(request.url) if request is not None else "unknown-url"
+        return f"{stage}: request failed during {method} {url}: {message}"
+    if isinstance(error, ApplicationError):
+        error_type = getattr(error, "type", None) or type(error).__name__
+        return f"{stage}: {error_type}: {message}"
+    return f"{stage}: {type(error).__name__}: {message}"

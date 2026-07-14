@@ -22,6 +22,61 @@ function resolveRequestOrigin(request: { protocol: string; get(name: string): st
   return host ? `${request.protocol}://${host}` : undefined;
 }
 
+function normalizeAnalyzerModeLabel(mode: string | null) {
+  if (!mode) return null;
+  if (mode === "heuristic") return "Heuristic only (Python local)";
+  if (mode === "heuristic_then_openai") return "Heuristic + OpenAI";
+  if (mode === "openai_then_heuristic") return "OpenAI + heuristic";
+  return mode;
+}
+
+function normalizeAnalyzerProviderLabel(provider: string | null, mode: string | null) {
+  if (mode === "heuristic") return "Python local";
+  if (!provider) return null;
+  if (provider === "openai") return "OpenAI";
+  if (provider === "python-local") return "Python local";
+  return provider;
+}
+
+function normalizeAnalyzerModelLabel(model: string | null, mode: string | null) {
+  if (mode === "heuristic") return "Heuristic scorer";
+  if (!model) return null;
+  if (model === "heuristic-local") return "Heuristic scorer";
+  return model;
+}
+
+function reconcileClipOutputQualityStatus(params: {
+  persistedQualityStatus: string;
+  qualityReport: Record<string, unknown>;
+  hasFinalObject: boolean;
+}) {
+  const validation =
+    params.qualityReport.validation &&
+    typeof params.qualityReport.validation === "object" &&
+    !Array.isArray(params.qualityReport.validation)
+      ? (params.qualityReport.validation as Record<string, unknown>)
+      : {};
+  const checks =
+    validation.checks &&
+    typeof validation.checks === "object" &&
+    !Array.isArray(validation.checks)
+      ? (validation.checks as Record<string, unknown>)
+      : {};
+  const validationStatus = typeof validation.status === "string" ? validation.status : null;
+  const playable = checks.playable === true;
+
+  if (
+    params.persistedQualityStatus === "NEEDS_REVIEW"
+    && validationStatus === "passed"
+    && params.hasFinalObject
+    && playable
+  ) {
+    return "PASSED";
+  }
+
+  return params.persistedQualityStatus;
+}
+
 function serializeClipOutput(output: {
   id: string;
   candidateId: string;
@@ -99,13 +154,18 @@ function serializeClipOutput(output: {
   const validationWarnings = Array.isArray(validation.warnings)
     ? validation.warnings.filter((warning): warning is string => typeof warning === "string" && warning.trim().length > 0)
     : [];
+  const effectiveQualityStatus = reconcileClipOutputQualityStatus({
+    persistedQualityStatus: output.qualityStatus,
+    qualityReport,
+    hasFinalObject: Boolean(output.finalObjectKey)
+  });
 
   return {
     id: output.id,
     candidate_id: output.candidateId,
     media_asset_id: output.mediaAssetId,
     version: output.version,
-    quality_status: output.qualityStatus,
+    quality_status: effectiveQualityStatus,
     preview_object_key: output.previewObjectKey,
     final_object_key: output.finalObjectKey,
     metadata_object_key: output.metadataObjectKey,
@@ -128,6 +188,12 @@ function serializeClipOutput(output: {
       suggested_hashtags: Array.isArray(metadata.suggested_hashtags)
         ? metadata.suggested_hashtags.filter((value): value is string => typeof value === "string")
         : [],
+      final_viral_score:
+        typeof candidate.final_viral_score === "number"
+          ? candidate.final_viral_score
+          : typeof candidate.final_viral_score === "string"
+            ? Number(candidate.final_viral_score)
+            : null,
       retention_level: typeof metadata.retention_level === "string" ? metadata.retention_level : null,
       validation_status: typeof validation.status === "string" ? validation.status : null,
       output_playable: typeof validationChecks.playable === "boolean" ? validationChecks.playable : null,
@@ -214,6 +280,17 @@ function serializeClipCandidate(candidate: {
   createdAt: Date;
   updatedAt: Date;
 }) {
+  const analyzerMetadata =
+    candidate.analyzerMetadata && typeof candidate.analyzerMetadata === "object" && !Array.isArray(candidate.analyzerMetadata)
+      ? (candidate.analyzerMetadata as Record<string, unknown>)
+      : {};
+  const analysisMode = typeof analyzerMetadata.analysis_mode === "string" ? analyzerMetadata.analysis_mode : null;
+  const provider = typeof analyzerMetadata.provider === "string" ? analyzerMetadata.provider : null;
+  const model = typeof analyzerMetadata.model === "string" ? analyzerMetadata.model : null;
+  const attemptedProvider =
+    typeof analyzerMetadata.attempted_provider === "string" ? analyzerMetadata.attempted_provider : null;
+  const attemptedModel = typeof analyzerMetadata.attempted_model === "string" ? analyzerMetadata.attempted_model : null;
+
   return {
     id: candidate.id,
     transcript_id: candidate.transcriptId,
@@ -235,7 +312,14 @@ function serializeClipCandidate(candidate: {
     metadata_suggestions: candidate.metadataSuggestions,
     speaker_ids: candidate.speakerIds,
     scene_ids: candidate.sceneIds,
-    analyzer_metadata: candidate.analyzerMetadata,
+    analyzer_metadata: {
+      ...analyzerMetadata,
+      analysis_mode_label: normalizeAnalyzerModeLabel(analysisMode),
+      provider_label: normalizeAnalyzerProviderLabel(provider, analysisMode),
+      model_label: normalizeAnalyzerModelLabel(model, analysisMode),
+      attempted_provider_label: normalizeAnalyzerProviderLabel(attemptedProvider, null),
+      attempted_model_label: normalizeAnalyzerModelLabel(attemptedModel, null)
+    },
     selected: candidate.selected,
     rank: candidate.rank,
     created_at: candidate.createdAt.toISOString(),
@@ -259,13 +343,53 @@ function serializeJobOutputs(job: Awaited<ReturnType<JobService["get"]>>) {
         ? job.clipOutputs.length
         : 0;
 
+  const serializedClipOutputs = job.clipOutputs.map(serializeClipOutput);
+  const reconciledJobStatus =
+    job.status === "NEEDS_REVIEW"
+    && serializedClipOutputs.length > 0
+    && serializedClipOutputs.every((output) => output.quality_status === "PASSED")
+      ? "COMPLETED"
+      : job.status;
+  const analyzer =
+    outputSummary &&
+    outputSummary.analyzer &&
+    typeof outputSummary.analyzer === "object" &&
+    !Array.isArray(outputSummary.analyzer)
+      ? (outputSummary.analyzer as Record<string, unknown>)
+      : null;
+  const analysisMode = analyzer && typeof analyzer.analysis_mode === "string" ? analyzer.analysis_mode : null;
+  const provider = analyzer && typeof analyzer.provider === "string" ? analyzer.provider : null;
+  const model = analyzer && typeof analyzer.model === "string" ? analyzer.model : null;
+  const attemptedProvider = analyzer && typeof analyzer.attempted_provider === "string" ? analyzer.attempted_provider : null;
+  const attemptedModel = analyzer && typeof analyzer.attempted_model === "string" ? analyzer.attempted_model : null;
+
   return {
     job_id: job.id,
-    status: job.status,
+    status: reconciledJobStatus,
     candidate_count: candidateCount,
     clip_candidates: job.clipCandidates.map(serializeClipCandidate),
-    output_summary: outputSummary,
-    clip_outputs: job.clipOutputs.map(serializeClipOutput)
+    output_summary: outputSummary
+      ? {
+          ...outputSummary,
+          analyzer_summary: analyzer
+            ? {
+                analysis_mode: analysisMode,
+                analysis_mode_label: normalizeAnalyzerModeLabel(analysisMode),
+                provider,
+                provider_label: normalizeAnalyzerProviderLabel(provider, analysisMode),
+                model,
+                model_label: normalizeAnalyzerModelLabel(model, analysisMode),
+                attempted_provider: attemptedProvider,
+                attempted_provider_label: normalizeAnalyzerProviderLabel(attemptedProvider, null),
+                attempted_model: attemptedModel,
+                attempted_model_label: normalizeAnalyzerModelLabel(attemptedModel, null),
+                prompt_version: typeof analyzer.prompt_version === "string" ? analyzer.prompt_version : null,
+                fallback_reason: typeof analyzer.fallback_reason === "string" ? analyzer.fallback_reason : null
+              }
+            : null
+        }
+      : null,
+    clip_outputs: serializedClipOutputs
   };
 }
 

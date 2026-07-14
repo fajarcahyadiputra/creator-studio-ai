@@ -17,8 +17,10 @@ class Settings(BaseSettings):
     TEMP_WORKDIR: str = "/tmp/creator-studio"
     CALLBACK_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0, le=60)
     MEDIA_PROBE_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0, le=180)
+    EXTERNAL_SOURCE_MATERIALIZATION_TIMEOUT_SECONDS: float = Field(default=7200.0, gt=60, le=28800)
     AUDIO_EXTRACTION_TIMEOUT_SECONDS: float = Field(default=120.0, gt=0, le=900)
     TRANSCRIPTION_TIMEOUT_SECONDS: float = Field(default=600.0, gt=0, le=14400)
+    ANALYZER_TIMEOUT_SECONDS: float = Field(default=180.0, gt=10, le=1800)
     RENDER_OUTPUT_TIMEOUT_SECONDS: float = Field(default=900.0, gt=0, le=14400)
     TTS_TRANSCODE_TIMEOUT_SECONDS: float = Field(default=180.0, gt=0, le=1800)
     FASTER_WHISPER_MODEL_SIZE: str = "small"
@@ -29,7 +31,7 @@ class Settings(BaseSettings):
     AUTO_CLIP_ANALYZER_MODEL: str | None = "gpt-5.5"
     OPENAI_API_KEY: str | None = None
     OPENAI_BASE_URL: HttpUrl = HttpUrl("https://api.openai.com/v1")
-    OPENAI_TIMEOUT_SECONDS: float = Field(default=45.0, gt=0, le=120)
+    OPENAI_TIMEOUT_SECONDS: float = Field(default=90.0, gt=0, le=300)
     TTS_MODEL_DIR: str = "/models/tts"
     PIPER_COMMAND: str = "piper"
     TTS_SAMPLE_TEXT: str = "Halo, ini adalah sample suara untuk preview model TTS."

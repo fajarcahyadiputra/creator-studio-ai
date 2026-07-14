@@ -58,49 +58,83 @@ async def generate_tts_segments(
             },
         }
 
-    selected_provider = provider or _resolve_provider(provider_code)
-    provider_result = await selected_provider.generate_structured(
-        context=ProviderRequestContext(
-            provider_code=provider_code,
-            model_identifier=model_identifier,
-            credential_reference="env:OPENAI_API_KEY",
-            request_id=request_id,
-        ),
-        system_prompt=build_tts_segmentation_system_prompt(),
-        input_payload=build_tts_segmentation_payload(request, user_preferences=user_preferences),
-        schema=TtsSpeechSegmentsDocument.model_json_schema(),
-        schema_name="tts_speech_segments",
-    )
-    document = TtsSpeechSegmentsDocument.model_validate(provider_result["output"])
-    usage = provider_result.get("usage")
-    provider_request_id = provider_result.get("provider_request_id")
-    latency_ms = round((perf_counter() - started) * 1000, 2)
+    try:
+        selected_provider = provider or _resolve_provider(provider_code)
+        provider_result = await selected_provider.generate_structured(
+            context=ProviderRequestContext(
+                provider_code=provider_code,
+                model_identifier=model_identifier,
+                credential_reference="env:OPENAI_API_KEY",
+                request_id=request_id,
+            ),
+            system_prompt=build_tts_segmentation_system_prompt(),
+            input_payload=build_tts_segmentation_payload(request, user_preferences=user_preferences),
+            schema=TtsSpeechSegmentsDocument.model_json_schema(),
+            schema_name="tts_speech_segments",
+        )
+        document = TtsSpeechSegmentsDocument.model_validate(provider_result["output"])
+        usage = provider_result.get("usage")
+        provider_request_id = provider_result.get("provider_request_id")
+        latency_ms = round((perf_counter() - started) * 1000, 2)
 
-    logger.info(
-        "tts segmentation completed",
-        extra={
-            "request_id": request_id,
-            "provider": provider_code,
-            "model": model_identifier,
-            "provider_request_id": provider_request_id,
-            "latency_ms": latency_ms,
-            "segment_count": len(document.segments),
-            "token_usage": usage if isinstance(usage, dict) else None,
-            "prompt_version": TTS_SEGMENTATION_PROMPT_VERSION,
-        },
-    )
-    return {
-        "document": document.model_dump(mode="json"),
-        "metadata": {
-            "request_id": request_id,
-            "provider": provider_code,
-            "model": model_identifier,
-            "provider_request_id": str(provider_request_id) if provider_request_id is not None else None,
-            "latency_ms": latency_ms,
-            "token_usage": usage if isinstance(usage, dict) else None,
-            "prompt_version": TTS_SEGMENTATION_PROMPT_VERSION,
-        },
-    }
+        logger.info(
+            "tts segmentation completed",
+            extra={
+                "request_id": request_id,
+                "provider": provider_code,
+                "model": model_identifier,
+                "provider_request_id": provider_request_id,
+                "latency_ms": latency_ms,
+                "segment_count": len(document.segments),
+                "token_usage": usage if isinstance(usage, dict) else None,
+                "prompt_version": TTS_SEGMENTATION_PROMPT_VERSION,
+                "fallback_reason": None,
+            },
+        )
+        return {
+            "document": document.model_dump(mode="json"),
+            "metadata": {
+                "request_id": request_id,
+                "provider": provider_code,
+                "model": model_identifier,
+                "provider_request_id": str(provider_request_id) if provider_request_id is not None else None,
+                "latency_ms": latency_ms,
+                "token_usage": usage if isinstance(usage, dict) else None,
+                "prompt_version": TTS_SEGMENTATION_PROMPT_VERSION,
+                "fallback_reason": None,
+            },
+        }
+    except Exception as error:
+        document = _generate_local_segments(request=request, user_preferences=user_preferences)
+        latency_ms = round((perf_counter() - started) * 1000, 2)
+        fallback_reason = f"{type(error).__name__}: {str(error).strip() or 'provider failure'}"
+        logger.warning(
+            "tts segmentation provider failed; falling back to local heuristic",
+            extra={
+                "request_id": request_id,
+                "provider": provider_code,
+                "model": model_identifier,
+                "latency_ms": latency_ms,
+                "segment_count": len(document.segments),
+                "prompt_version": TTS_SEGMENTATION_PROMPT_VERSION,
+                "fallback_reason": fallback_reason,
+            },
+        )
+        return {
+            "document": document.model_dump(mode="json"),
+            "metadata": {
+                "request_id": request_id,
+                "provider": "local_heuristic",
+                "model": "local-heuristic-v1",
+                "provider_request_id": None,
+                "latency_ms": latency_ms,
+                "token_usage": None,
+                "prompt_version": TTS_SEGMENTATION_PROMPT_VERSION,
+                "fallback_reason": fallback_reason,
+                "upstream_provider": provider_code,
+                "upstream_model": model_identifier,
+            },
+        }
 
 
 def _resolve_provider(provider_code: str) -> StructuredOutputProvider:

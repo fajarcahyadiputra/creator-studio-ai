@@ -6,7 +6,8 @@ import { prisma } from "../../infrastructure/database/prisma.js";
 import {
   createInternalSignedObjectReadUrl,
   createInternalSignedObjectWriteUrl,
-  createPublicSignedObjectReadUrl
+  createPublicSignedObjectReadUrl,
+  deleteObjectKeys
 } from "../../infrastructure/storage/s3.js";
 import { asyncHandler } from "../../shared/http/async-handler.js";
 import { validateBody } from "../../shared/http/validate.js";
@@ -194,29 +195,21 @@ export function internalRouter(projection: JobProjectionService): Router {
 
       const extension = sanitizeExtension(body.extension);
       const fileNameBase = sanitizeObjectFileName(body.original_file_name, body.display_name);
-      const objectKey = `users/${body.user_id}/imports/${body.job_id}/source/${fileNameBase}.${extension}`;
 
       const created = await prisma.$transaction(async (tx) => {
         const job = await tx.job.findUnique({ where: { id: body.job_id }, select: { id: true } });
         if (!job) throw new NotFoundError("Job");
 
-        const mediaAsset = await tx.mediaAsset.create({
-          data: {
-            userId: body.user_id,
-            projectId: body.project_id,
-            type: "VIDEO",
-            status: "UPLOADING",
-            displayName: body.display_name,
-            originalFileName: body.original_file_name,
-            objectKey,
-            mimeType: body.mime_type,
-            extension,
-            metadata: {
-              source: "external-url-import",
-              source_url: body.source_url,
-              job_id: body.job_id,
-            } as never,
-          }
+        const mediaAsset = await createExternalSourceImportMediaAsset(tx, {
+          userId: body.user_id,
+          projectId: body.project_id,
+          jobId: body.job_id,
+          sourceUrl: body.source_url,
+          displayName: body.display_name,
+          originalFileName: body.original_file_name,
+          mimeType: body.mime_type,
+          extension,
+          fileNameBase,
         });
 
         return mediaAsset;
@@ -514,15 +507,47 @@ export function internalRouter(projection: JobProjectionService): Router {
         });
         if (!clipOutput) throw new NotFoundError("Clip output");
 
+        const existingQualityReport =
+          clipOutput.qualityReport && typeof clipOutput.qualityReport === "object" && !Array.isArray(clipOutput.qualityReport)
+            ? (clipOutput.qualityReport as Record<string, unknown>)
+            : {};
+        const previousQualityStatus =
+          typeof existingQualityReport.previous_quality_status === "string"
+            ? existingQualityReport.previous_quality_status
+            : null;
+        const hasExistingRenderableArtifact = Boolean(clipOutput.finalObjectKey || clipOutput.mediaAssetId);
+        const shouldPreservePreviousRenderableStatus =
+          body.quality_status === "FAILED"
+          && !body.final_object_key
+          && hasExistingRenderableArtifact;
+        const effectiveQualityStatus = shouldPreservePreviousRenderableStatus
+          ? (
+              previousQualityStatus === "PASSED"
+              || previousQualityStatus === "NEEDS_REVIEW"
+              || previousQualityStatus === "PENDING"
+                ? previousQualityStatus
+                : "NEEDS_REVIEW"
+            )
+          : body.quality_status;
+        const mergedQualityReport = shouldPreservePreviousRenderableStatus
+          ? {
+              ...existingQualityReport,
+              latest_attempt: body.quality_report,
+              status: previousQualityStatus === "PASSED" ? "completed_with_warning" : "needs_review",
+              warning_message: "Latest rerender failed, but the previous rendered video is still available.",
+              latest_attempt_failed_at: new Date().toISOString(),
+            }
+          : body.quality_report;
+
         const persisted = await tx.clipOutput.update({
           where: { id: clipOutputId },
           data: {
-            qualityStatus: body.quality_status,
+            qualityStatus: effectiveQualityStatus,
             previewObjectKey: body.preview_object_key,
             finalObjectKey: body.final_object_key,
             metadataObjectKey: body.metadata_object_key,
             thumbnailObjectKey: body.thumbnail_object_key,
-            qualityReport: body.quality_report as never,
+            qualityReport: mergedQualityReport as never,
             durationMs: body.duration_ms ? BigInt(body.duration_ms) : null,
             width: body.width,
             height: body.height
@@ -587,7 +612,7 @@ export function internalRouter(projection: JobProjectionService): Router {
             format: body.subtitle_format?.toLowerCase() ?? "srt",
             language: body.subtitle_language?.toLowerCase() ?? "id",
             isBurnedIn: body.subtitle_burned_in ?? false,
-            qualityStatus: body.quality_status
+            qualityStatus: effectiveQualityStatus
           });
         }
 
@@ -610,12 +635,14 @@ export function internalRouter(projection: JobProjectionService): Router {
             format: resolveSubtitleArtifactFormat(artifactType),
             language: body.subtitle_language?.toLowerCase() ?? "id",
             isBurnedIn: artifactType === "subtitle_ass" && (body.subtitle_burned_in ?? false),
-            qualityStatus: body.quality_status
+            qualityStatus: effectiveQualityStatus
           });
         }
 
         return persisted;
       });
+
+      await cleanupAutoClipSourceMediaIfEligible(clipOutputId).catch(() => undefined);
 
       response.json({
         data: {
@@ -1368,6 +1395,97 @@ async function upsertSubtitleArtifact(
   });
 }
 
+async function cleanupAutoClipSourceMediaIfEligible(clipOutputId: string) {
+  const clipOutput = await prisma.clipOutput.findFirst({
+    where: { id: clipOutputId, deletedAt: null },
+    select: { jobId: true }
+  });
+  if (!clipOutput) return;
+
+  const job = await prisma.job.findUnique({
+    where: { id: clipOutput.jobId },
+    select: {
+      id: true,
+      type: true,
+      status: true,
+      sourceMediaAssetId: true,
+      autoClipRequest: {
+        select: {
+          id: true,
+          sourceMediaAssetId: true
+        }
+      },
+      clipOutputs: {
+        where: { deletedAt: null },
+        select: {
+          id: true,
+          finalObjectKey: true,
+          qualityStatus: true
+        }
+      },
+      sourceMediaAsset: {
+        select: {
+          id: true,
+          objectKey: true,
+          sourceJobs: {
+            select: { id: true },
+            take: 2
+          },
+          transcripts: {
+            select: {
+              rawObjectKey: true,
+              normalizedObjectKey: true
+            }
+          }
+        }
+      }
+    }
+  });
+  if (!job || job.type !== "AUTO_CLIPPING") return;
+  if (!["COMPLETED", "PARTIALLY_COMPLETED"].includes(job.status)) return;
+  if (!job.sourceMediaAssetId || !job.sourceMediaAsset) return;
+  if (job.sourceMediaAsset.sourceJobs.length > 1) return;
+  if (job.clipOutputs.length === 0) return;
+
+  const allClipOutputsReady = job.clipOutputs.every(
+    (item) => typeof item.finalObjectKey === "string" && item.finalObjectKey.trim().length > 0
+  );
+  if (!allClipOutputsReady) return;
+
+  const sourceMediaAssetId = job.sourceMediaAssetId;
+  const objectKeysToDelete = [
+    job.sourceMediaAsset.objectKey,
+    ...job.sourceMediaAsset.transcripts.flatMap((transcript) => [
+      transcript.rawObjectKey,
+      transcript.normalizedObjectKey
+    ])
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.job.update({
+      where: { id: job.id },
+      data: {
+        sourceMediaAssetId: null
+      }
+    });
+
+    if (job.autoClipRequest?.id) {
+      await tx.autoClipRequest.update({
+        where: { id: job.autoClipRequest.id },
+        data: {
+          sourceMediaAssetId: null
+        }
+      });
+    }
+
+    await tx.mediaAsset.delete({
+      where: { id: sourceMediaAssetId }
+    });
+  });
+
+  await deleteObjectKeys([...new Set(objectKeysToDelete)]);
+}
+
 function buildClipTranscriptWindow(input: {
   transcript: {
     detectedLanguage: string | null;
@@ -1430,6 +1548,66 @@ function replaceJobSourceWithMediaAsset(
       media_asset_id: mediaAssetId,
     }
   };
+}
+
+async function createExternalSourceImportMediaAsset(
+  tx: Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$use" | "$extends">,
+  input: {
+    userId: string;
+    projectId?: string;
+    jobId: string;
+    sourceUrl: string;
+    displayName: string;
+    originalFileName: string;
+    mimeType: string;
+    extension: string;
+    fileNameBase: string;
+  }
+) {
+  const maxAttempts = 4;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const importAttemptKey = `${Date.now()}-${randomUUID().slice(0, 8)}-${attempt}`;
+    const objectKey =
+      `users/${input.userId}/imports/${input.jobId}/source/` +
+      `${importAttemptKey}-${input.fileNameBase}.${input.extension}`;
+
+    try {
+      return await tx.mediaAsset.create({
+        data: {
+          userId: input.userId,
+          projectId: input.projectId,
+          type: "VIDEO",
+          status: "UPLOADING",
+          displayName: input.displayName,
+          originalFileName: input.originalFileName,
+          objectKey,
+          mimeType: input.mimeType,
+          extension: input.extension,
+          metadata: {
+            source: "external-url-import",
+            source_url: input.sourceUrl,
+            job_id: input.jobId,
+          } as never,
+        }
+      });
+    } catch (error) {
+      const code =
+        error && typeof error === "object" && "code" in error && typeof error.code === "string"
+          ? error.code
+          : null;
+      if (code === "P2002" && attempt < maxAttempts) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new AppError({
+    code: "EXTERNAL_SOURCE_IMPORT_KEY_EXHAUSTED",
+    message: "Could not allocate a unique object key for the imported source media.",
+    statusCode: 500
+  });
 }
 
 function sanitizeExtension(value: string) {

@@ -1,9 +1,11 @@
+import asyncio
 from typing import Any
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from app.activities.warning_events import emit_retry_warning
+from app.config import get_settings
 from app.application.phase2_candidate_analyzer import analyze_phase2_candidates_with_fallback
 from app.domain.boundary_detection import enrich_analysis_inputs as enrich_boundary_inputs
 from app.domain.contracts import AnalysisInputs, SceneBoundary, SilenceBoundary, TranscriptSegment, TranscriptionResult
@@ -89,9 +91,30 @@ async def analyze_phase2_candidates(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(input_snapshot, dict) or not isinstance(analysis_inputs_raw, dict):
         raise ApplicationError("analysis inputs are required", non_retryable=True, type="InvalidInput")
     analysis_inputs = AnalysisInputs.model_validate(analysis_inputs_raw)
-    summary = await analyze_phase2_candidates_with_fallback(
-        analysis_inputs=analysis_inputs,
-        input_snapshot=input_snapshot,
+    settings = get_settings()
+    ai_snapshot = input_snapshot.get("ai") if isinstance(input_snapshot.get("ai"), dict) else {}
+    runtime_snapshot = (
+        ai_snapshot.get("analyzer_runtime")
+        if isinstance(ai_snapshot.get("analyzer_runtime"), dict)
+        else {}
+    )
+    summary = await _await_with_analysis_heartbeat(
+        analyze_phase2_candidates_with_fallback(
+            analysis_inputs=analysis_inputs,
+            input_snapshot=input_snapshot,
+        ),
+        heartbeat_interval_seconds=10.0,
+        timeout_seconds=float(settings.ANALYZER_TIMEOUT_SECONDS),
+        heartbeat_metadata={
+            "stage": "ANALYZING_CLIP_CANDIDATES",
+            "job_id": job_id,
+            "transcript_segment_count": len(analysis_inputs.transcript.segments),
+            "scene_count": len(analysis_inputs.scenes),
+            "silence_count": len(analysis_inputs.silences),
+            "configured_mode": runtime_snapshot.get("mode"),
+            "configured_provider": runtime_snapshot.get("provider"),
+            "configured_model": runtime_snapshot.get("model"),
+        },
     )
     activity.heartbeat(
         {
@@ -142,6 +165,38 @@ async def analyze_phase2_candidates(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     return summary
+
+
+async def _await_with_analysis_heartbeat(
+    coroutine: Any,
+    *,
+    heartbeat_interval_seconds: float,
+    timeout_seconds: float,
+    heartbeat_metadata: dict[str, Any],
+) -> Any:
+    task = asyncio.create_task(coroutine)
+    elapsed_seconds = 0.0
+
+    try:
+        while True:
+            try:
+                return await asyncio.wait_for(asyncio.shield(task), timeout=heartbeat_interval_seconds)
+            except asyncio.TimeoutError:
+                elapsed_seconds += heartbeat_interval_seconds
+                activity.heartbeat(
+                    {
+                        **heartbeat_metadata,
+                        "elapsed_seconds": round(elapsed_seconds, 1),
+                        "timeout_seconds": int(timeout_seconds),
+                    }
+                )
+                if elapsed_seconds >= timeout_seconds:
+                    task.cancel()
+                    raise TimeoutError("candidate analysis timed out")
+    except asyncio.CancelledError:
+        if not task.done():
+            task.cancel()
+        raise
 
 
 def _prune_analysis_inputs_for_candidate_stage(analysis_inputs: AnalysisInputs) -> AnalysisInputs:

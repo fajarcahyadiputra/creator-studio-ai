@@ -1,0 +1,95 @@
+services:
+  web-node:
+    working_dir: /workspace
+    command: ["npm", "run", "dev", "--workspace", "@creator-studio/web-node"]
+    volumes:
+      - .:/workspace
+      - web-node-modules:/workspace/node_modules
+      - ./model_tts:/models/tts:ro
+    environment:
+      NODE_ENV: development
+    develop:
+      watch:
+        - path: ./.env
+          action: restart
+
+  web-email-worker:
+    working_dir: /workspace
+    command: ["npm", "run", "dev:email-worker", "--workspace", "@creator-studio/web-node"]
+    volumes:
+      - .:/workspace
+      - web-node-modules:/workspace/node_modules
+      - ./model_tts:/models/tts:ro
+    environment:
+      NODE_ENV: development
+    develop:
+      watch:
+        - path: ./.env
+          action: restart
+
+  media-ingestion-node:
+    working_dir: /workspace
+    command: ["npm", "run", "dev", "--workspace", "@creator-studio/media-ingestion-node"]
+    volumes:
+      - .:/workspace
+      - web-node-modules:/workspace/node_modules
+    environment:
+      NODE_ENV: development
+    develop:
+      watch:
+        - path: ./.env
+          action: restart
+
+  ai-media-python:
+    working_dir: /workspace
+    command: ["python", "-m", "app.dev_worker"]
+    environment:
+      NODE_ENV: development
+      PYTHONPATH: /workspace/apps/ai-media-python
+    volumes:
+      - .:/workspace
+      - ./model_tts:/models/tts:ro
+    develop:
+      watch:
+        - path: ./apps/ai-media-python/app
+          action: restart
+        - path: ./packages/contracts/json-schema
+          action: restart
+        - path: ./.env
+          action: restart
+
+  ai-media-python-api:
+    working_dir: /workspace
+    command:
+      [
+        "uvicorn",
+        "app.api.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+        "--reload-dir",
+        "/workspace/apps/ai-media-python/app",
+        "--reload-dir",
+        "/workspace/packages/contracts/json-schema",
+        "--reload-include",
+        "*.py",
+        "--reload-include",
+        "*.json",
+        "--reload-include",
+        ".env"
+      ]
+    environment:
+      NODE_ENV: development
+      PYTHONPATH: /workspace/apps/ai-media-python
+    volumes:
+      - .:/workspace
+      - ./model_tts:/models/tts:ro
+    develop:
+      watch:
+        - path: ./.env
+          action: restart
+
+volumes:
+  web-node-modules:
