@@ -5,7 +5,7 @@ from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.config import get_settings
 from app.domain.auto_clip_pipeline import (
@@ -34,6 +34,7 @@ class CandidateBatchOutput(BaseModel):
     analysis_version: str = Field(min_length=1, max_length=40)
     source_summary: str = Field(min_length=1, max_length=2000)
     candidate_count: int = Field(ge=0, le=30)
+    analyzer: dict[str, Any] = Field(default_factory=dict)
     candidates: list[CandidateAnalysis] = Field(default_factory=list, max_length=30)
 
 
@@ -94,14 +95,17 @@ async def analyze_phase2_candidates_with_fallback(
             fallback_trigger = rejection_reason
         except Exception as error:
             fallback_reason = type(error).__name__
+            extra_payload = {
+                "request_id": request_id,
+                "provider": provider_code,
+                "model": model_identifier,
+                "error_type": type(error).__name__,
+            }
+            if isinstance(error, ValidationError):
+                extra_payload["validation_errors"] = error.errors(include_url=False)
             logger.warning(
                 "OpenAI phase2 analyzer failed; falling back to heuristic scoring",
-                extra={
-                    "request_id": request_id,
-                    "provider": provider_code,
-                    "model": model_identifier,
-                    "error_type": type(error).__name__,
-                },
+                extra=extra_payload,
             )
             fallback_trigger = fallback_trigger or "openai_failed"
 
@@ -341,7 +345,8 @@ async def _run_openai_analysis(
         schema=load_clip_analyzer_schema(),
         schema_name="auto_clip_candidate_batch",
     )
-    batch = CandidateBatchOutput.model_validate(provider_result["output"])
+    normalized_output = _normalize_provider_batch_output(provider_result["output"])
+    batch = CandidateBatchOutput.model_validate(normalized_output)
     candidates = _limit_and_score_candidates(batch.candidates, analysis_inputs, config)
     summary = build_output_summary(candidates, source_summary=batch.source_summary)
     usage = provider_result.get("usage") if isinstance(provider_result.get("usage"), dict) else None
@@ -351,6 +356,58 @@ async def _run_openai_analysis(
         else None
     )
     return summary, usage, provider_request_id
+
+
+def _normalize_provider_batch_output(output: Any) -> Any:
+    if not isinstance(output, dict):
+        return output
+
+    candidates = output.get("candidates")
+    if not isinstance(candidates, list):
+        return output
+
+    normalized_candidates: list[Any] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            normalized_candidates.append(candidate)
+            continue
+        normalized_candidates.append(_normalize_candidate_time_markers(candidate))
+
+    normalized = dict(output)
+    normalized["candidates"] = normalized_candidates
+    return normalized
+
+
+def _normalize_candidate_time_markers(candidate: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(candidate)
+
+    start_seconds = _coerce_float(candidate.get("start_seconds"))
+    end_seconds = _coerce_float(candidate.get("end_seconds"))
+    duration_seconds = _coerce_float(candidate.get("duration_seconds"))
+
+    if start_seconds is None or end_seconds is None or duration_seconds is None or end_seconds <= start_seconds:
+        return normalized
+
+    for key in ("hook_second", "main_point_second", "punchline_second"):
+        marker_value = _coerce_float(candidate.get(key))
+        if marker_value is None:
+            continue
+
+        if marker_value > duration_seconds and start_seconds <= marker_value <= end_seconds:
+            normalized[key] = round(marker_value - start_seconds, 3)
+        elif marker_value < 0:
+            normalized[key] = 0.0
+
+    return normalized
+
+
+def _coerce_float(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _run_heuristic_analysis(analysis_inputs: AnalysisInputs, config: PipelineConfig) -> dict[str, Any]:

@@ -1,5 +1,5 @@
 <aside class="sidebar sidebar-admin">
-  <a class="brand" href="/admin/dashboard"><span class="brand-mark">A</span><span>Admin Console</span></a>
+  <a class="brand" href="/admin/dashboard"><span class="brand-mark"><%- include('./brand-mark', { markClass: 'brand-mark-svg' }) %></span><span>Admin Console</span></a>
   <nav class="nav flex-column gap-1 mt-4">
     <a class="nav-link <%= path === '/admin/dashboard' ? 'active' : '' %>" href="/admin/dashboard">Dashboard</a>
     <% if (identity?.permissions?.has('admin.users.read')) { %>

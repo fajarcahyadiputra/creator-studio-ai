@@ -49,6 +49,10 @@ Key file:
 16. Subtitle generation now persists timed sidecars for `SRT`, `ASS`, `VTT`, and `JSON`, while the selected subtitle format can also be burned into the final render when requested by the render settings.
 17. Node receives final/metadata/thumbnail/subtitle artifact results through the internal clip-output result endpoint and persists official `MediaAsset` plus `SubtitleAsset` rows for every supplied sidecar format.
 18. The job detail experience and public jobs API now expose validation summaries, render warnings, grouped pipeline phases, strategy snapshots, and per-format artifact download/export links for downstream review.
+19. Regenerate now reuses the same job record, snapshots the latest form/runtime settings, replaces prior generated outputs for that job, and starts a fresh workflow attempt.
+20. Job deletion removes the durable job records and also schedules cleanup of generated output objects so storage does not keep orphaned artifacts.
+21. Candidate analysis runs under the analyzer runtime snapshot captured at job creation time, so later admin changes only affect newly created or regenerated jobs.
+22. Long-running provider-backed analysis must heartbeat while waiting on OpenAI and respect `ANALYZER_TIMEOUT_SECONDS` plus `OPENAI_TIMEOUT_SECONDS` so Temporal does not cancel healthy work prematurely.
 
 Key files:
 
@@ -91,6 +95,7 @@ Redis is only fan-out. PostgreSQL is authoritative.
 - Manual retry starts a new workflow ID.
 - Automatic activity retries stay inside the same workflow run.
 - Duplicate creates a new job from the previous input snapshot.
+- Regenerate reuses the same job and replaces generated outputs using the latest regenerate payload snapshot.
 
 Key file:
 
@@ -111,6 +116,7 @@ Main public API paths:
 - Auth: `/api/v1/auth/*`
 - Uploads: `/api/v1/uploads/*`
 - Auto clipping: `/api/v1/auto-clipping/jobs`
+- Auto clipping regenerate: `/api/v1/auto-clipping/jobs/:jobId/regenerate`
 - Jobs: `/api/v1/jobs`, `/api/v1/jobs/:jobId`, cancel/retry/events/SSE
 
 Internal API:

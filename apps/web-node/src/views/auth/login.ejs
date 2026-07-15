@@ -1,7 +1,7 @@
 <%- include('../partials/head', { title, csrfToken }) %>
 <main class="auth-shell">
   <section class="auth-card">
-    <div class="brand justify-content-center mb-4"><span class="brand-mark">C</span><span><%= appName %></span></div>
+    <div class="brand justify-content-center mb-4"><span class="brand-mark"><%- include('../partials/brand-mark', { markClass: 'brand-mark-svg' }) %></span><span><%= appName %></span></div>
     <h1 class="h3">Welcome back</h1>
     <p class="text-secondary">Manage creator workflows without losing long-running progress.</p>
     <div class="form-message"></div>

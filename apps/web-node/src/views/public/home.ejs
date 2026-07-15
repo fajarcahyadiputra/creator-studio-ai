@@ -1,106 +1,245 @@
-<%- include('../partials/head', { title, csrfToken }) %>
+<%- include('../partials/head', { title, csrfToken, pageLang, metaDescription, metaKeywords, canonicalUrl, ogTitle, ogDescription, twitterTitle, twitterDescription }) %>
 <main class="marketing-shell">
   <section class="marketing-hero">
     <div class="marketing-nav">
-      <a class="marketing-brand" href="/">
-        <span class="marketing-brand__mark">AI</span>
+      <a class="marketing-brand" href="/?lang=<%= selectedLanguage %>">
+        <span class="marketing-brand__mark"><%- include('../partials/brand-mark', { markClass: 'brand-mark-svg' }) %></span>
         <span><%= appName %></span>
       </a>
-      <div class="marketing-nav__actions">
-        <a class="btn btn-outline-dark" href="/login">Login</a>
-        <a class="btn btn-warning" href="/register">Coba Gratis</a>
+
+      <div class="marketing-nav__cluster">
+        <div class="marketing-language-switch" aria-label="<%= home.languageLabel %>">
+          <a
+            class="marketing-language-switch__link <%= selectedLanguage === 'id' ? 'is-active' : '' %>"
+            href="/?lang=id"
+          >ID</a>
+          <a
+            class="marketing-language-switch__link <%= selectedLanguage === 'en' ? 'is-active' : '' %>"
+            href="/?lang=en"
+          >EN</a>
+        </div>
+
+        <div class="marketing-nav__actions">
+          <a class="btn btn-outline-dark" href="/login"><%= home.navLogin %></a>
+          <a class="btn btn-warning" href="/register"><%= home.navRegister %></a>
+        </div>
       </div>
     </div>
 
     <div class="marketing-hero__content">
       <div class="marketing-hero__copy">
-        <span class="eyebrow">Built for Indonesia creator economy</span>
-        <h1>Ubah video panjang jadi short clip siap upload dalam workflow yang rapi.</h1>
-        <p>
-          Creator Studio AI membantu tim creator, agency, podcaster, dan UMKM memotong video panjang menjadi clip
-          vertikal dengan analisis hook, ranking viral score, subtitle, workflow review, dan render pipeline yang bisa
-          diandalkan.
-        </p>
+        <span class="eyebrow"><%= home.heroEyebrow %></span>
+        <h1><%= home.heroTitle %></h1>
+        <p><%= home.heroDescription %></p>
+
         <div class="marketing-hero__cta">
-          <a class="btn btn-warning btn-lg" href="/register">Mulai Workspace</a>
-          <a class="btn btn-outline-dark btn-lg" href="/login">Masuk ke Dashboard</a>
+          <a class="btn btn-warning btn-lg" href="/register"><%= home.heroPrimaryCta %></a>
+          <a class="btn btn-outline-dark btn-lg" href="/login"><%= home.heroSecondaryCta %></a>
         </div>
+
+        <div class="marketing-proofbar">
+          <% home.previewSteps.forEach((step) => { %>
+            <span><%= step %></span>
+          <% }) %>
+        </div>
+
+        <p class="marketing-hero__proof"><%= home.heroProof %></p>
+
         <ul class="marketing-points">
-          <li>Analisis kandidat clip dari video panjang</li>
-          <li>Progress job yang transparan dan durable</li>
-          <li>Review hasil clipping sebelum publish</li>
+          <% home.heroPoints.forEach((point) => { %>
+            <li><%= point %></li>
+          <% }) %>
         </ul>
       </div>
 
       <div class="marketing-hero__preview">
         <div class="marketing-preview-card">
-          <div class="marketing-preview-card__label">Auto Clipping Workflow</div>
-          <h2>Pipeline creator yang fokus ke hasil, bukan chaos file.</h2>
+          <div class="marketing-preview-card__label"><%= home.previewLabel %></div>
+          <h2><%= home.previewTitle %></h2>
+
+          <div class="marketing-preview-pillrow">
+            <% home.previewSteps.forEach((step) => { %>
+              <span><%= step %></span>
+            <% }) %>
+          </div>
+
           <div class="marketing-preview-progress">
-            <span>Transcription</span>
+            <span>Source ingest & prep</span>
             <div class="progress progress-lg"><div class="progress-bar bg-success" style="width: 100%"></div></div>
           </div>
           <div class="marketing-preview-progress">
-            <span>Candidate Ranking</span>
+            <span>Candidate analysis & scoring</span>
             <div class="progress progress-lg"><div class="progress-bar bg-warning" style="width: 82%"></div></div>
           </div>
           <div class="marketing-preview-progress">
-            <span>Render Output</span>
-            <div class="progress progress-lg"><div class="progress-bar" style="width: 68%"></div></div>
+            <span>Render, subtitles, and exports</span>
+            <div class="progress progress-lg"><div class="progress-bar" style="width: 100%"></div></div>
           </div>
+
           <div class="marketing-preview-metrics">
-            <article><strong>10</strong><span>Kandidat clip</span></article>
-            <article><strong>5</strong><span>Best clip siap review</span></article>
-            <article><strong>9:16</strong><span>Siap Shorts/Reels/TikTok</span></article>
+            <% home.previewMetrics.forEach((metric) => { %>
+              <article>
+                <strong><%= metric.value %></strong>
+                <span><%= metric.label %></span>
+              </article>
+            <% }) %>
           </div>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="marketing-section marketing-section--trust">
+    <div class="marketing-trust-panel">
+      <div class="marketing-trust-panel__copy">
+        <span class="eyebrow">Creator Studio AI</span>
+        <h2><%= home.trustTitle %></h2>
+      </div>
+      <div class="marketing-trust-list">
+        <% home.trustItems.forEach((item) => { %>
+          <span><%= item %></span>
+        <% }) %>
       </div>
     </div>
   </section>
 
   <section class="marketing-section">
     <div class="marketing-section__header">
-      <span class="eyebrow">Kenapa Creator Studio AI</span>
-      <h2>Bukan cuma upload video, tapi workspace clipping end-to-end.</h2>
+      <span class="eyebrow"><%= home.whyEyebrow %></span>
+      <h2><%= home.whyTitle %></h2>
     </div>
     <div class="marketing-grid">
-      <article class="marketing-card">
-        <h3>Analisis clip yang lebih editorial</h3>
-        <p>Cari momen hook, konflik, insight, dan payoff yang paling layak dijadikan short-form content.</p>
-      </article>
-      <article class="marketing-card">
-        <h3>Job progress yang jelas</h3>
-        <p>Lihat status per tahap, event log, retry, dan review output tanpa kehilangan jejak proses.</p>
-      </article>
-      <article class="marketing-card">
-        <h3>Siap untuk tim creator</h3>
-        <p>Enak untuk workflow creator solo, editor, agency, sampai admin internal yang butuh kontrol operasional.</p>
-      </article>
+      <% home.whyCards.forEach((card) => { %>
+        <article class="marketing-card">
+          <h3><%= card.title %></h3>
+          <p><%= card.description %></p>
+        </article>
+      <% }) %>
+    </div>
+  </section>
+
+  <section class="marketing-section marketing-section--compact">
+    <div class="marketing-section__header">
+      <span class="eyebrow"><%= home.workflowEyebrow %></span>
+      <h2><%= home.workflowTitle %></h2>
+    </div>
+    <div class="marketing-feature-list">
+      <% home.workflowSteps.forEach((step) => { %>
+        <article class="marketing-feature marketing-feature--step">
+          <span class="marketing-feature__step-index"><%= step.index %></span>
+          <strong><%= step.title %></strong>
+          <p><%= step.description %></p>
+        </article>
+      <% }) %>
+    </div>
+  </section>
+
+  <section class="marketing-section marketing-section--tools">
+    <div class="marketing-section__header marketing-section__header--split">
+      <div>
+        <span class="eyebrow"><%= home.toolsEyebrow %></span>
+        <h2><%= home.toolsTitle %></h2>
+      </div>
+      <p><%= home.toolsDescription %></p>
+    </div>
+    <div class="marketing-tools-grid">
+      <% home.tools.forEach((tool, index) => { %>
+        <article class="marketing-tool-card <%= index === 0 ? 'marketing-tool-card--primary' : 'marketing-tool-card--secondary' %>">
+          <span class="marketing-tool-card__eyebrow"><%= tool.eyebrow %></span>
+          <h3><%= tool.title %></h3>
+          <p><%= tool.description %></p>
+          <ul class="marketing-tool-card__list">
+            <% tool.bullets.forEach((bullet) => { %>
+              <li><%= bullet %></li>
+            <% }) %>
+          </ul>
+          <div class="marketing-tool-card__footer">
+            <a class="btn <%= index === 0 ? 'btn-warning' : 'btn-outline-dark' %>" href="<%= index === 0 ? '/app/tools/auto-clipping' : '/app/tools/text-to-speech' %>"><%= tool.cta %></a>
+          </div>
+        </article>
+      <% }) %>
+    </div>
+  </section>
+
+  <section class="marketing-section marketing-section--showcase">
+    <div class="marketing-section__header marketing-section__header--centered">
+      <span class="eyebrow"><%= home.showcaseEyebrow %></span>
+      <h2><%= home.showcaseTitle %></h2>
+      <p><%= home.showcaseDescription %></p>
+    </div>
+    <div class="marketing-showcase-track">
+      <% home.showcaseSlides.forEach((slide, index) => { %>
+        <article class="marketing-showcase-card">
+          <div class="marketing-showcase-card__frame">
+            <div class="marketing-showcase-card__badge"><%= slide.badge %></div>
+            <div class="marketing-showcase-card__video">
+              <div class="marketing-showcase-card__play">▶</div>
+              <div class="marketing-showcase-card__subtitle">
+                <span><%= index === 0 ? 'MENGHILANGKAN ADAB' : index === 1 ? 'INI KAKINYA DIPEGANGIN' : 'LOH, LU BAYANGIN, GUYS.' %></span>
+              </div>
+              <div class="marketing-showcase-card__footerbar">
+                <span>Putar & lihat detail</span>
+              </div>
+            </div>
+          </div>
+          <div class="marketing-showcase-card__meta">
+            <strong><%= slide.title %></strong>
+            <p><%= slide.subtitle %></p>
+          </div>
+        </article>
+      <% }) %>
     </div>
   </section>
 
   <section class="marketing-section marketing-section--alt">
     <div class="marketing-section__header">
-      <span class="eyebrow">Use Cases</span>
-      <h2>Cocok untuk konten edukasi, podcast, bisnis, politik, sampai personal brand.</h2>
+      <span class="eyebrow"><%= home.useCasesEyebrow %></span>
+      <h2><%= home.useCasesTitle %></h2>
     </div>
     <div class="marketing-grid marketing-grid--wide">
-      <article class="marketing-card">
-        <h3>Podcast & wawancara</h3>
-        <p>Temukan jawaban paling tajam, debat paling menarik, dan momen yang bikin orang berhenti scroll.</p>
-      </article>
-      <article class="marketing-card">
-        <h3>Konten edukasi & bisnis</h3>
-        <p>Potong insight yang padat, bisa berdiri sendiri, dan punya CTA kuat untuk komentar atau save.</p>
-      </article>
-      <article class="marketing-card">
-        <h3>Agency & media team</h3>
-        <p>Workflow clipping yang lebih rapi untuk review, retry, dan scaling produksi clip harian.</p>
-      </article>
-      <article class="marketing-card">
-        <h3>UMKM & creator Indonesia</h3>
-        <p>Bikin proses repurpose konten panjang jadi lebih cepat tanpa kehilangan rasa editorial.</p>
-      </article>
+      <% home.useCases.forEach((card) => { %>
+        <article class="marketing-card">
+          <h3><%= card.title %></h3>
+          <p><%= card.description %></p>
+        </article>
+      <% }) %>
+    </div>
+  </section>
+
+  <section class="marketing-section marketing-section--faq">
+    <div class="marketing-faq-shell">
+      <div class="marketing-faq-copy">
+        <span class="eyebrow"><%= home.faqEyebrow %></span>
+        <h2><%= home.faqTitle %></h2>
+        <p><%= home.faqDescription %></p>
+      </div>
+      <div class="marketing-faq-list">
+        <% home.faqs.forEach((item, index) => { %>
+          <details class="marketing-faq-item" <%= index === 0 ? 'open' : '' %>>
+            <summary>
+              <span><%= item.question %></span>
+              <span class="marketing-faq-item__icon">+</span>
+            </summary>
+            <div class="marketing-faq-item__body">
+              <p><%= item.answer %></p>
+            </div>
+          </details>
+        <% }) %>
+      </div>
+    </div>
+  </section>
+
+  <section class="marketing-section marketing-section--cta">
+    <div class="marketing-cta-panel">
+      <div>
+        <span class="eyebrow"><%= home.ctaEyebrow %></span>
+        <h2><%= home.ctaTitle %></h2>
+        <p><%= home.ctaDescription %></p>
+      </div>
+      <div class="marketing-cta-panel__actions">
+        <a class="btn btn-warning btn-lg" href="/register"><%= home.ctaPrimary %></a>
+        <a class="btn btn-outline-light btn-lg" href="/login"><%= home.ctaSecondary %></a>
+      </div>
     </div>
   </section>
 </main>

@@ -38,6 +38,7 @@ def build_candidate_analyzer_system_prompt() -> str:
         "Score candidates conservatively and use penalties aggressively when the clip has slow setup, weak ending, unclear context, awkward cut boundaries, or generic packaging. "
         "Treat spoken dialogue, narration, explanation, argument, or personal story as mandatory editorial anchors. "
         "If a transcript region contains only music markers, empty filler, or non-verbal noise, do not return it as a candidate. "
+        "For hook_second, main_point_second, and punchline_second, always return seconds relative to the start of the selected clip, not absolute timestamps from the full source video. "
         "Hook text should be short, sharp, and ideally feel like a curiosity gap rather than a generic CTA. "
         "Keep safety notes concise and include them only when needed. "
         "Score candidates honestly. Do not inflate scores across the board. "

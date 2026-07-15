@@ -1,5 +1,5 @@
 <aside class="sidebar">
-  <a class="brand" href="/app/dashboard"><span class="brand-mark">C</span><span><%= appName %></span></a>
+  <a class="brand" href="/app/dashboard"><span class="brand-mark"><%- include('./brand-mark', { markClass: 'brand-mark-svg' }) %></span><span><%= appName %></span></a>
   <nav class="nav flex-column gap-1 mt-4">
     <a class="nav-link <%= path === '/app/dashboard' ? 'active' : '' %>" href="/app/dashboard">Dashboard</a>
     <a class="nav-link <%= path.includes('/app/tools') ? 'active' : '' %>" href="/app/tools/auto-clipping">Auto Clipping</a>

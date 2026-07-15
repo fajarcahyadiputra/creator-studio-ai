@@ -1,10 +1,30 @@
 <!doctype html>
-<html lang="en">
+<html lang="<%= typeof pageLang === 'string' && pageLang.trim().length > 0 ? pageLang : 'en' %>">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="<%= csrfToken ?? '' %>">
+  <meta name="description" content="<%= typeof metaDescription === 'string' && metaDescription.trim().length > 0 ? metaDescription : 'Creator Studio AI membantu creator Indonesia mengubah video panjang menjadi short clip, subtitle, dan workflow konten yang lebih rapi.' %>">
+  <meta name="keywords" content="<%= typeof metaKeywords === 'string' && metaKeywords.trim().length > 0 ? metaKeywords : 'auto clipping indonesia, ai clipping, subtitle generator indonesia, creator workflow, youtube shorts ai, tiktok clip ai, reels clip ai' %>">
+  <meta name="robots" content="<%= typeof metaRobots === 'string' && metaRobots.trim().length > 0 ? metaRobots : 'index,follow' %>">
+  <meta name="theme-color" content="#0b1220">
   <title><%= title %> - <%= typeof appName === 'string' && appName.trim().length > 0 ? appName : 'Creator AI SaaS' %></title>
+  <meta property="og:type" content="<%= typeof ogType === 'string' && ogType.trim().length > 0 ? ogType : 'website' %>">
+  <meta property="og:title" content="<%= typeof ogTitle === 'string' && ogTitle.trim().length > 0 ? ogTitle : title %>">
+  <meta property="og:description" content="<%= typeof ogDescription === 'string' && ogDescription.trim().length > 0 ? ogDescription : (typeof metaDescription === 'string' && metaDescription.trim().length > 0 ? metaDescription : 'Creator Studio AI membantu creator Indonesia mengubah video panjang menjadi short clip, subtitle, dan workflow konten yang lebih rapi.') %>">
+  <% if (typeof canonicalUrl === 'string' && canonicalUrl.trim().length > 0) { %>
+    <link rel="canonical" href="<%= canonicalUrl %>">
+    <meta property="og:url" content="<%= canonicalUrl %>">
+  <% } %>
+  <% if (typeof ogImage === 'string' && ogImage.trim().length > 0) { %>
+    <meta property="og:image" content="<%= ogImage %>">
+  <% } %>
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="<%= typeof twitterTitle === 'string' && twitterTitle.trim().length > 0 ? twitterTitle : (typeof ogTitle === 'string' && ogTitle.trim().length > 0 ? ogTitle : title) %>">
+  <meta name="twitter:description" content="<%= typeof twitterDescription === 'string' && twitterDescription.trim().length > 0 ? twitterDescription : (typeof ogDescription === 'string' && ogDescription.trim().length > 0 ? ogDescription : (typeof metaDescription === 'string' && metaDescription.trim().length > 0 ? metaDescription : 'Creator Studio AI membantu creator Indonesia mengubah video panjang menjadi short clip, subtitle, dan workflow konten yang lebih rapi.')) %>">
+  <% if (typeof ogImage === 'string' && ogImage.trim().length > 0) { %>
+    <meta name="twitter:image" content="<%= ogImage %>">
+  <% } %>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css">
 </head>

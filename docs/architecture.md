@@ -65,6 +65,8 @@ Uploaded media lands in object storage first. The Node upload flow only validate
 
 The same boundary now extends into the early Phase 2 auto-clipping pipeline. When a job does not include precomputed `analysis_inputs`, the Python workflow can fetch a validated media asset context, extract a stable WAV audio artifact, run transcription, and derive minimal transcript-first analysis inputs before candidate ranking begins.
 
+Candidate analysis runtime is now configurable. New jobs can run in `openai_then_heuristic`, `heuristic_then_openai`, or `heuristic` mode. The heuristic analyzer is local Python logic rather than another remote provider, but the provider boundary remains adapter-based so OpenAI-first scoring can still be replaced or extended later.
+
 ## Multi-tenancy
 
 The initial model uses a shared database and schema. Every tenant-owned query includes `userId` or traverses a tenant-owned aggregate. Signed media URLs are generated only after an ownership or admin-permission check.

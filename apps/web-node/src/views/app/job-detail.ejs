@@ -431,8 +431,26 @@
                           </select>
                         </div>
                         <div class="col-md-3">
+                          <label class="form-label">Framing detection mode</label>
+                          <select class="form-select" name="framing_detection_mode">
+                            <% ['COMBINED','TRANSCRIPT_ONLY','FACE_DETECTION_ONLY'].forEach((value) => { %>
+                              <option value="<%= value %>" <%= outputSummary.requestSnapshot.visual.framingDetectionMode === value ? 'selected' : '' %>><%= value %></option>
+                            <% }) %>
+                          </select>
+                        </div>
+                        <div class="col-md-3">
                           <label class="form-label">Subtitle language</label>
                           <input class="form-control" name="subtitle_language" value="<%= outputSummary.requestSnapshot.subtitle.language ?? 'id' %>" required>
+                        </div>
+                        <div class="col-md-3 form-check d-flex align-items-end">
+                          <div>
+                            <input class="form-check-input" type="checkbox" name="split_on_multi_face" id="split_on_multi_face_regenerate" <%= outputSummary.requestSnapshot.visual.splitOnMultiFace !== false ? 'checked' : '' %>>
+                            <label class="form-check-label" for="split_on_multi_face_regenerate">Auto split on multi-face</label>
+                          </div>
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label">Split min face count</label>
+                          <input class="form-control" name="split_min_face_count" type="number" min="1" max="6" step="1" value="<%= outputSummary.requestSnapshot.visual.splitMinFaceCount ?? 2 %>">
                         </div>
                         <div class="col-md-3">
                           <label class="form-label">Subtitle primary format</label>
@@ -1186,6 +1204,11 @@
                 <% if (output.subtitleAvailable) { %><span>Subtitle <%= output.subtitleFormats.join(', ') %></span><% } %>
                 <% if (output.metadataAvailable) { %><span>Metadata</span><% } %>
                 <% if (output.validationStatus) { %><span>Validation <%= output.validationStatus %></span><% } %>
+                <% if (output.cropStrategy) { %><span>Crop <%= output.cropStrategy %></span><% } %>
+                <% if (output.framingDetectionMode) { %><span>Framing <%= output.framingDetectionMode %></span><% } %>
+                <% if (output.splitFrameEnabled === true) { %><span>Split frame on</span><% } %>
+                <% if (output.splitFrameEnabled === false) { %><span>Split frame off</span><% } %>
+                <% if (typeof output.detectedFaceCount === 'number') { %><span>Faces <%= output.detectedFaceCount %></span><% } %>
               </div>
               <div class="clip-output-review-grid mb-3">
                 <article class="clip-output-review-card">
@@ -1218,6 +1241,43 @@
                   <span>Subtitle cues</span>
                   <strong><%= output.subtitleCueCount ?? 0 %></strong>
                   <p><%= output.subtitleExportReady === true ? 'Export siap dipakai' : 'Subtitle export belum siap' %></p>
+                </article>
+                <article class="clip-output-review-card">
+                  <span>Framing</span>
+                  <strong><%= output.framingDetectionMode ?? 'Unknown' %></strong>
+                  <p>
+                    <% if (output.splitFrameEnabled === true) { %>
+                      Split aktif
+                    <% } else if (output.splitFrameEnabled === false) { %>
+                      Split nonaktif
+                    <% } else { %>
+                      Mode split belum tercatat
+                    <% } %>
+                    <% if (typeof output.splitMinFaceCount === 'number') { %>
+                      | Min face <%= output.splitMinFaceCount %>
+                    <% } %>
+                  </p>
+                </article>
+                <article class="clip-output-review-card">
+                  <span>Face layout</span>
+                  <strong>
+                    <% if (typeof output.detectedFaceCount === 'number') { %>
+                      <%= output.detectedFaceCount %> face
+                    <% } else { %>
+                      Unknown
+                    <% } %>
+                  </strong>
+                  <p>
+                    <% if (typeof output.averageFaceCount === 'number') { %>
+                      Avg <%= output.averageFaceCount.toFixed(1) %>
+                    <% } %>
+                    <% if (output.singleFaceAnchor) { %>
+                      <%= typeof output.averageFaceCount === 'number' ? ' | ' : '' %>Anchor <%= output.singleFaceAnchor %>
+                    <% } %>
+                    <% if (output.splitFrameSupported === true) { %>
+                      <%= (typeof output.averageFaceCount === 'number' || output.singleFaceAnchor) ? ' | ' : '' %>Split supported
+                    <% } %>
+                  </p>
                 </article>
               </div>
               <div class="candidate-tags mb-3">

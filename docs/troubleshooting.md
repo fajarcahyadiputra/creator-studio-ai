@@ -74,6 +74,30 @@ Notes:
 - The Python worker now uses more conservative `yt-dlp` download settings for long-form source imports.
 - TTS segmentation now falls back to `local_heuristic` if the OpenAI host cannot be resolved, so DNS issues should no longer hard-fail the entire TTS workflow.
 
+## Auto-clipping fails during `ANALYZING_CLIP_CANDIDATES`
+
+Common symptoms:
+
+- `Activity task timed out`
+- `asyncio.exceptions.CancelledError`
+- the job fails during `ANALYZING_CLIP_CANDIDATES` even though OpenAI or heuristic scoring had already started
+
+Root cause:
+
+- Temporal cancelled the analyzer activity because the provider wait time exceeded the effective activity timeout or the activity was not heartbeating frequently enough while waiting on the provider.
+
+Check:
+
+- `ANALYZER_TIMEOUT_SECONDS`
+- `OPENAI_TIMEOUT_SECONDS`
+- current analyzer runtime mode in admin settings
+- recent `ai-media-python` logs for provider latency and fallback behavior
+
+Important:
+
+- changing `.env` alone is not enough for running containers; recreate or reload the relevant worker containers so new timeout values are actually applied
+- regenerated jobs snapshot the analyzer runtime at submission time, so older jobs do not retroactively pick up newer analyzer settings
+
 ## Upload part fails with signature mismatch
 
 Confirm the browser can reach the same S3 endpoint used when signing. Development may require `S3_PUBLIC_ENDPOINT=http://localhost:9000` while containers use `S3_ENDPOINT=http://minio:9000`.

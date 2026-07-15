@@ -47,11 +47,13 @@ Base path: `/api/v1`
 - `POST /jobs/:jobId/candidates/:candidateId/selection`
 - `POST /jobs/:jobId/render-queue`
 - `POST /jobs/:jobId/retry`
+- `DELETE /jobs/:jobId`
 
 ## Auto clipping
 
 - `POST /auto-clipping/jobs`
 - `POST /auto-clipping/jobs/:jobId/duplicate`
+- `POST /auto-clipping/jobs/:jobId/regenerate`
 
 Create, retry, duplicate, publishing, and upload-initiation endpoints require `Idempotency-Key`.
 
@@ -79,13 +81,25 @@ Returns the structured Phase 2 output payload attached to a job.
       }
     ],
     "output_summary": {
-      "analysis_version": "2.0",
-      "source_summary": "Ringkasan isi sumber yang dipakai analyzer.",
-      "candidate_count": 3,
-      "analyzer": {
-        "analysis_mode": "openai",
-        "prompt_version": "phase2-candidate-analyzer-v1"
-      },
+        "analysis_version": "2.4",
+        "source_summary": "Ringkasan isi sumber yang dipakai analyzer.",
+        "candidate_count": 3,
+        "analyzer": {
+          "analysis_mode": "heuristic",
+          "analysis_mode_label": "Python heuristic",
+          "configured_mode": "openai_then_heuristic",
+          "provider": "openai",
+          "provider_label": "OpenAI",
+          "model": "gpt-5.4-mini",
+          "model_label": "GPT-5.4 Mini",
+          "attempted_provider": "openai",
+          "attempted_provider_label": "OpenAI",
+          "attempted_model": "gpt-5.4-mini",
+          "latency_ms": 1853.51,
+          "prompt_version": "phase2-candidate-analyzer-v8",
+          "fallback_reason": "HTTPStatusError",
+          "fallback_trigger": "provider_error"
+        },
       "candidates": [
         {
           "candidate_id": "candidate-01-abcdef12",
@@ -171,6 +185,14 @@ Returns a structured JSON export index for one clip output and all of its curren
 ### `POST /jobs/:jobId/render-queue`
 
 Creates pending `ClipOutput` rows for selected candidates that do not already have one. This queues render preparation metadata only; it does not render the clip inside Node.js.
+
+### `POST /auto-clipping/jobs/:jobId/regenerate`
+
+Re-runs an existing auto-clipping job in place using the latest regenerate payload. The request can override strategy, subtitle, visual, and render settings. Existing generated clip outputs for that job are replaced by the new regenerate attempt instead of creating a brand-new job.
+
+### `DELETE /jobs/:jobId`
+
+Deletes a job and schedules cleanup for generated output artifacts associated with that job. This is intended for user-initiated removal of completed, failed, or abandoned generated output history.
 
 ## Internal worker API
 

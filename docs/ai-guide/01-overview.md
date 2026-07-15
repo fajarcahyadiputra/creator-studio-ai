@@ -1,6 +1,6 @@
 # Overview
 
-This repository is a monorepo foundation for a creator-focused media and AI platform. The current implementation is Phase 1: durable platform scaffolding, not full media rendering.
+This repository is a monorepo for a creator-focused media and AI platform. The current implementation includes the Phase 1 platform foundation plus a working Phase 2 auto-clipping pipeline.
 
 ## Current Project State
 
@@ -11,24 +11,25 @@ Implemented:
 - Multipart browser upload directly to MinIO/S3 through presigned URLs.
 - Job records, attempts, stages, events, cancel/retry/duplicate commands.
 - Temporal workflow startup from Node.
-- Python Temporal worker foundation.
+- Python Temporal workers for media and AI stages.
 - Progress callbacks from Python to Node internal API.
 - PostgreSQL-backed progress projection with SSE updates.
 - Media-ingestion service boundary with SSRF-aware URL validation.
+- FFprobe/media validation and FFmpeg audio extraction.
+- Faster-Whisper transcription with persisted normalized transcript payloads.
+- Scene/silence enrichment and candidate-boundary normalization.
+- OpenAI structured clip-candidate analysis with Python heuristic fallback/runtime switching.
+- Final clip rendering, subtitle generation, subtitle burn-in, and clip-output persistence.
+- Artifact export indexes, regenerate flows, and job detail playback/download UX.
 - Forward-looking Prisma schema for media, AI providers, credentials, usage, publishing, notifications, quotas, and audit.
 - Docker Compose development stack and monitoring baseline.
 
 Not implemented yet:
 
-- Real FFprobe/FFmpeg auto-clipping pipeline.
-- Faster Whisper transcription.
-- Scene/silence detection.
-- Reframing and subtitle rendering.
-- LLM clip analysis.
 - Official publishing flow.
 - Billing/quota settlement business behavior.
-
-The Phase 1 auto-clipping workflow deliberately ends with `NEEDS_REVIEW`.
+- Full social publishing/OAuth lifecycle.
+- Comprehensive end-to-end regression coverage for every long-running worker path.
 
 ## Repository Map
 
@@ -63,4 +64,4 @@ Important root files:
 
 ## Last Known Validation
 
-See `VALIDATION.md`. At packaging time, TypeScript typecheck/build, Node tests, Python tests, Ruff, strict mypy, Prisma validation, and migration validation passed. Full Docker Compose integration boot was not executed in that environment.
+See `VALIDATION.md`. Validation status changes more often now because the repository includes real worker-driven auto-clipping and TTS flows. Treat `VALIDATION.md` plus recent troubleshooting notes as the current baseline, especially for long-running provider, Docker, and FFmpeg-related regressions.

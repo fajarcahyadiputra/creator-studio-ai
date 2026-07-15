@@ -107,6 +107,9 @@ interface RegenerateAutoClipInput {
     | "BLURRED_BACKGROUND"
     | "MANUAL";
   layout_template: "STANDARD" | "PODCAST_SPOTLIGHT_9X16";
+  framing_detection_mode: "COMBINED" | "TRANSCRIPT_ONLY" | "FACE_DETECTION_ONLY";
+  split_on_multi_face: boolean;
+  split_min_face_count?: number;
   subtitle_enabled: boolean;
   subtitle_language: string;
   subtitle_burn_in: boolean;
@@ -309,6 +312,7 @@ interface RenderSettingsSource {
     contentCategory: string;
     metadataSuggestions: unknown;
     analyzerMetadata: unknown;
+    speakerIds?: unknown;
   };
 }
 
@@ -1885,7 +1889,10 @@ function buildRegeneratedAutoClippingInput(
       crop_strategy: input.crop_strategy,
       settings: compactRecord({
         ...currentVisualSettings,
-        layout_template: input.layout_template
+        layout_template: input.layout_template,
+        framing_detection_mode: input.framing_detection_mode,
+        split_on_multi_face: input.split_on_multi_face,
+        split_min_face_count: input.split_min_face_count
       })
     },
     subtitle: {
@@ -2377,6 +2384,10 @@ export function buildRenderSettings(source: RenderSettingsSource): Record<string
     !Array.isArray(source.candidate.analyzerMetadata)
       ? (source.candidate.analyzerMetadata as Record<string, unknown>)
       : {};
+  const content =
+    snapshot.content && typeof snapshot.content === "object" && !Array.isArray(snapshot.content)
+      ? (snapshot.content as Record<string, unknown>)
+      : {};
   const normalizedSubtitle = normalizeSubtitleRenderSettings(subtitle);
 
   return {
@@ -2386,13 +2397,24 @@ export function buildRenderSettings(source: RenderSettingsSource): Record<string
       target_platform: strategy.target_platform ?? null,
       objective: strategy.objective ?? null
     },
+    content: {
+      speaker_count:
+        typeof content.speaker_count === "number"
+          ? content.speaker_count
+          : typeof content.speaker_count === "string" && content.speaker_count.trim().length > 0
+            ? Number(content.speaker_count)
+            : null
+    },
     candidate: {
       candidate_id: source.candidate.candidateExternalId,
       clip_candidate_id: source.candidate.id,
       start_ms: source.candidate.startMs.toString(),
       end_ms: source.candidate.endMs.toString(),
       duration_ms: source.candidate.durationMs.toString(),
-      content_category: source.candidate.contentCategory
+      content_category: source.candidate.contentCategory,
+      speaker_ids: Array.isArray(source.candidate.speakerIds)
+        ? source.candidate.speakerIds.filter((value): value is string => typeof value === "string")
+        : []
     },
     metadata: {
       suggested_caption:

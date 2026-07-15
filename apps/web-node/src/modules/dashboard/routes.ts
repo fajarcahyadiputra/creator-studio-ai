@@ -369,6 +369,22 @@ dashboardRouter.get(
           !Array.isArray(qualityValidation.observed)
             ? (qualityValidation.observed as Record<string, unknown>)
             : {};
+        const faceLayout =
+          qualityReport.face_layout &&
+          typeof qualityReport.face_layout === "object" &&
+          !Array.isArray(qualityReport.face_layout)
+            ? (qualityReport.face_layout as Record<string, unknown>)
+            : {};
+        const renderPlan =
+          qualityReport.render_plan &&
+          typeof qualityReport.render_plan === "object" &&
+          !Array.isArray(qualityReport.render_plan)
+            ? (qualityReport.render_plan as Record<string, unknown>)
+            : {};
+        const visualSettings =
+          visual.settings && typeof visual.settings === "object" && !Array.isArray(visual.settings)
+            ? (visual.settings as Record<string, unknown>)
+            : {};
         const finalObserved =
           qualityObserved.final &&
           typeof qualityObserved.final === "object" &&
@@ -439,6 +455,38 @@ dashboardRouter.get(
           subtitleLanguages: output.subtitles.map((subtitle) => subtitle.language),
           subtitleBurnedIn: output.subtitles.some((subtitle) => subtitle.isBurnedIn),
           aspectRatio: typeof visual.aspect_ratio === "string" ? visual.aspect_ratio : null,
+          cropStrategy:
+            typeof renderPlan.crop_strategy === "string"
+              ? renderPlan.crop_strategy
+              : typeof visual.crop_strategy === "string"
+                ? visual.crop_strategy
+                : null,
+          framingDetectionMode:
+            typeof visualSettings.framing_detection_mode === "string"
+              ? visualSettings.framing_detection_mode
+              : null,
+          splitOnMultiFace:
+            typeof visualSettings.split_on_multi_face === "boolean"
+              ? visualSettings.split_on_multi_face
+              : null,
+          splitMinFaceCount:
+            typeof visualSettings.split_min_face_count === "number"
+              ? visualSettings.split_min_face_count
+              : null,
+          splitFrameEnabled:
+            typeof renderPlan.crop_mode === "string"
+              ? renderPlan.crop_mode === "split_frame"
+              : null,
+          speakerCount:
+            typeof renderPlan.speaker_count === "number" ? renderPlan.speaker_count : null,
+          detectedFaceCount:
+            typeof faceLayout.max_face_count === "number" ? faceLayout.max_face_count : null,
+          averageFaceCount:
+            typeof faceLayout.average_face_count === "number" ? faceLayout.average_face_count : null,
+          singleFaceAnchor:
+            typeof faceLayout.single_face_anchor === "string" ? faceLayout.single_face_anchor : null,
+          splitFrameSupported:
+            typeof faceLayout.supports_split_frame === "boolean" ? faceLayout.supports_split_frame : null,
           targetPlatform:
             renderSettings.strategy &&
             typeof renderSettings.strategy === "object" &&
@@ -754,7 +802,13 @@ dashboardRouter.get(
               visual: {
                 aspectRatio: toOptionalString(visualConfig.aspect_ratio),
                 cropStrategy: toOptionalString(visualConfig.crop_strategy),
-                layoutTemplate: toOptionalString(toJsonRecord(visualConfig.settings).layout_template) ?? "STANDARD"
+                layoutTemplate: toOptionalString(toJsonRecord(visualConfig.settings).layout_template) ?? "STANDARD",
+                framingDetectionMode:
+                  toOptionalString(toJsonRecord(visualConfig.settings).framing_detection_mode) ?? "COMBINED",
+                splitOnMultiFace:
+                  toOptionalBoolean(toJsonRecord(visualConfig.settings).split_on_multi_face) ?? true,
+                splitMinFaceCount:
+                  toOptionalNumber(toJsonRecord(visualConfig.settings).split_min_face_count) ?? 2
               },
               subtitle: {
                 enabled: toOptionalBoolean(subtitleConfig.enabled),
@@ -1222,6 +1276,9 @@ function buildAutoClipFormDefaults(
     subtitleMaxLines: 2,
     subtitleSafeMarginPercent: 8,
     layoutTemplate: "PODCAST_SPOTLIGHT_9X16",
+    framingDetectionMode: "COMBINED",
+    splitOnMultiFace: true,
+    splitMinFaceCount: 2,
     channelName: channelName?.trim() || "",
     channelTagline: channelTagline?.trim() || ""
   };
@@ -1327,7 +1384,19 @@ function mergeAutoClipDefaults(
     layoutTemplate:
       toStringValue(presetConfig.layout_template)
       ?? toStringValue(presetConfig.layoutTemplate)
-      ?? baseDefaults.layoutTemplate
+      ?? baseDefaults.layoutTemplate,
+    framingDetectionMode:
+      toStringValue(presetConfig.framing_detection_mode)
+      ?? toStringValue(presetConfig.framingDetectionMode)
+      ?? baseDefaults.framingDetectionMode,
+    splitOnMultiFace:
+      toOptionalBoolean(presetConfig.split_on_multi_face)
+      ?? toOptionalBoolean(presetConfig.splitOnMultiFace)
+      ?? baseDefaults.splitOnMultiFace,
+    splitMinFaceCount:
+      toNumberValue(presetConfig.split_min_face_count)
+      ?? toNumberValue(presetConfig.splitMinFaceCount)
+      ?? baseDefaults.splitMinFaceCount
   };
 }
 

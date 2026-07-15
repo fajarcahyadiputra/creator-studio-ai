@@ -792,6 +792,16 @@ if (autoClipForm) {
     setCheckboxValue("subtitle_burn_in", subtitle.burn_in);
     setFieldValue("subtitle_style", subtitle.style);
     setFieldValue("subtitle_font_family", subtitle.font_family);
+    setFieldValue("framing_detection_mode", config.framing_detection_mode || config.framingDetectionMode);
+    setCheckboxValue(
+      "split_on_multi_face",
+      typeof config.split_on_multi_face === "boolean"
+        ? config.split_on_multi_face
+        : typeof config.splitOnMultiFace === "boolean"
+          ? config.splitOnMultiFace
+          : undefined
+    );
+    setFieldValue("split_min_face_count", config.split_min_face_count || config.splitMinFaceCount);
   };
 
   const applyBrandKit = (brandKitId) => {
@@ -859,6 +869,7 @@ if (autoClipForm) {
     const subtitleEnabled = data.get("subtitle_enabled") === "on";
     const subtitleBurnIn = data.get("subtitle_burn_in") === "on";
     const subtitleWordHighlight = subtitleStyleUsesWordHighlight(subtitleStyle);
+    const framingDetectionMode = String(data.get("framing_detection_mode") || "COMBINED").trim();
     const packagingBrief = buildPackagingBriefFromStructuredFields(
       data,
       String(data.get("packaging_brief") || "").trim()
@@ -907,7 +918,12 @@ if (autoClipForm) {
         settings: {
           mode: data.get("advanced_mode") === "on" ? "ADVANCED" : "QUICK",
           layout_template: String(data.get("layout_template") || "STANDARD").trim() || "STANDARD",
-          brand_kit_id: String(data.get("brand_kit_id") || "").trim() || undefined
+          brand_kit_id: String(data.get("brand_kit_id") || "").trim() || undefined,
+          framing_detection_mode: framingDetectionMode,
+          split_on_multi_face: data.get("split_on_multi_face") === "on",
+          split_min_face_count: data.get("split_min_face_count")
+            ? Number(data.get("split_min_face_count"))
+            : undefined
         }
       },
         subtitle: {
@@ -1771,6 +1787,18 @@ function validateAutoClipPayload(payload) {
     && String(visualSettings.layout_template || "STANDARD") !== "STANDARD"
   ) {
     errors.push("visual.settings.layout_template hanya tersedia untuk aspect ratio 9:16");
+  }
+  if (
+    visualSettings.framing_detection_mode !== undefined
+    && !["COMBINED", "TRANSCRIPT_ONLY", "FACE_DETECTION_ONLY"].includes(String(visualSettings.framing_detection_mode))
+  ) {
+    errors.push("visual.settings.framing_detection_mode is invalid");
+  }
+  if (
+    visualSettings.split_min_face_count !== undefined
+    && (!Number.isInteger(visualSettings.split_min_face_count) || visualSettings.split_min_face_count < 1 || visualSettings.split_min_face_count > 6)
+  ) {
+    errors.push("visual.settings.split_min_face_count must be an integer between 1 and 6");
   }
 
   if (typeof subtitle.language !== "string" || subtitle.language.trim().length === 0) {

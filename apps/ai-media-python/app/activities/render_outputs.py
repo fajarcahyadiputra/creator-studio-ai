@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.activities.warning_events import emit_retry_warning
 from app.domain.contracts import ClipOutputResult, ClipRenderArtifactUpload, ClipRenderContext, TranscriptSegment
 from app.infrastructure.clip_output_client import ClipOutputClient
+from app.media.face_detection import FaceDetectionUnavailable, detect_faces_in_image, summarize_face_samples
 from app.media.ffmpeg import build_clip_render_command
 from app.activities.media_validation import run_ffprobe_json
 
@@ -84,6 +85,11 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
     clip_start_seconds = int(context.candidate.start_ms) / 1000
     clip_duration_seconds = max(int(context.candidate.duration_ms) / 1000, 0.001)
     candidate_metadata = _resolve_render_metadata(context.render_settings)
+    crop_strategy = _resolve_crop_strategy(context.render_settings)
+    speaker_count = _resolve_speaker_count(
+        render_settings=context.render_settings,
+        transcript_segments=context.transcript.segments if context.transcript else [],
+    )
 
     working_directory = Path(settings.TEMP_WORKDIR) / "clip-output-renders" / context.clip_output_id
     working_directory.mkdir(parents=True, exist_ok=True)
@@ -130,11 +136,21 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         if subtitle_burned_in or layout_template == "PODCAST_SPOTLIGHT_9X16":
             subtitle_path_for_burn_in = subtitle_ass_path
 
+    face_layout_summary = await _detect_face_layout_summary(
+        source=str(context.source_media.download_url),
+        clip_start_seconds=clip_start_seconds,
+        clip_duration_seconds=clip_duration_seconds,
+        working_directory=working_directory,
+        timeout_seconds=min(max(settings.MEDIA_PROBE_TIMEOUT_SECONDS, 20), 90),
+    )
+
     layout_options = _build_layout_options(
         layout_template=layout_template,
         render_settings=context.render_settings,
         candidate=context.candidate,
         metadata=candidate_metadata,
+        transcript_segments=context.transcript.segments if context.transcript else [],
+        face_layout_summary=face_layout_summary,
         working_directory=working_directory,
         channel_name_path=channel_name_path,
         channel_tagline_path=channel_tagline_path,
@@ -168,6 +184,7 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         subtitle_path=subtitle_path_for_burn_in,
         layout_template=layout_template,
         layout_options=layout_options,
+        crop_strategy=crop_strategy,
     )
     try:
         await _run_command_with_heartbeat(
@@ -248,6 +265,8 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if logo_fetch_warning:
         validation["warnings"].append(logo_fetch_warning)
+    if isinstance(face_layout_summary.get("warning"), str):
+        validation["warnings"].append(face_layout_summary["warning"])
 
     artifact_uploads = {upload.artifact: upload for upload in context.artifact_uploads}
     uploaded_artifacts: list[dict[str, Any]] = []
@@ -320,8 +339,10 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
             "height": height,
             "fps": fps,
             "subtitle_burned_in": subtitle_burned_in,
-            "crop_mode": "center_crop",
+            "crop_mode": "split_frame" if layout_options.get("split_frame_enabled") else "single_frame",
+            "crop_strategy": crop_strategy,
             "layout_template": layout_template,
+            "speaker_count": speaker_count,
         },
         "subtitle": {
             "format": subtitle_format if subtitle_path_for_upload else None,
@@ -339,6 +360,7 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         "artifacts": uploaded_artifacts,
         "metadata": candidate_metadata,
         "branding": layout_options.get("branding"),
+        "face_layout": face_layout_summary,
     }
     metadata_path.write_text(json.dumps(metadata_document, indent=2), encoding="utf-8")
     try:
@@ -477,6 +499,87 @@ def _resolve_subtitle_burned_in(render_settings: dict[str, Any]) -> bool:
     return False
 
 
+def _resolve_visual_settings(render_settings: dict[str, Any]) -> dict[str, Any]:
+    visual = render_settings.get("visual")
+    if not isinstance(visual, dict):
+        return {}
+    settings = visual.get("settings")
+    if not isinstance(settings, dict):
+        return {}
+    return settings
+
+
+def _resolve_crop_strategy(render_settings: dict[str, Any]) -> str:
+    visual = render_settings.get("visual")
+    if isinstance(visual, dict):
+        value = visual.get("crop_strategy")
+        if isinstance(value, str) and value.strip():
+            return value.strip().upper()
+        settings = visual.get("settings")
+        if isinstance(settings, dict):
+            nested_value = settings.get("crop_strategy")
+            if isinstance(nested_value, str) and nested_value.strip():
+                return nested_value.strip().upper()
+    return "AUTO_REFRAME"
+
+
+def _resolve_framing_detection_mode(render_settings: dict[str, Any]) -> str:
+    visual_settings = _resolve_visual_settings(render_settings)
+    value = visual_settings.get("framing_detection_mode")
+    if isinstance(value, str):
+        normalized = value.strip().upper()
+        if normalized in {"COMBINED", "TRANSCRIPT_ONLY", "FACE_DETECTION_ONLY"}:
+            return normalized
+    return "COMBINED"
+
+
+def _resolve_multi_face_split_enabled(render_settings: dict[str, Any]) -> bool:
+    visual_settings = _resolve_visual_settings(render_settings)
+    value = visual_settings.get("split_on_multi_face")
+    if isinstance(value, bool):
+        return value
+    return True
+
+
+def _resolve_split_min_face_count(render_settings: dict[str, Any]) -> int:
+    visual_settings = _resolve_visual_settings(render_settings)
+    value = visual_settings.get("split_min_face_count")
+    if isinstance(value, int) and 1 <= value <= 6:
+        return value
+    if isinstance(value, float) and 1 <= value <= 6:
+        return int(value)
+    return 2
+
+
+def _resolve_speaker_count(
+    *,
+    render_settings: dict[str, Any],
+    transcript_segments: list[TranscriptSegment],
+) -> int:
+    content = render_settings.get("content")
+    if isinstance(content, dict):
+        value = content.get("speaker_count")
+        if isinstance(value, int) and value > 0:
+            return value
+        if isinstance(value, float) and value > 0:
+            return int(value)
+
+    candidate = render_settings.get("candidate")
+    if isinstance(candidate, dict):
+        speaker_ids = candidate.get("speaker_ids")
+        if isinstance(speaker_ids, list):
+            normalized = [value for value in speaker_ids if isinstance(value, str) and value.strip()]
+            if normalized:
+                return len(set(normalized))
+
+    transcript_speakers = {
+        segment.speaker_label.strip()
+        for segment in transcript_segments
+        if isinstance(segment.speaker_label, str) and segment.speaker_label.strip()
+    }
+    return max(1, len(transcript_speakers))
+
+
 def _resolve_dimensions(aspect_ratio: str) -> tuple[int, int]:
     if aspect_ratio == "1:1":
         return (1080, 1080)
@@ -582,12 +685,99 @@ def _resolve_render_metadata(render_settings: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _detect_face_layout_summary(
+    *,
+    source: str,
+    clip_start_seconds: float,
+    clip_duration_seconds: float,
+    working_directory: Path,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    if clip_duration_seconds <= 0.5:
+        return {"status": "skipped", "reason": "clip_too_short"}
+
+    sample_count = max(3, min(8, int(round(clip_duration_seconds / 6)) + 2))
+    sample_offsets = _build_face_sample_offsets(clip_duration_seconds=clip_duration_seconds, sample_count=sample_count)
+    samples: list[list[dict[str, Any]]] = []
+
+    try:
+        for index, offset_seconds in enumerate(sample_offsets, start=1):
+            frame_path = working_directory / f"face-sample-{index}.jpg"
+            command = [
+                "ffmpeg",
+                "-hide_banner",
+                "-nostdin",
+                "-y",
+                "-ss",
+                f"{clip_start_seconds + offset_seconds:.3f}",
+                "-i",
+                source,
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=640:-2",
+                str(frame_path),
+            ]
+            await _run_command(command, timeout_seconds=min(timeout_seconds, 20))
+            if not frame_path.exists():
+                continue
+            detected_faces = detect_faces_in_image(frame_path)
+            samples.append(detected_faces)
+    except FaceDetectionUnavailable as error:
+        return {
+            "status": "unavailable",
+            "reason": "opencv_face_detector_unavailable",
+            "detection_backend": "none",
+            "sample_count": 0,
+            "max_face_count": 0,
+            "average_face_count": 0.0,
+            "multi_face_sample_count": 0,
+            "single_face_sample_count": 0,
+            "left_right_split_samples": 0,
+            "single_face_anchor": "center",
+            "supports_split_frame": False,
+            "left_anchor_ratio": 0.28,
+            "right_anchor_ratio": 0.72,
+            "technical_detail": str(error),
+        }
+    except Exception as error:
+        return {
+            "status": "unavailable",
+            "warning": f"Face detection skipped because frame sampling failed: {error}",
+            "reason": "frame_sampling_failed",
+            "detection_backend": "ffmpeg+opencv",
+            "left_anchor_ratio": 0.28,
+            "right_anchor_ratio": 0.72,
+        }
+
+    summary = summarize_face_samples(samples)
+    summary["sample_offsets_seconds"] = [round(value, 3) for value in sample_offsets]
+    summary["detection_backend"] = "opencv_haar"
+    return summary
+
+
+def _build_face_sample_offsets(*, clip_duration_seconds: float, sample_count: int) -> list[float]:
+    if sample_count <= 1:
+        midpoint = min(max(clip_duration_seconds / 2, 0.1), max(clip_duration_seconds - 0.1, 0.1))
+        return [midpoint]
+
+    start_offset = 0.35
+    end_offset = max(clip_duration_seconds - 0.35, start_offset + 0.2)
+    if end_offset <= start_offset:
+        return [round(max(clip_duration_seconds / 2, 0.1), 3)]
+
+    interval = (end_offset - start_offset) / max(sample_count - 1, 1)
+    return [round(start_offset + (interval * index), 3) for index in range(sample_count)]
+
+
 def _build_layout_options(
     *,
     layout_template: str | None,
     render_settings: dict[str, Any],
     candidate: Any,
     metadata: dict[str, Any],
+    transcript_segments: list[TranscriptSegment],
+    face_layout_summary: dict[str, Any],
     working_directory: Path,
     channel_name_path: Path,
     channel_tagline_path: Path,
@@ -595,15 +785,59 @@ def _build_layout_options(
     quote_path: Path,
     source_label_path: Path,
 ) -> dict[str, Any]:
-    if layout_template != "PODCAST_SPOTLIGHT_9X16":
-        return {}
-
     visual = render_settings.get("visual")
     visual_settings = visual.get("settings") if isinstance(visual, dict) else None
     branding = visual_settings.get("branding") if isinstance(visual_settings, dict) else None
     branding_data = branding if isinstance(branding, dict) else {}
+    crop_strategy = _resolve_crop_strategy(render_settings)
+    framing_detection_mode = _resolve_framing_detection_mode(render_settings)
+    split_on_multi_face = _resolve_multi_face_split_enabled(render_settings)
+    split_min_face_count = _resolve_split_min_face_count(render_settings)
+    speaker_count = _resolve_speaker_count(render_settings=render_settings, transcript_segments=transcript_segments)
+    raw_detected_face_count = face_layout_summary.get("max_face_count")
+    detected_face_count = int(raw_detected_face_count) if isinstance(raw_detected_face_count, (int, float)) else 0
+    active_speaker_strategy = _build_active_speaker_strategy(transcript_segments)
+    multi_subject_count = _resolve_multi_subject_count(
+        framing_detection_mode=framing_detection_mode,
+        speaker_count=speaker_count,
+        detected_face_count=detected_face_count,
+    )
+    face_detection_unavailable = face_layout_summary.get("status") == "unavailable"
+    explicit_split_strategy = crop_strategy in {"SPLIT_SCREEN", "SPEAKER_AND_SCREEN"}
+    should_split_frame = crop_strategy in {"SPLIT_SCREEN", "SPEAKER_AND_SCREEN"} or (
+        crop_strategy == "AUTO_REFRAME"
+        and split_on_multi_face
+        and multi_subject_count >= split_min_face_count
+        and bool(face_layout_summary.get("supports_split_frame") or framing_detection_mode != "FACE_DETECTION_ONLY")
+    )
     channel_name = _resolve_string(branding_data.get("channel_name")) or "Creator Studio"
     channel_tagline = _resolve_string(branding_data.get("channel_tagline"))
+    base_options = {
+        "crop_strategy": crop_strategy,
+        "framing_detection_mode": framing_detection_mode,
+        "speaker_count": speaker_count,
+        "detected_face_count": detected_face_count,
+        "split_frame_enabled": should_split_frame and layout_template == "PODCAST_SPOTLIGHT_9X16",
+        "split_on_multi_face": split_on_multi_face,
+        "split_min_face_count": split_min_face_count,
+        "split_frame_fallback_mode": (
+            "speaker_inferred"
+            if explicit_split_strategy and face_detection_unavailable and speaker_count >= split_min_face_count
+            else "detected"
+        ),
+        "active_speaker_strategy": active_speaker_strategy,
+        "face_layout_summary": face_layout_summary,
+        "branding": {
+            "channel_name": channel_name,
+            "channel_tagline": channel_tagline,
+            "brand_kit_name": _resolve_string(branding_data.get("brand_kit_name")),
+            "logo_object_key": _resolve_string(branding_data.get("logo_object_key")),
+        },
+    }
+
+    if layout_template != "PODCAST_SPOTLIGHT_9X16":
+        return base_options
+
     source_label = f"Source: {channel_name}"
     headline = _select_display_headline(candidate=candidate, metadata=metadata)
     headline_primary, headline_emphasis = _split_podcast_spotlight_headline_layers(headline)
@@ -620,6 +854,7 @@ def _build_layout_options(
     emphasis_y = 214 + (primary_line_count * 78) + 14
     divider_y = emphasis_y + (emphasis_line_count * 84) + 34 if has_emphasis else 214 + (primary_line_count * 76) + 34
     options = {
+        **base_options,
         "headline_primary_size": _resolve_dynamic_font_size(headline_primary or headline, 76, 66, 58),
         "headline_emphasis_size": _resolve_dynamic_font_size(headline_emphasis or headline, 80, 72, 64),
         "headline_primary_y": primary_y,
@@ -630,12 +865,6 @@ def _build_layout_options(
         "source_label_size": 22,
         "logo_source": _resolve_string(branding_data.get("logo_internal_url"))
         or _resolve_string(branding_data.get("logo_url")),
-        "branding": {
-            "channel_name": channel_name,
-            "channel_tagline": channel_tagline,
-            "brand_kit_name": _resolve_string(branding_data.get("brand_kit_name")),
-            "logo_object_key": _resolve_string(branding_data.get("logo_object_key")),
-        },
     }
 
     text_targets = [
@@ -662,6 +891,43 @@ def _build_layout_options(
         options[key_map[path]] = str(path)
 
     return options
+
+
+def _resolve_multi_subject_count(
+    *,
+    framing_detection_mode: str,
+    speaker_count: int,
+    detected_face_count: int,
+) -> int:
+    if framing_detection_mode == "TRANSCRIPT_ONLY":
+        return speaker_count
+    if framing_detection_mode == "FACE_DETECTION_ONLY":
+        return detected_face_count
+    return max(speaker_count, detected_face_count)
+
+
+def _build_active_speaker_strategy(transcript_segments: list[TranscriptSegment]) -> dict[str, Any]:
+    speaker_order: list[str] = []
+    speaker_windows: list[dict[str, Any]] = []
+
+    for segment in transcript_segments:
+        label = segment.speaker_label.strip() if isinstance(segment.speaker_label, str) else ""
+        if not label:
+            continue
+        if label not in speaker_order:
+            speaker_order.append(label)
+        speaker_windows.append(
+            {
+                "speaker_label": label,
+                "start_seconds": float(segment.start_seconds),
+                "end_seconds": float(segment.end_seconds),
+            }
+        )
+
+    return {
+        "speaker_order": speaker_order[:2],
+        "windows": speaker_windows,
+    }
 
 
 def _resolve_dynamic_font_size(text: str, short_size: int, medium_size: int, long_size: int) -> int:

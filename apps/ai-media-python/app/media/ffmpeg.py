@@ -117,6 +117,7 @@ def build_clip_render_command(
     subtitle_path: str | Path | None = None,
     layout_template: str | None = None,
     layout_options: dict[str, Any] | None = None,
+    crop_strategy: str = "AUTO_REFRAME",
 ) -> FfmpegCommand:
     if start_seconds < 0:
         raise ValueError("start_seconds must be non-negative")
@@ -143,6 +144,7 @@ def build_clip_render_command(
             video_preset=video_preset,
             subtitle_path=subtitle_path,
             layout_options=layout_options or {},
+            crop_strategy=crop_strategy,
         )
 
     arguments: list[str] = [
@@ -163,6 +165,8 @@ def build_clip_render_command(
         target_height=height,
         fps=fps,
         subtitle_path=subtitle_path,
+        crop_strategy=crop_strategy,
+        layout_options=layout_options or {},
     )
     arguments.extend(["-vf", filter_graph])
     arguments.extend(
@@ -197,6 +201,7 @@ def _build_podcast_spotlight_render_command(
     video_preset: str,
     subtitle_path: str | Path | None,
     layout_options: dict[str, Any],
+    crop_strategy: str,
 ) -> FfmpegCommand:
     logo_source = layout_options.get("logo_source")
     arguments: list[str] = [
@@ -222,6 +227,7 @@ def _build_podcast_spotlight_render_command(
         subtitle_path=subtitle_path,
         layout_options=layout_options,
         include_logo_input=isinstance(logo_source, str) and bool(logo_source.strip()),
+        crop_strategy=crop_strategy,
     )
     arguments.extend(
         [
@@ -256,20 +262,27 @@ def build_clip_filter_graph(
     target_height: int,
     fps: int,
     subtitle_path: str | Path | None = None,
+    crop_strategy: str = "AUTO_REFRAME",
+    layout_options: dict[str, Any] | None = None,
 ) -> str:
+    normalized_strategy = str(crop_strategy or "AUTO_REFRAME").strip().upper()
+    normalized_options = layout_options or {}
     filters: list[str] = []
-    crop_filter = _build_center_crop_filter(
+    crop_filter = _build_strategy_crop_filter(
         source_width=source_width,
         source_height=source_height,
         target_width=target_width,
         target_height=target_height,
+        crop_strategy=normalized_strategy,
+        layout_options=normalized_options,
     )
     if crop_filter:
         filters.append(crop_filter)
     filters.append(f"scale={target_width}:{target_height}")
     filters.append(f"fps={fps}")
     if subtitle_path is not None:
-        filters.append(f"subtitles={subtitle_path}")
+        escaped_subtitle = _escape_filter_value(subtitle_path)
+        filters.append(f"subtitles='{escaped_subtitle}'")
     return ",".join(filters)
 
 
@@ -283,32 +296,77 @@ def _build_podcast_spotlight_filter_graph(
     subtitle_path: str | Path | None,
     layout_options: dict[str, Any],
     include_logo_input: bool,
+    crop_strategy: str,
 ) -> str:
     panel_width = 924
     panel_height = 520
     panel_x = 78
     panel_y = 646
-    crop_filter = _build_center_crop_filter(
-        source_width=source_width,
-        source_height=source_height,
-        target_width=panel_width,
-        target_height=panel_height,
+    normalized_strategy = str(crop_strategy or layout_options.get("crop_strategy") or "AUTO_REFRAME").strip().upper()
+    split_frame_enabled = bool(layout_options.get("split_frame_enabled")) or normalized_strategy in {
+        "SPLIT_SCREEN",
+        "SPEAKER_AND_SCREEN",
+    }
+    graph_parts: list[str] = []
+
+    if split_frame_enabled:
+        left_width = panel_width // 2
+        right_width = panel_width - left_width
+        left_anchor_ratio, right_anchor_ratio = _resolve_split_anchor_ratios(layout_options)
+        left_crop = _build_region_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=left_width,
+            target_height=panel_height,
+            anchor=left_anchor_ratio,
+        )
+        right_crop = _build_region_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=right_width,
+            target_height=panel_height,
+            anchor=right_anchor_ratio,
+        )
+        left_chain = ",".join(
+            [part for part in [left_crop, f"scale={left_width}:{panel_height}", f"fps={fps}"] if part]
+        )
+        right_chain = ",".join(
+            [part for part in [right_crop, f"scale={right_width}:{panel_height}", f"fps={fps}"] if part]
+        )
+        graph_parts.extend(
+            [
+                f"[0:v]{left_chain}[clip_left]",
+                f"[0:v]{right_chain}[clip_right]",
+                "[clip_left][clip_right]hstack=inputs=2[clip]",
+            ]
+        )
+    else:
+        crop_filter = _build_strategy_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=panel_width,
+            target_height=panel_height,
+            crop_strategy=normalized_strategy,
+            layout_options=layout_options,
+        )
+        video_filters = [part for part in [crop_filter, f"scale={panel_width}:{panel_height}", f"fps={fps}"] if part]
+        graph_parts.append(f"[0:v]{','.join(video_filters)}[clip]")
+
+    graph_parts.extend(
+        [
+            f"color=c=0x05070d:s={target_width}x{target_height}:d=1[base]",
+            "[base]drawbox=x=0:y=0:w=iw:h=ih:color=0x04060c:t=fill[bg0]",
+            "[bg0]drawbox=x=0:y=0:w=iw:h=ih:color=0x0b1220@0.12:t=22[bg1]",
+            "[bg1]drawbox=x=0:y=0:w=iw:h=ih:color=0x0b1220@0.06:t=60[bg2]",
+            "[bg2]drawbox=x=172:y=546:w=268:h=3:color=0xf6c343@0.86:t=fill[bg3]",
+            f"[bg3]drawbox=x={panel_x - 14}:y={panel_y - 14}:w={panel_width + 28}:h={panel_height + 28}:color=0x000000@0.26:t=fill[panel_shadow]",
+            f"[panel_shadow]drawbox=x={panel_x - 2}:y={panel_y - 2}:w={panel_width + 4}:h={panel_height + 4}:color=0xf6c343@0.82:t=2[panel0]",
+            f"[panel0]drawbox=x={panel_x}:y={panel_y}:w={panel_width}:h={panel_height}:color=0x101724@0.98:t=fill[panel1]",
+            f"[panel1][clip]overlay={panel_x}:{panel_y}[canvas0]",
+            "[canvas0]drawbox=x=344:y=1750:w=392:h=56:color=0x0b1020@0.98:t=fill[sourcebar0]",
+            "[sourcebar0]drawbox=x=344:y=1750:w=392:h=56:color=0xf6c343@0.42:t=1[sourcebar1]",
+        ]
     )
-    video_filters = [part for part in [crop_filter, f"scale={panel_width}:{panel_height}", f"fps={fps}"] if part]
-    graph_parts = [
-        f"color=c=0x05070d:s={target_width}x{target_height}:d=1[base]",
-        f"[0:v]{','.join(video_filters)}[clip]",
-        "[base]drawbox=x=0:y=0:w=iw:h=ih:color=0x04060c:t=fill[bg0]",
-        "[bg0]drawbox=x=0:y=0:w=iw:h=ih:color=0x0b1220@0.12:t=22[bg1]",
-        "[bg1]drawbox=x=0:y=0:w=iw:h=ih:color=0x0b1220@0.06:t=60[bg2]",
-        "[bg2]drawbox=x=172:y=546:w=268:h=3:color=0xf6c343@0.86:t=fill[bg3]",
-        f"[bg3]drawbox=x={panel_x - 14}:y={panel_y - 14}:w={panel_width + 28}:h={panel_height + 28}:color=0x000000@0.26:t=fill[panel_shadow]",
-        f"[panel_shadow]drawbox=x={panel_x - 2}:y={panel_y - 2}:w={panel_width + 4}:h={panel_height + 4}:color=0xf6c343@0.82:t=2[panel0]",
-        f"[panel0]drawbox=x={panel_x}:y={panel_y}:w={panel_width}:h={panel_height}:color=0x101724@0.98:t=fill[panel1]",
-        f"[panel1][clip]overlay={panel_x}:{panel_y}[canvas0]",
-        "[canvas0]drawbox=x=344:y=1750:w=392:h=56:color=0x0b1020@0.98:t=fill[sourcebar0]",
-        "[sourcebar0]drawbox=x=344:y=1750:w=392:h=56:color=0xf6c343@0.42:t=1[sourcebar1]",
-    ]
 
     current_label = "sourcebar1"
     if include_logo_input:
@@ -459,6 +517,242 @@ def _build_center_crop_filter(
     y_offset = max(0, int(round((source_height - crop_height) / 2)))
     y_offset -= y_offset % 2
     return f"crop={source_width}:{crop_height}:0:{y_offset}"
+
+
+def _build_strategy_crop_filter(
+    *,
+    source_width: int | None,
+    source_height: int | None,
+    target_width: int,
+    target_height: int,
+    crop_strategy: str,
+    layout_options: dict[str, Any],
+) -> str | None:
+    normalized_strategy = str(crop_strategy or "AUTO_REFRAME").strip().upper()
+    speaker_count = layout_options.get("speaker_count")
+    has_multiple_speakers = isinstance(speaker_count, int) and speaker_count >= 2
+
+    if normalized_strategy == "ACTIVE_SPEAKER" or (
+        normalized_strategy == "AUTO_REFRAME" and has_multiple_speakers
+    ):
+        return _build_active_speaker_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+            layout_options=layout_options,
+        )
+    if normalized_strategy in {"SPLIT_SCREEN", "SPEAKER_AND_SCREEN"}:
+        return _build_active_speaker_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+            layout_options=layout_options,
+        )
+    if normalized_strategy == "FACE_TRACKING":
+        return _build_face_tracking_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+            layout_options=layout_options,
+        )
+    if normalized_strategy == "AUTO_REFRAME":
+        return _build_face_tracking_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+            layout_options=layout_options,
+        ) or _build_center_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+        )
+    return _build_center_crop_filter(
+        source_width=source_width,
+        source_height=source_height,
+        target_width=target_width,
+        target_height=target_height,
+    )
+
+
+def _build_face_tracking_crop_filter(
+    *,
+    source_width: int | None,
+    source_height: int | None,
+    target_width: int,
+    target_height: int,
+    layout_options: dict[str, Any],
+) -> str | None:
+    face_layout_summary = layout_options.get("face_layout_summary")
+    if not isinstance(face_layout_summary, dict):
+        return None
+    anchor = face_layout_summary.get("single_face_anchor")
+    if anchor not in {"left", "center", "right"}:
+        return None
+    return _build_region_crop_filter(
+        source_width=source_width,
+        source_height=source_height,
+        target_width=target_width,
+        target_height=target_height,
+        anchor=str(anchor),
+    )
+
+
+def _build_active_speaker_crop_filter(
+    *,
+    source_width: int | None,
+    source_height: int | None,
+    target_width: int,
+    target_height: int,
+    layout_options: dict[str, Any],
+) -> str | None:
+    if not source_width or not source_height:
+        return None
+
+    crop_width, crop_height = _resolve_crop_dimensions(
+        source_width=source_width,
+        source_height=source_height,
+        target_width=target_width,
+        target_height=target_height,
+    )
+    if crop_width is None or crop_height is None:
+        return None
+
+    if crop_width >= source_width:
+        return _build_center_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+        )
+
+    active_strategy = layout_options.get("active_speaker_strategy")
+    if not isinstance(active_strategy, dict):
+        return _build_center_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+        )
+
+    speaker_order = active_strategy.get("speaker_order")
+    windows = active_strategy.get("windows")
+    if not isinstance(speaker_order, list) or len(speaker_order) < 2 or not isinstance(windows, list):
+        return _build_center_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+        )
+
+    left_x = 0
+    center_x = max(0, ((source_width - crop_width) // 2) // 2 * 2)
+    right_x = max(0, ((source_width - crop_width)) // 2 * 2)
+    speaker_to_x = {
+        str(speaker_order[0]): left_x,
+        str(speaker_order[1]): right_x,
+    }
+
+    expression = str(center_x)
+    for window in reversed(windows):
+        speaker_label = window.get("speaker_label")
+        start_seconds = window.get("start_seconds")
+        end_seconds = window.get("end_seconds")
+        if speaker_label not in speaker_to_x:
+            continue
+        if not isinstance(start_seconds, (int, float)) or not isinstance(end_seconds, (int, float)):
+            continue
+        anchor_x = speaker_to_x[str(speaker_label)]
+        expression = (
+            f"if(between(t\\,{float(start_seconds):.3f}\\,{float(end_seconds):.3f})\\,{anchor_x}\\,{expression})"
+        )
+
+    return f"crop={crop_width}:{crop_height}:{expression}:0"
+
+
+def _build_region_crop_filter(
+    *,
+    source_width: int | None,
+    source_height: int | None,
+    target_width: int,
+    target_height: int,
+    anchor: str | float,
+) -> str | None:
+    crop_width, crop_height = _resolve_crop_dimensions(
+        source_width=source_width,
+        source_height=source_height,
+        target_width=target_width,
+        target_height=target_height,
+    )
+    if crop_width is None or crop_height is None or not source_width or not source_height:
+        return None
+
+    if isinstance(anchor, (float, int)):
+        target_center_x = float(anchor) * float(source_width)
+        x_offset = max(0, int(round(target_center_x - (crop_width / 2))))
+        x_offset = min(x_offset, max(0, source_width - crop_width))
+    elif anchor == "left":
+        x_offset = 0
+    elif anchor == "right":
+        x_offset = max(0, source_width - crop_width)
+    else:
+        x_offset = max(0, int(round((source_width - crop_width) / 2)))
+
+    x_offset -= x_offset % 2
+    y_offset = max(0, int(round((source_height - crop_height) / 2)))
+    y_offset -= y_offset % 2
+    return f"crop={crop_width}:{crop_height}:{x_offset}:{y_offset}"
+
+
+def _resolve_split_anchor_ratios(layout_options: dict[str, Any]) -> tuple[float, float]:
+    summary = layout_options.get("face_layout_summary")
+    if not isinstance(summary, dict):
+        return (0.28, 0.72)
+
+    left_value = summary.get("left_anchor_ratio")
+    right_value = summary.get("right_anchor_ratio")
+    left_ratio = float(left_value) if isinstance(left_value, (float, int)) else 0.28
+    right_ratio = float(right_value) if isinstance(right_value, (float, int)) else 0.72
+
+    left_ratio = min(max(left_ratio, 0.16), 0.46)
+    right_ratio = min(max(right_ratio, 0.54), 0.84)
+    if left_ratio >= right_ratio:
+        return (0.28, 0.72)
+    return (round(left_ratio, 4), round(right_ratio, 4))
+
+
+def _resolve_crop_dimensions(
+    *,
+    source_width: int | None,
+    source_height: int | None,
+    target_width: int,
+    target_height: int,
+) -> tuple[int | None, int | None]:
+    if not source_width or not source_height:
+        return (None, None)
+    if source_width <= 0 or source_height <= 0:
+        return (None, None)
+
+    source_ratio = source_width / source_height
+    target_ratio = target_width / target_height
+
+    if abs(source_ratio - target_ratio) < 0.0001:
+        return (source_width, source_height)
+
+    if source_ratio > target_ratio:
+        crop_width = max(2, int(round(source_height * target_ratio)))
+        crop_width = min(crop_width, source_width)
+        crop_width -= crop_width % 2
+        return (crop_width, source_height)
+
+    crop_height = max(2, int(round(source_width / target_ratio)))
+    crop_height = min(crop_height, source_height)
+    crop_height -= crop_height % 2
+    return (source_width, crop_height)
 
 
 def summarize_ffprobe_payload(payload: dict[str, Any]) -> ProbeSummary:

@@ -6,9 +6,9 @@ Always read `AGENTS.md` before changing architecture, workflow behavior, databas
 
 ## What this project is
 
-Creator Studio AI is currently a Phase 1 production-oriented foundation for a multi-tenant creator workspace. It includes authentication, RBAC, sessions, upload orchestration, durable job records, Temporal workflow startup, progress projection, SSE job events, secure media-ingestion boundaries, and a Python worker skeleton.
+Creator Studio AI is a multi-tenant creator workspace for auto-clipping, text-to-speech, transcription/subtitle authoring, result review, and admin-managed AI runtime settings. The repository includes authentication, RBAC, sessions, upload orchestration, durable job records, Temporal workflow execution, progress projection, SSE job events, secure media-ingestion boundaries, and Python workers for media/AI processing.
 
-Phase 2 media processing is partially implemented. The repository now includes structured `analysis_inputs`, OpenAI-first candidate analysis with heuristic fallback, persisted `ClipCandidate` review rows, and job-output APIs/UI. Final media rendering, subtitle burn-in, and full clip-export execution are still incomplete and must not be faked.
+Phase 2 auto-clipping is now implemented as a real pipeline: structured `analysis_inputs`, transcript-first preparation, OpenAI-first candidate analysis with Python heuristic fallback, persisted `ClipCandidate` review rows, FFmpeg final clip rendering, subtitle sidecars (`SRT`, `ASS`, `VTT`, `JSON`), subtitle burn-in, clip-output persistence, export indexes, and in-place regenerate flows.
 
 ## Read By Task
 
@@ -29,7 +29,9 @@ Phase 2 media processing is partially implemented. The repository now includes s
 - Validate untrusted input with Zod in TypeScript and Pydantic in Python.
 - Mutating workflow commands require idempotency keys.
 - Never log secrets, auth headers, cookies, OAuth tokens, signed URLs, reset tokens, or encrypted credential payloads.
-- The Phase 2 analyzer currently defaults to OpenAI at runtime through `OPENAI_API_KEY`, but the provider boundary must remain adapter-based so it can be swapped later.
+- The Phase 2 analyzer runtime is configurable through admin settings and currently supports `openai_then_heuristic`, `heuristic_then_openai`, and `heuristic`.
+- The heuristic analyzer is Python-local scoring logic, not a second external AI provider.
+- Long-running provider calls must heartbeat and respect realistic timeout budgets such as `OPENAI_TIMEOUT_SECONDS` and `ANALYZER_TIMEOUT_SECONDS`.
 
 ## First Files To Read
 
