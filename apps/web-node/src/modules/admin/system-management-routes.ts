@@ -6,6 +6,7 @@ import { requireAuth, requirePermission } from "../auth/identity-middleware.js";
 import type { AdminSystemService } from "./admin-system-service.js";
 import {
   adminAutoClipAnalyzerRuntimeSchema,
+  adminAutoClipSourceQualitySchema,
   adminCreateFeatureFlagSchema,
   adminCreateSystemSettingSchema,
   adminUpdateFeatureFlagSchema,
@@ -97,6 +98,29 @@ export function adminSystemRouter(adminSystemService: AdminSystemService): Route
         request
       });
       response.json({ data: { message: "Auto-clipping analyzer runtime updated successfully." } });
+    })
+  );
+
+  router.post(
+    "/api/v1/admin/system-settings/auto-clip-source-quality",
+    requireAuth,
+    requirePermission("admin.system.manage"),
+    validateBody(adminAutoClipSourceQualitySchema),
+    asyncHandler(async (request, response) => {
+      const systemSetting = await adminSystemService.upsertAutoClipSourceQuality(request.validatedBody as never);
+      await writeAudit({
+        actorUserId: request.identity!.actorUserId,
+        action: "ADMIN_SYSTEM_SETTING_UPDATED",
+        resourceType: "SystemSetting",
+        resourceId: systemSetting.id,
+        afterData: {
+          key: systemSetting.key,
+          is_secret: systemSetting.isSecret,
+          version: systemSetting.version
+        },
+        request
+      });
+      response.json({ data: { message: "Auto-clipping source quality updated successfully." } });
     })
   );
 

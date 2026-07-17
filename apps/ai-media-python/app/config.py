@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     TEMPORAL_ADDRESS: str = "temporal:7233"
     TEMPORAL_NAMESPACE: str = "default"
     TEMPORAL_AUTO_CLIP_TASK_QUEUE: str = "auto-clipping"
+    TEMPORAL_MAX_CONCURRENT_ACTIVITIES: int = Field(default=4, ge=1, le=64)
     WEB_INTERNAL_BASE_URL: HttpUrl = HttpUrl("http://web-node:3000")
     INTERNAL_SERVICE_TOKEN: str = Field(min_length=32)
     TEMP_WORKDIR: str = "/tmp/creator-studio"

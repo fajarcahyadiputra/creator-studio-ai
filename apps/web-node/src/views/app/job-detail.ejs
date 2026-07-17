@@ -2,10 +2,10 @@
 <div class="workspace-shell">
   <%- include('../partials/user-topbar') %>
   <main
-    class="workspace-main content-area"
+    class="workspace-main content-area page-job-detail"
     <% if (job) { %>data-job-stream="<%= job.id %>" data-job-type="<%= job.type %>"<% } %>>
     <% if (!job) { %>
-      <header class="page-header">
+      <header class="page-header user-page-hero">
         <div><span class="eyebrow">Jobs</span><h1>Job not found</h1><p>The requested job is unavailable in this workspace.</p></div>
         <a class="btn btn-outline-primary" href="/app/jobs">Back to jobs</a>
       </header>
@@ -79,8 +79,8 @@
             ? job.status
             : stageGroupLabel(job.currentStage ?? 'Unknown');
       %>
-      <header class="page-header">
-        <div>
+      <header class="page-header user-page-hero">
+        <div class="user-page-hero__copy">
           <span class="eyebrow">Async Job</span>
           <h1>Job Detail</h1>
           <p>
@@ -88,7 +88,7 @@
             <small><%= job.type %> &middot; <%= job.project?.name ?? 'No project' %> &middot; <%= job.sourceMediaAsset?.displayName ?? 'No source linked' %></small>
           </p>
         </div>
-        <div class="d-flex gap-2">
+        <div class="user-page-actions">
           <a class="btn btn-outline-primary" href="/app/dashboard">Kembali ke Dashboard</a>
           <% if (job.type === 'TEXT_TO_SPEECH') { %>
             <a class="btn btn-outline-secondary" href="/app/jobs/<%= job.id %>/tts-segmentation-export">Download segmentation JSON</a>
@@ -302,23 +302,15 @@
 
                   <div class="col-12">
                     <div class="border rounded-4 p-3 bg-light-subtle">
-                      <h3 class="h5 mb-3">Core setup</h3>
+                      <h3 class="h5 mb-3">Konten inti</h3>
                       <div class="row g-3">
                         <div class="col-md-6">
                           <label class="form-label">Content title</label>
                           <input class="form-control" name="content_title" value="<%= outputSummary.requestSnapshot.contentTitle ?? '' %>" placeholder="Judul video source atau episode">
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-6">
                           <label class="form-label">Topic</label>
                           <input class="form-control" name="topic" value="<%= outputSummary.requestSnapshot.topic ?? '' %>" placeholder="Topik utama">
-                        </div>
-                        <div class="col-md-3">
-                          <label class="form-label">Source language</label>
-                          <input class="form-control" name="source_language" value="<%= outputSummary.requestSnapshot.sourceLanguage ?? '' %>">
-                        </div>
-                        <div class="col-md-3">
-                          <label class="form-label">Speaker count</label>
-                          <input class="form-control" name="speaker_count" type="number" min="1" max="20" step="1" value="<%= outputSummary.requestSnapshot.speakerCount ?? '' %>">
                         </div>
                         <div class="col-md-3">
                           <label class="form-label">Target platform</label>
@@ -340,9 +332,18 @@
                           <label class="form-label">Standalone priority</label>
                           <select class="form-select" name="standalone_priority">
                             <% ['REQUIRED','PREFERRED','FLEXIBLE'].forEach((value) => { %>
-                              <option value="<%= value %>" <%= outputSummary.requestSnapshot.strategy.standalonePriority === value ? 'selected' : '' %>><%= value %></option>
+                              <option value="<%= value %>" <%= outputSummary.requestSnapshot.strategy.standalonePriority === value ? 'selected' : '' %>><%= value === 'REQUIRED' ? 'Harus mandiri' : value === 'PREFERRED' ? 'Diutamakan mandiri' : 'Fleksibel' %></option>
                             <% }) %>
                           </select>
+                        </div>
+                        <div class="col-md-6">
+                          <label class="form-label">Target audience</label>
+                          <input class="form-control" name="target_audience" value="<%= outputSummary.requestSnapshot.targetAudience ?? '' %>" placeholder="Founder, mahasiswa, creator pemula, tim marketing">
+                        </div>
+                        <div class="col-md-6">
+                          <label class="form-label">Main editor brief</label>
+                          <textarea class="form-control" name="content_context" rows="4" placeholder="Arahkan jenis hook, angle judul, pacing, payoff, dan kualitas clip yang ingin diprioritaskan."><%= outputSummary.requestSnapshot.contentContext ?? '' %></textarea>
+                          <div class="form-text">Kalau ingin cepat, cukup ubah brief ini dan biarkan sisanya ikut default terbaik.</div>
                         </div>
                       </div>
                     </div>
@@ -350,15 +351,11 @@
 
                   <div class="col-12">
                     <div class="border rounded-4 p-3">
-                      <h3 class="h5 mb-3">Clip selection and virality</h3>
+                      <h3 class="h5 mb-3">Target clip</h3>
                       <div class="row g-3">
                         <div class="col-md-3">
                           <label class="form-label">Desired clip count</label>
                           <input class="form-control" name="desired_clip_count" type="number" min="1" max="30" step="1" value="<%= outputSummary.requestSnapshot.strategy.desiredClipCount ?? '' %>">
-                        </div>
-                        <div class="col-md-3">
-                          <label class="form-label">Candidate pool</label>
-                          <input class="form-control" name="candidate_pool_count" type="number" min="1" max="30" step="1" value="<%= outputSummary.requestSnapshot.strategy.candidatePoolCount ?? '' %>">
                         </div>
                         <div class="col-md-3">
                           <label class="form-label">Min duration</label>
@@ -376,27 +373,28 @@
                           <label class="form-label">Hook style</label>
                           <select class="form-select" name="hook_style">
                             <option value="" <%= !outputSummary.requestSnapshot.strategy.hookStyle ? 'selected' : '' %>>Auto</option>
-                            <% ['QUESTION','SHOCK','DIRECT_CHALLENGE','STORY_OPEN','MYTH_BUSTING'].forEach((value) => { %>
-                              <option value="<%= value %>" <%= outputSummary.requestSnapshot.strategy.hookStyle === value ? 'selected' : '' %>><%= value %></option>
-                            <% }) %>
+                            <option value="QUESTION" <%= outputSummary.requestSnapshot.strategy.hookStyle === 'QUESTION' ? 'selected' : '' %>>Pertanyaan</option>
+                            <option value="SHOCK" <%= outputSummary.requestSnapshot.strategy.hookStyle === 'SHOCK' ? 'selected' : '' %>>Pernyataan mengejutkan</option>
+                            <option value="DIRECT_CHALLENGE" <%= outputSummary.requestSnapshot.strategy.hookStyle === 'DIRECT_CHALLENGE' ? 'selected' : '' %>>Tantangan langsung</option>
+                            <option value="STORY_OPEN" <%= outputSummary.requestSnapshot.strategy.hookStyle === 'STORY_OPEN' ? 'selected' : '' %>>Pembuka cerita</option>
+                            <option value="MYTH_BUSTING" <%= outputSummary.requestSnapshot.strategy.hookStyle === 'MYTH_BUSTING' ? 'selected' : '' %>>Bongkar mitos</option>
                           </select>
                         </div>
                         <div class="col-md-3">
                           <label class="form-label">CTA preference</label>
                           <select class="form-select" name="cta_preference">
                             <option value="" <%= !outputSummary.requestSnapshot.strategy.ctaPreference ? 'selected' : '' %>>Auto</option>
-                            <% ['COMMENT','SHARE','FOLLOW','SAVE'].forEach((value) => { %>
-                              <option value="<%= value %>" <%= outputSummary.requestSnapshot.strategy.ctaPreference === value ? 'selected' : '' %>><%= value %></option>
-                            <% }) %>
+                            <option value="COMMENT" <%= outputSummary.requestSnapshot.strategy.ctaPreference === 'COMMENT' ? 'selected' : '' %>>Komentar</option>
+                            <option value="SHARE" <%= outputSummary.requestSnapshot.strategy.ctaPreference === 'SHARE' ? 'selected' : '' %>>Share</option>
+                            <option value="FOLLOW" <%= outputSummary.requestSnapshot.strategy.ctaPreference === 'FOLLOW' ? 'selected' : '' %>>Follow</option>
+                            <option value="SAVE" <%= outputSummary.requestSnapshot.strategy.ctaPreference === 'SAVE' ? 'selected' : '' %>>Save</option>
                           </select>
                         </div>
-                        <div class="col-md-3">
-                          <label class="form-label">Profanity handling</label>
-                          <select class="form-select" name="profanity_handling">
-                            <% ['KEEP','MUTE','BLEEP','SUBTITLE_CENSOR'].forEach((value) => { %>
-                              <option value="<%= value %>" <%= outputSummary.requestSnapshot.strategy.profanityHandling === value ? 'selected' : '' %>><%= value %></option>
-                            <% }) %>
-                          </select>
+                        <div class="col-md-3 form-check d-flex align-items-end">
+                          <div>
+                            <input class="form-check-input" type="checkbox" name="require_spoken_audio" id="require_spoken_audio_regenerate" <%= outputSummary.requestSnapshot.strategy.requireSpokenAudio !== false ? 'checked' : '' %>>
+                            <label class="form-check-label" for="require_spoken_audio_regenerate">Require spoken audio</label>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -417,9 +415,12 @@
                         <div class="col-md-3">
                           <label class="form-label">Crop strategy</label>
                           <select class="form-select" name="crop_strategy">
-                            <% ['CENTER','ACTIVE_SPEAKER','FACE_TRACKING','AUTO_REFRAME','SPLIT_SCREEN','SPEAKER_AND_SCREEN','BLURRED_BACKGROUND','MANUAL'].forEach((value) => { %>
-                              <option value="<%= value %>" <%= outputSummary.requestSnapshot.visual.cropStrategy === value ? 'selected' : '' %>><%= value %></option>
-                            <% }) %>
+                            <option value="AUTO_REFRAME" <%= outputSummary.requestSnapshot.visual.cropStrategy === 'AUTO_REFRAME' ? 'selected' : '' %>>Auto reframe</option>
+                            <option value="FACE_TRACKING" <%= outputSummary.requestSnapshot.visual.cropStrategy === 'FACE_TRACKING' ? 'selected' : '' %>>Face tracking</option>
+                            <option value="ACTIVE_SPEAKER" <%= outputSummary.requestSnapshot.visual.cropStrategy === 'ACTIVE_SPEAKER' ? 'selected' : '' %>>Active speaker</option>
+                            <option value="SPLIT_SCREEN" <%= outputSummary.requestSnapshot.visual.cropStrategy === 'SPLIT_SCREEN' ? 'selected' : '' %>>Split screen</option>
+                            <option value="CENTER" <%= outputSummary.requestSnapshot.visual.cropStrategy === 'CENTER' ? 'selected' : '' %>>Center crop</option>
+                            <option value="SPEAKER_AND_SCREEN" <%= outputSummary.requestSnapshot.visual.cropStrategy === 'SPEAKER_AND_SCREEN' ? 'selected' : '' %>>Speaker and screen</option>
                           </select>
                         </div>
                         <div class="col-md-3">
@@ -430,6 +431,20 @@
                             <% }) %>
                           </select>
                         </div>
+                        <div class="col-md-3 form-check d-flex align-items-end" data-regenerate-standard-headline>
+                          <div>
+                            <input type="hidden" name="headline_overlay_enabled" value="false">
+                            <input class="form-check-input" type="checkbox" name="headline_overlay_enabled" id="headline_overlay_enabled_regenerate" <%= outputSummary.requestSnapshot.visual.headlineOverlayEnabled !== false ? 'checked' : '' %>>
+                            <label class="form-check-label" for="headline_overlay_enabled_regenerate">Tampilkan headline</label>
+                          </div>
+                        </div>
+                        <div class="col-md-3" data-regenerate-standard-headline>
+                          <label class="form-label">Posisi headline</label>
+                          <select class="form-select" name="headline_overlay_position">
+                            <option value="TOP" <%= outputSummary.requestSnapshot.visual.headlineOverlayPosition === 'TOP' ? 'selected' : '' %>>Atas</option>
+                            <option value="BOTTOM" <%= outputSummary.requestSnapshot.visual.headlineOverlayPosition !== 'TOP' ? 'selected' : '' %>>Bawah - safe area</option>
+                          </select>
+                        </div>
                         <div class="col-md-3">
                           <label class="form-label">Framing detection mode</label>
                           <select class="form-select" name="framing_detection_mode">
@@ -438,10 +453,6 @@
                             <% }) %>
                           </select>
                         </div>
-                        <div class="col-md-3">
-                          <label class="form-label">Subtitle language</label>
-                          <input class="form-control" name="subtitle_language" value="<%= outputSummary.requestSnapshot.subtitle.language ?? 'id' %>" required>
-                        </div>
                         <div class="col-md-3 form-check d-flex align-items-end">
                           <div>
                             <input class="form-check-input" type="checkbox" name="split_on_multi_face" id="split_on_multi_face_regenerate" <%= outputSummary.requestSnapshot.visual.splitOnMultiFace !== false ? 'checked' : '' %>>
@@ -449,29 +460,16 @@
                           </div>
                         </div>
                         <div class="col-md-3">
-                          <label class="form-label">Split min face count</label>
-                          <input class="form-control" name="split_min_face_count" type="number" min="1" max="6" step="1" value="<%= outputSummary.requestSnapshot.visual.splitMinFaceCount ?? 2 %>">
-                        </div>
-                        <div class="col-md-3">
-                          <label class="form-label">Subtitle primary format</label>
-                          <select class="form-select" name="subtitle_primary_format">
-                            <% ['SRT','ASS','VTT','JSON'].forEach((value) => { %>
-                              <option value="<%= value %>" <%= (outputSummary.requestSnapshot.subtitle.exportFormats[0] ?? 'ASS') === value ? 'selected' : '' %>><%= value %></option>
-                            <% }) %>
-                          </select>
-                        </div>
-                        <div class="col-md-3">
-                          <label class="form-label">Subtitle position</label>
-                          <select class="form-select" name="subtitle_position">
-                            <option value="">Default</option>
-                            <% ['TOP','CENTER','BOTTOM'].forEach((value) => { %>
-                              <option value="<%= value %>" <%= outputSummary.requestSnapshot.subtitle.position === value ? 'selected' : '' %>><%= value %></option>
-                            <% }) %>
-                          </select>
-                        </div>
-                        <div class="col-md-3">
                           <label class="form-label">Subtitle max lines</label>
                           <input class="form-control" name="subtitle_max_lines" type="number" min="1" max="4" step="1" value="<%= outputSummary.requestSnapshot.subtitle.maxLines ?? '' %>">
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label">Posisi subtitle</label>
+                          <select class="form-select" name="subtitle_position">
+                            <% [['TOP','Atas'],['CENTER','Tengah'],['BOTTOM','Bawah - safe area']].forEach(([value, label]) => { %>
+                              <option value="<%= value %>" <%= (outputSummary.requestSnapshot.subtitle.position ?? 'BOTTOM') === value ? 'selected' : '' %>><%= label %></option>
+                            <% }) %>
+                          </select>
                         </div>
                         <div class="col-md-3">
                           <label class="form-label">Subtitle style</label>
@@ -484,10 +482,6 @@
                             <option value="CINEMATIC_QUOTE" <%= outputSummary.requestSnapshot.subtitle.style === 'CINEMATIC_QUOTE' ? 'selected' : '' %>>Cinematic quote</option>
                           </select>
                           <div class="form-text">Highlight per kata otomatis ikut style subtitle.</div>
-                        </div>
-                        <div class="col-md-3">
-                          <label class="form-label">Subtitle safe margin %</label>
-                          <input class="form-control" name="subtitle_safe_margin_percent" type="number" min="0" max="30" step="1" value="<%= outputSummary.requestSnapshot.subtitle.safeMarginPercent ?? '' %>">
                         </div>
                         <div class="col-md-3 form-check d-flex align-items-end">
                           <div>
@@ -512,94 +506,30 @@
                   </div>
 
                   <div class="col-12">
-                    <div class="border rounded-4 p-3 bg-light-subtle">
-                      <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
-                        <div>
-                          <label class="form-label mb-1">Packaging helper</label>
-                          <div class="form-text mt-0">Pilih arah headline supaya regenerate lebih konsisten menghasilkan title, hook text, dan packaging yang pas untuk layout 9:16.</div>
-                        </div>
-                        <span class="badge text-bg-light border">Structured helper</span>
-                      </div>
-                      <div class="row g-3">
-                        <div class="col-md-4">
-                          <label class="form-label">Headline angle</label>
-                          <select class="form-select" name="headline_angle">
-                            <option value="">Auto</option>
-                            <option value="PROBLEM_TO_CAUSE">Problem -> cause</option>
-                            <option value="PROBLEM_TO_SOLUTION">Problem -> solution</option>
-                            <option value="QUESTION_TO_ANSWER">Question -> answer</option>
-                            <option value="MYTH_TO_FACT">Myth -> fact</option>
-                            <option value="RISK_TO_WARNING">Risk -> warning</option>
-                            <option value="CONTRADICTION_TO_EXPLANATION">Contradiction -> explanation</option>
-                          </select>
-                        </div>
-                        <div class="col-md-4">
-                          <label class="form-label">Title packaging style</label>
-                          <select class="form-select" name="title_packaging_style">
-                            <option value="">Auto</option>
-                            <option value="SHORT_PUNCHY">Short punchy</option>
-                            <option value="CLEAR_EXPLANATORY">Clear explanatory</option>
-                            <option value="HIGH_CURIOSITY">High curiosity</option>
-                            <option value="RISK_FOCUSED">Risk focused</option>
-                            <option value="DEBATE_FOCUSED">Debate focused</option>
-                          </select>
-                        </div>
-                        <div class="col-md-4">
-                          <label class="form-label">Thumbnail text style</label>
-                          <select class="form-select" name="thumbnail_packaging_style">
-                            <option value="">Auto</option>
-                            <option value="ULTRA_SHORT">Ultra short</option>
-                            <option value="KEY_RISK">Key risk</option>
-                            <option value="KEY_QUESTION">Key question</option>
-                            <option value="KEY_PAYOFF">Key payoff</option>
-                            <option value="OBJECT_AND_CONSEQUENCE">Object and consequence</option>
-                          </select>
-                        </div>
-                        <div class="col-md-4">
-                          <label class="form-label">Headline tone</label>
-                          <select class="form-select" name="headline_tone">
-                            <option value="">Auto</option>
-                            <option value="DIRECT">Direct</option>
-                            <option value="URGENT">Urgent</option>
-                            <option value="SERIOUS">Serious</option>
-                            <option value="EDUCATIONAL">Educational</option>
-                            <option value="CONTROVERSIAL">Controversial</option>
-                          </select>
-                        </div>
-                        <div class="col-md-4">
-                          <label class="form-label">Title length target</label>
-                          <select class="form-select" name="title_length_target">
-                            <option value="">Auto</option>
-                            <option value="VERY_SHORT">Very short 2-4 words</option>
-                            <option value="SHORT">Short 4-6 words</option>
-                            <option value="MEDIUM">Medium 6-9 words</option>
-                          </select>
-                        </div>
-                        <div class="col-md-4">
-                          <label class="form-label">Forbidden title pattern</label>
-                          <select class="form-select" name="title_forbidden_pattern">
-                            <option value="">Auto</option>
-                            <option value="NO_FILLER_OPENING">No filler opening</option>
-                            <option value="NO_VAGUE_CLICKBAIT">No vague clickbait</option>
-                            <option value="NO_CUT_OFF_ENDING">No cut-off ending</option>
-                            <option value="NO_GENERIC_SUMMARY">No generic summary</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="col-12">
-                    <label class="form-label">Main editor brief</label>
-                    <textarea class="form-control" name="content_context" rows="5" placeholder="Arahkan jenis hook, angle judul, pacing, payoff, dan kualitas clip yang ingin diprioritaskan."><%= outputSummary.requestSnapshot.contentContext ?? '' %></textarea>
-                    <div class="form-text">Kalau ingin cepat, cukup ubah field ini dan helper packaging di atas.</div>
-                  </div>
-
-                  <div class="col-12">
                     <details class="border rounded-4 p-3">
                       <summary class="fw-semibold">Advanced controls</summary>
-                      <p class="text-secondary small mt-2 mb-3">Bagian ini untuk arahan editorial detail, daftar style, dan opsi teknis subtitle yang jarang diubah.</p>
+                      <p class="text-secondary small mt-2 mb-3">Bagian ini untuk helper packaging, opsi teknis, dan arahan editorial yang lebih spesifik.</p>
                       <div class="row g-3">
+                        <div class="col-md-3">
+                          <label class="form-label">Source language</label>
+                          <input class="form-control" name="source_language" value="<%= outputSummary.requestSnapshot.sourceLanguage ?? '' %>">
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label">Speaker count</label>
+                          <input class="form-control" name="speaker_count" type="number" min="1" max="20" step="1" value="<%= outputSummary.requestSnapshot.speakerCount ?? '' %>">
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label">Candidate pool</label>
+                          <input class="form-control" name="candidate_pool_count" type="number" min="1" max="30" step="1" value="<%= outputSummary.requestSnapshot.strategy.candidatePoolCount ?? '' %>">
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label">Profanity handling</label>
+                          <select class="form-select" name="profanity_handling">
+                            <% ['KEEP','MUTE','BLEEP','SUBTITLE_CENSOR'].forEach((value) => { %>
+                              <option value="<%= value %>" <%= outputSummary.requestSnapshot.strategy.profanityHandling === value ? 'selected' : '' %>><%= value %></option>
+                            <% }) %>
+                          </select>
+                        </div>
                         <div class="col-md-6">
                           <label class="form-label">Custom vocabulary</label>
                           <textarea class="form-control" name="custom_vocabulary_text" rows="4"><%= outputSummary.requestSnapshot.customVocabulary.join(', ') %></textarea>
@@ -647,18 +577,46 @@
                           </select>
                         </div>
                         <div class="col-md-4">
+                          <label class="form-label">Headline angle</label>
+                          <select class="form-select" name="headline_angle">
+                            <option value="">Auto</option>
+                            <option value="PROBLEM_TO_CAUSE">Problem -> cause</option>
+                            <option value="PROBLEM_TO_SOLUTION">Problem -> solution</option>
+                            <option value="QUESTION_TO_ANSWER">Question -> answer</option>
+                            <option value="MYTH_TO_FACT">Myth -> fact</option>
+                            <option value="RISK_TO_WARNING">Risk -> warning</option>
+                            <option value="CONTRADICTION_TO_EXPLANATION">Contradiction -> explanation</option>
+                          </select>
+                        </div>
+                        <div class="col-md-4">
+                          <label class="form-label">Title packaging style</label>
+                          <select class="form-select" name="title_packaging_style">
+                            <option value="">Auto</option>
+                            <option value="SHORT_PUNCHY">Short punchy</option>
+                            <option value="CLEAR_EXPLANATORY">Clear explanatory</option>
+                            <option value="HIGH_CURIOSITY">High curiosity</option>
+                            <option value="RISK_FOCUSED">Risk focused</option>
+                            <option value="DEBATE_FOCUSED">Debate focused</option>
+                          </select>
+                        </div>
+                        <div class="col-md-4">
+                          <label class="form-label">Thumbnail text style</label>
+                          <select class="form-select" name="thumbnail_packaging_style">
+                            <option value="">Auto</option>
+                            <option value="ULTRA_SHORT">Ultra short</option>
+                            <option value="KEY_RISK">Key risk</option>
+                            <option value="KEY_QUESTION">Key question</option>
+                            <option value="KEY_PAYOFF">Key payoff</option>
+                            <option value="OBJECT_AND_CONSEQUENCE">Object and consequence</option>
+                          </select>
+                        </div>
+                        <div class="col-md-4">
                           <label class="form-label">Subtitle export formats</label>
                           <input class="form-control" name="subtitle_export_formats_text" value="<%= outputSummary.requestSnapshot.subtitle.exportFormats.join(', ') %>">
                         </div>
                         <div class="col-md-4">
                           <label class="form-label">Subtitle font family</label>
                           <input class="form-control" name="subtitle_font_family" value="<%= outputSummary.requestSnapshot.subtitle.fontFamily ?? '' %>">
-                        </div>
-                        <div class="col-md-4 form-check d-flex align-items-end">
-                          <div>
-                            <input class="form-check-input" type="checkbox" name="require_spoken_audio" id="require_spoken_audio_regenerate" <%= outputSummary.requestSnapshot.strategy.requireSpokenAudio !== false ? 'checked' : '' %>>
-                            <label class="form-check-label" for="require_spoken_audio_regenerate">Require spoken audio</label>
-                          </div>
                         </div>
                         <div class="col-md-4 form-check d-flex align-items-end">
                           <div>
@@ -683,6 +641,34 @@
                         <div class="col-md-4">
                           <label class="form-label">Packaging brief</label>
                           <textarea class="form-control" name="packaging_brief" rows="3"><%= outputSummary.requestSnapshot.strategy.packagingBrief ?? '' %></textarea>
+                        </div>
+                        <div class="col-md-4">
+                          <label class="form-label">Framing detection mode</label>
+                          <select class="form-select" name="framing_detection_mode">
+                            <% ['COMBINED','TRANSCRIPT_ONLY','FACE_DETECTION_ONLY'].forEach((value) => { %>
+                              <option value="<%= value %>" <%= outputSummary.requestSnapshot.visual.framingDetectionMode === value ? 'selected' : '' %>><%= value %></option>
+                            <% }) %>
+                          </select>
+                        </div>
+                        <div class="col-md-4">
+                          <label class="form-label">Split min face count</label>
+                          <input class="form-control" name="split_min_face_count" type="number" min="1" max="6" step="1" value="<%= outputSummary.requestSnapshot.visual.splitMinFaceCount ?? 2 %>">
+                        </div>
+                        <div class="col-md-4">
+                          <label class="form-label">Subtitle language</label>
+                          <input class="form-control" name="subtitle_language" value="<%= outputSummary.requestSnapshot.subtitle.language ?? 'id' %>" required>
+                        </div>
+                        <div class="col-md-4">
+                          <label class="form-label">Subtitle primary format</label>
+                          <select class="form-select" name="subtitle_primary_format">
+                            <% ['SRT','ASS','VTT','JSON'].forEach((value) => { %>
+                              <option value="<%= value %>" <%= (outputSummary.requestSnapshot.subtitle.exportFormats[0] ?? 'ASS') === value ? 'selected' : '' %>><%= value %></option>
+                            <% }) %>
+                          </select>
+                        </div>
+                        <div class="col-md-4">
+                          <label class="form-label">Subtitle safe margin %</label>
+                          <input class="form-control" name="subtitle_safe_margin_percent" type="number" min="0" max="30" step="1" value="<%= outputSummary.requestSnapshot.subtitle.safeMarginPercent ?? '' %>">
                         </div>
                       </div>
                     </details>
@@ -983,89 +969,107 @@
       </section>
 
       <% if (outputSummary.requestSnapshot) { %>
+        <%
+          const requestSnapshot = outputSummary.requestSnapshot ?? {};
+          const snapshotStrategy = requestSnapshot.strategy ?? {};
+          const snapshotVisual = requestSnapshot.visual ?? {};
+          const snapshotSubtitle = requestSnapshot.subtitle ?? {};
+          const snapshotCustomVocabulary = Array.isArray(requestSnapshot.customVocabulary) ? requestSnapshot.customVocabulary : [];
+          const strategyPreferredTopics = Array.isArray(snapshotStrategy.preferredTopics) ? snapshotStrategy.preferredTopics : [];
+          const strategyTopicsToAvoid = Array.isArray(snapshotStrategy.topicsToAvoid) ? snapshotStrategy.topicsToAvoid : [];
+          const strategySensitiveTopics = Array.isArray(snapshotStrategy.sensitiveTopics) ? snapshotStrategy.sensitiveTopics : [];
+          const strategyClipStyleTags = Array.isArray(snapshotStrategy.clipStyleTags) ? snapshotStrategy.clipStyleTags : [];
+          const strategyViralityPriorities = Array.isArray(snapshotStrategy.viralityPriorities) ? snapshotStrategy.viralityPriorities : [];
+          const subtitleExportFormats = Array.isArray(snapshotSubtitle.exportFormats) ? snapshotSubtitle.exportFormats : [];
+        %>
         <section class="panel mt-4">
           <div class="panel-heading">
             <div><h2>Strategy snapshot</h2><p>Brief, target, dan pengaturan yang benar-benar dipakai saat job ini dibuat.</p></div>
           </div>
           <div class="p-4">
             <div class="job-summary-grid mb-3">
-              <article class="job-summary-card"><span>Platform</span><strong><%= outputSummary.requestSnapshot.strategy.targetPlatform ?? '-' %></strong></article>
-              <article class="job-summary-card"><span>Objective</span><strong><%= outputSummary.requestSnapshot.strategy.objective ?? '-' %></strong></article>
-              <article class="job-summary-card"><span>Duration</span><strong><%= outputSummary.requestSnapshot.strategy.minimumDurationSeconds && outputSummary.requestSnapshot.strategy.maximumDurationSeconds ? `${outputSummary.requestSnapshot.strategy.minimumDurationSeconds}-${outputSummary.requestSnapshot.strategy.maximumDurationSeconds}s` : '-' %></strong></article>
-              <article class="job-summary-card"><span>Visual</span><strong><%= outputSummary.requestSnapshot.visual.aspectRatio ?? '-' %> / <%= outputSummary.requestSnapshot.visual.cropStrategy ?? '-' %></strong></article>
-              <article class="job-summary-card"><span>Candidate pool</span><strong><%= outputSummary.requestSnapshot.strategy.candidatePoolCount ?? '-' %></strong></article>
-              <article class="job-summary-card"><span>Standalone</span><strong><%= outputSummary.requestSnapshot.strategy.standalonePriority ?? '-' %></strong></article>
+              <article class="job-summary-card"><span>Platform</span><strong><%= displayAutoClipLabel(platformLabels, snapshotStrategy.targetPlatform) %></strong></article>
+              <article class="job-summary-card"><span>Objective</span><strong><%= displayAutoClipLabel(objectiveLabels, snapshotStrategy.objective) %></strong></article>
+              <article class="job-summary-card"><span>Duration</span><strong><%= snapshotStrategy.minimumDurationSeconds && snapshotStrategy.maximumDurationSeconds ? `${snapshotStrategy.minimumDurationSeconds}-${snapshotStrategy.maximumDurationSeconds}s` : '-' %></strong></article>
+              <article class="job-summary-card"><span>Visual</span><strong><%= snapshotVisual.aspectRatio ?? '-' %> / <%= displayAutoClipLabel(cropStrategyLabels, snapshotVisual.cropStrategy) %></strong></article>
+              <article class="job-summary-card"><span>Candidate pool</span><strong><%= snapshotStrategy.candidatePoolCount ?? '-' %></strong></article>
+              <article class="job-summary-card"><span>Standalone</span><strong><%= displayAutoClipLabel(standaloneLabels, snapshotStrategy.standalonePriority) %></strong></article>
             </div>
 
-            <% if (outputSummary.requestSnapshot.contentTitle || outputSummary.requestSnapshot.topic) { %>
+            <% if (requestSnapshot.contentTitle || requestSnapshot.topic) { %>
               <div class="candidate-caption-box mb-3">
-                <% if (outputSummary.requestSnapshot.contentTitle) { %><p><strong>Title:</strong> <%= outputSummary.requestSnapshot.contentTitle %></p><% } %>
-                <% if (outputSummary.requestSnapshot.topic) { %><p class="mb-0"><strong>Topic:</strong> <%= outputSummary.requestSnapshot.topic %></p><% } %>
+                <% if (requestSnapshot.contentTitle) { %><p><strong>Title:</strong> <%= requestSnapshot.contentTitle %></p><% } %>
+                <% if (requestSnapshot.topic) { %><p class="mb-0"><strong>Topic:</strong> <%= requestSnapshot.topic %></p><% } %>
               </div>
             <% } %>
 
-            <% if (outputSummary.requestSnapshot.contentContext) { %>
+            <% if (requestSnapshot.contentContext) { %>
               <div class="candidate-caption-box mb-3">
                 <strong>Analysis brief</strong>
-                <p><%= outputSummary.requestSnapshot.contentContext %></p>
+                <p><%= requestSnapshot.contentContext %></p>
               </div>
             <% } %>
 
             <div class="clip-output-review-grid">
               <article class="clip-output-review-card">
                 <span>Preferred topics</span>
-                <strong><%= outputSummary.requestSnapshot.strategy.preferredTopics.length %> item</strong>
-                <p><%= outputSummary.requestSnapshot.strategy.preferredTopics.length ? outputSummary.requestSnapshot.strategy.preferredTopics.join(', ') : 'Tidak ada topic boost khusus.' %></p>
+                <strong><%= strategyPreferredTopics.length %> item</strong>
+                <p><%= strategyPreferredTopics.length ? strategyPreferredTopics.join(', ') : 'Tidak ada topic boost khusus.' %></p>
               </article>
               <article class="clip-output-review-card">
                 <span>Topics to avoid</span>
-                <strong><%= outputSummary.requestSnapshot.strategy.topicsToAvoid.length %> item</strong>
-                <p><%= outputSummary.requestSnapshot.strategy.topicsToAvoid.length ? outputSummary.requestSnapshot.strategy.topicsToAvoid.join(', ') : 'Tidak ada area avoid khusus.' %></p>
+                <strong><%= strategyTopicsToAvoid.length %> item</strong>
+                <p><%= strategyTopicsToAvoid.length ? strategyTopicsToAvoid.join(', ') : 'Tidak ada area avoid khusus.' %></p>
               </article>
               <article class="clip-output-review-card">
                 <span>Sensitive topics</span>
-                <strong><%= outputSummary.requestSnapshot.strategy.sensitiveTopics.length %> item</strong>
-                <p><%= outputSummary.requestSnapshot.strategy.sensitiveTopics.length ? outputSummary.requestSnapshot.strategy.sensitiveTopics.join(', ') : 'Tidak ada label sensitif tambahan.' %></p>
+                <strong><%= strategySensitiveTopics.length %> item</strong>
+                <p><%= strategySensitiveTopics.length ? strategySensitiveTopics.join(', ') : 'Tidak ada label sensitif tambahan.' %></p>
               </article>
               <article class="clip-output-review-card">
                 <span>Clip styles</span>
-                <strong><%= outputSummary.requestSnapshot.strategy.clipStyleTags.length %> item</strong>
-                <p><%= outputSummary.requestSnapshot.strategy.clipStyleTags.length ? outputSummary.requestSnapshot.strategy.clipStyleTags.join(', ') : 'Tidak ada style khusus.' %></p>
+                <strong><%= strategyClipStyleTags.length %> item</strong>
+                <p><%= strategyClipStyleTags.length ? strategyClipStyleTags.join(', ') : 'Tidak ada style khusus.' %></p>
               </article>
               <article class="clip-output-review-card">
                 <span>Virality priorities</span>
-                <strong><%= outputSummary.requestSnapshot.strategy.viralityPriorities.length %> item</strong>
-                <p><%= outputSummary.requestSnapshot.strategy.viralityPriorities.length ? outputSummary.requestSnapshot.strategy.viralityPriorities.join(', ') : 'Pakai heuristik viral default.' %></p>
+                <strong><%= strategyViralityPriorities.length %> item</strong>
+                <p><%= strategyViralityPriorities.length ? strategyViralityPriorities.join(', ') : 'Pakai heuristik viral default.' %></p>
               </article>
               <article class="clip-output-review-card">
                 <span>Subtitle plan</span>
-                <strong><%= outputSummary.requestSnapshot.subtitle.language ?? '-' %></strong>
-                <p><%= outputSummary.requestSnapshot.subtitle.exportFormats.length ? outputSummary.requestSnapshot.subtitle.exportFormats.join(', ') : 'Format subtitle belum diset.' %></p>
+                <strong><%= snapshotSubtitle.language ?? '-' %></strong>
+                <p>
+                  <%= displayAutoClipLabel(subtitleStyleLabels, snapshotSubtitle.style ?? 'PODCAST_HIGHLIGHT') %>
+                  <% if (subtitleExportFormats.length) { %>
+                    · <%= subtitleExportFormats.join(', ') %>
+                  <% } %>
+                </p>
               </article>
             </div>
 
-            <% if (outputSummary.requestSnapshot.strategy.selectionBrief) { %>
+            <% if (snapshotStrategy.selectionBrief) { %>
               <div class="candidate-caption-box mt-3">
                 <strong>Selection brief</strong>
-                <p><%= outputSummary.requestSnapshot.strategy.selectionBrief %></p>
+                <p><%= snapshotStrategy.selectionBrief %></p>
               </div>
             <% } %>
-            <% if (outputSummary.requestSnapshot.strategy.avoidanceBrief) { %>
+            <% if (snapshotStrategy.avoidanceBrief) { %>
               <div class="candidate-caption-box mt-3">
                 <strong>Avoidance brief</strong>
-                <p><%= outputSummary.requestSnapshot.strategy.avoidanceBrief %></p>
+                <p><%= snapshotStrategy.avoidanceBrief %></p>
               </div>
             <% } %>
-            <% if (outputSummary.requestSnapshot.strategy.packagingBrief) { %>
+            <% if (snapshotStrategy.packagingBrief) { %>
               <div class="candidate-caption-box mt-3">
                 <strong>Packaging brief</strong>
-                <p><%= outputSummary.requestSnapshot.strategy.packagingBrief %></p>
+                <p><%= snapshotStrategy.packagingBrief %></p>
               </div>
             <% } %>
 
-            <% if (outputSummary.requestSnapshot.customVocabulary.length) { %>
+            <% if (snapshotCustomVocabulary.length) { %>
               <div class="candidate-tags mt-3">
-                <% outputSummary.requestSnapshot.customVocabulary.forEach((term) => { %>
+                <% snapshotCustomVocabulary.forEach((term) => { %>
                   <span><%= term %></span>
                 <% }) %>
               </div>
@@ -1073,11 +1077,10 @@
           </div>
         </section>
       <% } %>
-      <% } %>
 
       <section class="panel mt-4">
         <div class="panel-heading">
-          <div><h2>Clip outputs</h2><p>Hasil render, subtitle, metadata, dan file yang siap didownload.</p></div>
+          <div><h2>Clip outputs</h2><p>Fokus utama halaman ini sekarang ada di preview final, headline clip, dan file yang langsung siap dipakai.</p></div>
           <% if (clipOutputs.length) { %>
             <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/export-index">Export all outputs</a>
           <% } %>
@@ -1088,15 +1091,9 @@
             const subtitleReadyCount = clipOutputs.filter((output) => output.subtitleAvailable).length;
             const warningCount = clipOutputs.filter((output) => output.validationWarnings.length > 0).length;
             const playableCount = clipOutputs.filter((output) => output.outputPlayable === true).length;
-            const featuredOutput =
-              clipOutputs.find((output) => output.finalAvailable && output.outputPlayable === true)
-              ?? clipOutputs.find((output) => output.finalAvailable)
-              ?? clipOutputs.find((output) => output.previewAvailable)
-              ?? clipOutputs[0]
-              ?? null;
           %>
           <% if (clipOutputs.length) { %>
-            <div class="job-summary-grid">
+            <div class="job-summary-grid showcase-kpi-grid">
               <article class="job-summary-card"><span>Total outputs</span><strong><%= clipOutputs.length %></strong></article>
               <article class="job-summary-card"><span>Playable</span><strong><%= playableCount %></strong></article>
               <article class="job-summary-card"><span>Final videos</span><strong><%= finalReadyCount %></strong></article>
@@ -1110,254 +1107,229 @@
                 </ul>
               </div>
             <% } %>
-            <% if (featuredOutput) { %>
-              <div class="publish-actions-card" data-featured-output-summary>
-                <div class="clip-output-featured-header">
-                  <div>
-                    <strong>Best output saat ini</strong>
-                    <p>
-                      <%= featuredOutput.candidateTitle ?? `Clip Output ${featuredOutput.id.slice(0, 8)}` %>
-                      <% if (featuredOutput.aspectRatio) { %>| <%= featuredOutput.aspectRatio %><% } %>
-                      <% if (featuredOutput.durationMs) { %>| <%= Number(featuredOutput.durationMs) / 1000 %> detik<% } %>
-                    </p>
-                  </div>
-                  <span class="status status-<%= String(featuredOutput.qualityStatus).toLowerCase() %>"><%= featuredOutput.qualityStatus %></span>
-                </div>
-                <div class="d-flex flex-wrap gap-2">
-                  <% if (featuredOutput.finalPlaybackUrl) { %>
-                    <a class="btn btn-primary" href="<%= featuredOutput.finalPlaybackUrl %>" target="_blank" rel="noreferrer">Open best video</a>
-                  <% } else if (featuredOutput.previewPlaybackUrl) { %>
-                    <a class="btn btn-primary" href="<%= featuredOutput.previewPlaybackUrl %>" target="_blank" rel="noreferrer">Open best preview</a>
-                  <% } %>
-                  <% if (featuredOutput.finalAvailable) { %>
-                    <a class="btn btn-success" href="/app/jobs/<%= job.id %>/outputs/<%= featuredOutput.id %>/download?artifact=final">Download best video</a>
-                  <% } %>
-                  <% if (featuredOutput.subtitleAvailable && featuredOutput.subtitleDownloads.length) { %>
-                    <a class="btn btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= featuredOutput.id %>/download?artifact=<%= featuredOutput.subtitleDownloads[0].artifact %>">Download main subtitle</a>
-                  <% } %>
-                  <a class="btn btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= featuredOutput.id %>/export-index">Export best output index</a>
-                </div>
-              </div>
-            <% } %>
           <% } %>
           <% if (!clipOutputs.length) { %>
             <div class="empty-cell">No rendered clip outputs have been stored yet.</div>
           <% } %>
           <% clipOutputs.forEach((output, index) => { %>
-            <article
-              class="clip-output-card <%= featuredOutput && featuredOutput.id === output.id ? 'clip-output-card--featured' : '' %>"
-              <% if (featuredOutput && featuredOutput.id === output.id) { %>data-featured-clip-output tabindex="-1"<% } %>>
+            <article class="clip-output-card">
               <div class="clip-output-card__header">
                 <div>
                   <h3>#<%= index + 1 %> - <%= output.candidateTitle ?? `Clip Output ${output.id.slice(0, 8)}` %></h3>
                   <div class="text-muted small"><%= output.aspectRatio ?? '-' %> | <%= output.width && output.height ? `${output.width}x${output.height}` : 'Pending dimensions' %> | <%= output.durationMs ? `${Number(output.durationMs) / 1000} detik` : '-' %></div>
                 </div>
                 <div class="d-flex flex-wrap gap-2 align-items-center">
-                  <% if (featuredOutput && featuredOutput.id === output.id) { %>
-                    <span class="clip-output-featured-badge">Best output</span>
-                  <% } %>
                   <span class="status status-<%= String(output.qualityStatus).toLowerCase() %>"><%= output.qualityStatus %></span>
                 </div>
               </div>
-              <% if (output.suggestedCaption) { %>
-                <div class="candidate-caption-box">
-                  <strong>Caption rekomendasi:</strong>
-                  <p><%= output.suggestedCaption %></p>
+              <div class="clip-output-card__showcase">
+                <div class="clip-output-card__media">
+                  <% if ((output.previewPlaybackUrl || output.finalPlaybackUrl) && output.outputPlayable !== false) { %>
+                    <div class="candidate-caption-box mb-3 clip-output-preview-wrap">
+                      <strong>Video preview</strong>
+                      <video
+                        class="clip-output-preview-video"
+                        controls
+                        preload="auto"
+                        playsinline
+                        data-preview-frame="true"
+                        src="<%= output.previewPlaybackUrl ?? output.finalPlaybackUrl %>"></video>
+                      <p class="mt-2 mb-0 text-muted small">
+                        <% if (output.previewPlaybackUrl) { %>
+                          Player memakai artifact preview agar review lebih cepat.
+                        <% } else { %>
+                          Player memakai final output karena preview belum tersedia.
+                        <% } %>
+                      </p>
+                    </div>
+                  <% } else if (output.previewPlaybackUrl || output.finalPlaybackUrl) { %>
+                    <div class="clip-output-warning-box mb-3">
+                      <strong>Video preview belum bisa diputar</strong>
+                      <p class="mb-0">
+                        Artifact video sudah tercatat, tetapi validasi playback menandai output ini perlu review.
+                        Silakan buka atau download file secara langsung untuk inspeksi, atau jalankan rerender/regenerate jika perlu.
+                      </p>
+                    </div>
+                  <% } %>
                 </div>
-              <% } %>
-              <% if ((output.previewPlaybackUrl || output.finalPlaybackUrl) && output.outputPlayable !== false) { %>
-                <div class="candidate-caption-box mb-3">
-                  <strong>Video preview</strong>
-                  <video
-                    class="clip-output-preview-video"
-                    controls
-                    preload="auto"
-                    playsinline
-                    data-preview-frame="true"
-                    src="<%= output.previewPlaybackUrl ?? output.finalPlaybackUrl %>"></video>
-                  <p class="mt-2 mb-0 text-muted small">
-                    <% if (output.previewPlaybackUrl) { %>
-                      Player memakai artifact preview agar review lebih cepat.
-                    <% } else { %>
-                      Player memakai final output karena preview belum tersedia.
-                    <% } %>
-                  </p>
-                </div>
-              <% } else if (output.previewPlaybackUrl || output.finalPlaybackUrl) { %>
-                <div class="clip-output-warning-box mb-3">
-                  <strong>Video preview belum bisa diputar</strong>
-                  <p class="mb-0">
-                    Artifact video sudah tercatat, tetapi validasi playback menandai output ini perlu review.
-                    Silakan buka atau download file secara langsung untuk inspeksi, atau jalankan rerender/regenerate jika perlu.
-                  </p>
-                </div>
-              <% } %>
-              <% if (output.retentionLevel) { %>
-                <div class="text-muted small mb-2">Retention: <strong><%= output.retentionLevel %></strong></div>
-              <% } %>
-              <% if (typeof output.finalViralScore === 'number' && Number.isFinite(output.finalViralScore)) { %>
-                <div class="text-muted small mb-2">Viral score: <strong><%= output.finalViralScore.toFixed(2) %>/10</strong></div>
-              <% } %>
-              <div class="candidate-tags mb-3">
-                <% if (output.previewAvailable) { %><span>Preview</span><% } %>
-                <% if (output.finalAvailable) { %><span>Final video</span><% } %>
-                <% if (output.subtitleAvailable) { %><span>Subtitle <%= output.subtitleFormats.join(', ') %></span><% } %>
-                <% if (output.metadataAvailable) { %><span>Metadata</span><% } %>
-                <% if (output.validationStatus) { %><span>Validation <%= output.validationStatus %></span><% } %>
-                <% if (output.cropStrategy) { %><span>Crop <%= output.cropStrategy %></span><% } %>
-                <% if (output.framingDetectionMode) { %><span>Framing <%= output.framingDetectionMode %></span><% } %>
-                <% if (output.splitFrameEnabled === true) { %><span>Split frame on</span><% } %>
-                <% if (output.splitFrameEnabled === false) { %><span>Split frame off</span><% } %>
-                <% if (typeof output.detectedFaceCount === 'number') { %><span>Faces <%= output.detectedFaceCount %></span><% } %>
-              </div>
-              <div class="clip-output-review-grid mb-3">
-                <article class="clip-output-review-card">
-                  <span>Viral score</span>
-                  <strong><%= typeof output.finalViralScore === 'number' && Number.isFinite(output.finalViralScore) ? `${output.finalViralScore.toFixed(2)}/10` : 'Unknown' %></strong>
-                  <p><%= output.retentionLevel ? `Retention ${output.retentionLevel}` : 'Skor kandidat belum tersedia' %></p>
-                </article>
-                <article class="clip-output-review-card">
-                  <span>Validation</span>
-                  <strong><%= output.validationStatus ?? 'Pending review' %></strong>
-                  <p><%= output.renderStatus ?? 'Render status belum tersedia.' %></p>
-                </article>
-                <article class="clip-output-review-card">
-                  <span>Playback</span>
-                  <strong><%= output.outputPlayable === true ? 'Playable' : output.outputPlayable === false ? 'Check needed' : 'Unknown' %></strong>
-                  <p>
-                    <% if (output.previewAvailable) { %>
-                      Preview <%= output.previewPlayable === true ? 'ready' : output.previewPlayable === false ? 'needs review' : 'pending' %>
-                    <% } else { %>
-                      Preview video terpisah dilewati untuk menghemat storage.
-                    <% } %>
-                  </p>
-                </article>
-                <article class="clip-output-review-card">
-                  <span>Codec</span>
-                  <strong><%= output.finalVideoCodec ?? 'Unknown' %> / <%= output.finalAudioCodec ?? 'Unknown' %></strong>
-                  <p><%= output.videoCodecMatchesTarget === true && output.audioCodecMatchesTarget === true ? 'Target codec matched' : 'Review codec target' %></p>
-                </article>
-                <article class="clip-output-review-card">
-                  <span>Subtitle cues</span>
-                  <strong><%= output.subtitleCueCount ?? 0 %></strong>
-                  <p><%= output.subtitleExportReady === true ? 'Export siap dipakai' : 'Subtitle export belum siap' %></p>
-                </article>
-                <article class="clip-output-review-card">
-                  <span>Framing</span>
-                  <strong><%= output.framingDetectionMode ?? 'Unknown' %></strong>
-                  <p>
-                    <% if (output.splitFrameEnabled === true) { %>
-                      Split aktif
-                    <% } else if (output.splitFrameEnabled === false) { %>
-                      Split nonaktif
-                    <% } else { %>
-                      Mode split belum tercatat
-                    <% } %>
-                    <% if (typeof output.splitMinFaceCount === 'number') { %>
-                      | Min face <%= output.splitMinFaceCount %>
-                    <% } %>
-                  </p>
-                </article>
-                <article class="clip-output-review-card">
-                  <span>Face layout</span>
-                  <strong>
-                    <% if (typeof output.detectedFaceCount === 'number') { %>
-                      <%= output.detectedFaceCount %> face
-                    <% } else { %>
-                      Unknown
-                    <% } %>
-                  </strong>
-                  <p>
-                    <% if (typeof output.averageFaceCount === 'number') { %>
-                      Avg <%= output.averageFaceCount.toFixed(1) %>
-                    <% } %>
-                    <% if (output.singleFaceAnchor) { %>
-                      <%= typeof output.averageFaceCount === 'number' ? ' | ' : '' %>Anchor <%= output.singleFaceAnchor %>
-                    <% } %>
-                    <% if (output.splitFrameSupported === true) { %>
-                      <%= (typeof output.averageFaceCount === 'number' || output.singleFaceAnchor) ? ' | ' : '' %>Split supported
-                    <% } %>
-                  </p>
-                </article>
-              </div>
-              <div class="candidate-tags mb-3">
-                <span><%= output.resolutionMatchesTarget === true ? 'Resolution OK' : output.resolutionMatchesTarget === false ? 'Resolution review' : 'Resolution pending' %></span>
-                <span><%= output.audioPresent === true ? 'Audio OK' : output.audioPresent === false ? 'Audio missing' : 'Audio pending' %></span>
-                <span><%= output.durationWithinTolerance === true ? 'Duration OK' : output.durationWithinTolerance === false ? 'Duration review' : 'Duration pending' %></span>
-                <% if (output.finalDurationMs) { %><span>Final <%= Number(output.finalDurationMs) / 1000 %>s</span><% } %>
-                <% if (output.previewDurationMs) { %><span>Preview <%= Number(output.previewDurationMs) / 1000 %>s</span><% } %>
-              </div>
-              <% if (output.validationWarnings.length) { %>
-                <div class="clip-output-warning-box mb-3">
-                  <strong>Warning render</strong>
-                  <ul>
-                    <% output.validationWarnings.forEach((warning) => { %>
-                      <li><%= warning %></li>
-                    <% }) %>
-                  </ul>
-                </div>
-              <% } %>
-              <% if (output.latestAttemptMessage) { %>
-                <div class="clip-output-warning-box mb-3">
-                  <strong>Status render terbaru</strong>
-                  <p class="mb-0"><%= output.latestAttemptMessage %></p>
-                </div>
-              <% } %>
-              <div class="clip-output-action-groups">
-                <div class="clip-output-action-group">
-                  <span>Video</span>
-                  <div class="d-flex flex-wrap gap-2">
-                <% if (output.finalPlaybackUrl) { %>
-                  <a class="btn btn-sm btn-primary" href="<%= output.finalPlaybackUrl %>" target="_blank" rel="noreferrer">Open video</a>
-                <% } else if (output.previewPlaybackUrl) { %>
-                  <a class="btn btn-sm btn-primary" href="<%= output.previewPlaybackUrl %>" target="_blank" rel="noreferrer">Open preview</a>
-                <% } %>
-                <% if (output.previewAvailable) { %>
-                  <a class="btn btn-sm btn-outline-primary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=preview">Preview</a>
-                <% } %>
-                <% if (output.finalAvailable) { %>
-                  <a class="btn btn-sm btn-success" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=final">Download video</a>
-                <% } %>
+                <div class="clip-output-card__content">
+                  <% if (output.suggestedCaption) { %>
+                    <div class="candidate-caption-box">
+                      <strong>Caption rekomendasi:</strong>
+                      <p><%= output.suggestedCaption %></p>
+                    </div>
+                  <% } %>
+                  <% if (output.retentionLevel) { %>
+                    <div class="text-muted small mb-2">Retention: <strong><%= output.retentionLevel %></strong></div>
+                  <% } %>
+                  <% if (typeof output.finalViralScore === 'number' && Number.isFinite(output.finalViralScore)) { %>
+                    <div class="text-muted small mb-2">Viral score: <strong><%= output.finalViralScore.toFixed(2) %>/10</strong></div>
+                  <% } %>
+                  <div class="candidate-tags mb-3">
+                    <% if (output.previewAvailable) { %><span>Preview</span><% } %>
+                    <% if (output.finalAvailable) { %><span>Final video</span><% } %>
+                    <% if (output.subtitleAvailable) { %><span>Subtitle <%= output.subtitleFormats.join(', ') %></span><% } %>
+                    <% if (output.metadataAvailable) { %><span>Metadata</span><% } %>
+                    <% if (output.validationStatus) { %><span>Validation <%= output.validationStatus %></span><% } %>
+                    <% if (output.cropStrategy) { %><span><%= displayAutoClipLabel(cropStrategyLabels, output.cropStrategy) %></span><% } %>
+                    <% if (output.framingDetectionMode) { %><span><%= displayAutoClipLabel(framingModeLabels, output.framingDetectionMode) %></span><% } %>
+                    <% if (output.splitFrameEnabled === true) { %><span>Split frame on</span><% } %>
+                    <% if (output.splitFrameEnabled === false) { %><span>Split frame off</span><% } %>
+                    <% if (typeof output.detectedFaceCount === 'number') { %><span>Faces <%= output.detectedFaceCount %></span><% } %>
                   </div>
-                </div>
-                <% if (output.subtitleAvailable) { %>
-                  <div class="clip-output-action-group">
-                    <span>Subtitle</span>
-                    <div class="d-flex flex-wrap gap-2">
-                  <% output.subtitleDownloads.forEach((subtitle) => { %>
-                    <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=<%= subtitle.artifact %>">
-                      Subtitle <%= subtitle.label %>
-                    </a>
-                  <% }) %>
+                  <div class="clip-output-action-groups">
+                    <div class="clip-output-action-group">
+                      <span>Video</span>
+                      <div class="d-flex flex-wrap gap-2">
+                    <% if (output.finalPlaybackUrl) { %>
+                      <a class="btn btn-sm btn-primary" href="<%= output.finalPlaybackUrl %>" target="_blank" rel="noreferrer">Open video</a>
+                    <% } else if (output.previewPlaybackUrl) { %>
+                      <a class="btn btn-sm btn-primary" href="<%= output.previewPlaybackUrl %>" target="_blank" rel="noreferrer">Open preview</a>
+                    <% } %>
+                    <% if (output.previewAvailable) { %>
+                      <a class="btn btn-sm btn-outline-primary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=preview">Preview</a>
+                    <% } %>
+                    <% if (output.finalAvailable) { %>
+                      <a class="btn btn-sm btn-success" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=final">Download video</a>
+                    <% } %>
+                      </div>
+                    </div>
+                    <% if (output.subtitleAvailable) { %>
+                      <div class="clip-output-action-group">
+                        <span>Subtitle</span>
+                        <div class="d-flex flex-wrap gap-2">
+                      <% output.subtitleDownloads.forEach((subtitle) => { %>
+                        <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=<%= subtitle.artifact %>">
+                          Subtitle <%= subtitle.label %>
+                        </a>
+                      <% }) %>
+                        </div>
+                      </div>
+                    <% } %>
+                    <div class="clip-output-action-group">
+                      <span>Assets</span>
+                      <div class="d-flex flex-wrap gap-2">
+                        <% if (output.metadataAvailable) { %>
+                          <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=metadata">Metadata</a>
+                        <% } %>
+                        <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/export-index">Export index</a>
+                        <form data-api-form action="/api/v1/jobs/<%= job.id %>/outputs/<%= output.id %>/rerender" method="post">
+                          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                          <button class="btn btn-sm btn-outline-warning" type="submit">Rerender</button>
+                        </form>
+                      </div>
                     </div>
                   </div>
-                <% } %>
-                <div class="clip-output-action-group">
-                  <span>Assets</span>
-                  <div class="d-flex flex-wrap gap-2">
-                    <% if (output.metadataAvailable) { %>
-                      <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/download?artifact=metadata">Metadata</a>
-                    <% } %>
-                    <a class="btn btn-sm btn-outline-secondary" href="/app/jobs/<%= job.id %>/outputs/<%= output.id %>/export-index">Export index</a>
-                    <form data-api-form action="/api/v1/jobs/<%= job.id %>/outputs/<%= output.id %>/rerender" method="post">
-                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                      <button class="btn btn-sm btn-outline-warning" type="submit">Rerender</button>
-                    </form>
+                  <div class="publish-actions-card mt-3">
+                    <div>
+                      <strong>Download siap pakai</strong>
+                      <p>Output ini difokuskan ke render final, subtitle, dan metadata agar workflow review lebih cepat dan storage tetap hemat.</p>
+                    </div>
                   </div>
+                  <% if (output.subtitleAvailable) { %>
+                    <div class="text-muted small mt-3">
+                      Subtitle tersedia:
+                      <%= output.subtitleDownloads.map((subtitle) => `${subtitle.label}${subtitle.language ? ` (${subtitle.language})` : ''}${subtitle.isBurnedIn ? ' burned-in' : ''}`).join(', ') %>
+                    </div>
+                  <% } %>
                 </div>
               </div>
-              <div class="publish-actions-card mt-3">
-                <div>
-                  <strong>Download siap pakai</strong>
-                  <p>Untuk sekarang output difokuskan ke render final, subtitle, dan metadata agar storage lebih hemat. Publish otomatis ke platform akan diaktifkan terpisah setelah integrasi kredensial selesai.</p>
+              <details class="clip-output-technical mt-3">
+                <summary>Show technical checks</summary>
+                <div class="clip-output-review-grid mt-3 mb-3">
+                  <article class="clip-output-review-card">
+                    <span>Viral score</span>
+                    <strong><%= typeof output.finalViralScore === 'number' && Number.isFinite(output.finalViralScore) ? `${output.finalViralScore.toFixed(2)}/10` : 'Unknown' %></strong>
+                    <p><%= output.retentionLevel ? `Retention ${output.retentionLevel}` : 'Skor kandidat belum tersedia' %></p>
+                  </article>
+                  <article class="clip-output-review-card">
+                    <span>Validation</span>
+                    <strong><%= output.validationStatus ?? 'Pending review' %></strong>
+                    <p><%= output.renderStatus ?? 'Render status belum tersedia.' %></p>
+                  </article>
+                  <article class="clip-output-review-card">
+                    <span>Playback</span>
+                    <strong><%= output.outputPlayable === true ? 'Playable' : output.outputPlayable === false ? 'Check needed' : 'Unknown' %></strong>
+                    <p>
+                      <% if (output.previewAvailable) { %>
+                        Preview <%= output.previewPlayable === true ? 'ready' : output.previewPlayable === false ? 'needs review' : 'pending' %>
+                      <% } else { %>
+                        Preview video terpisah dilewati untuk menghemat storage.
+                      <% } %>
+                    </p>
+                  </article>
+                  <article class="clip-output-review-card">
+                    <span>Codec</span>
+                    <strong><%= output.finalVideoCodec ?? 'Unknown' %> / <%= output.finalAudioCodec ?? 'Unknown' %></strong>
+                    <p><%= output.videoCodecMatchesTarget === true && output.audioCodecMatchesTarget === true ? 'Target codec matched' : 'Review codec target' %></p>
+                  </article>
+                  <article class="clip-output-review-card">
+                    <span>Subtitle cues</span>
+                    <strong><%= output.subtitleCueCount ?? 0 %></strong>
+                    <p><%= output.subtitleExportReady === true ? 'Export siap dipakai' : 'Subtitle export belum siap' %></p>
+                  </article>
+                  <article class="clip-output-review-card">
+                    <span>Framing</span>
+                    <strong><%= displayAutoClipLabel(framingModeLabels, output.framingDetectionMode ?? 'Unknown') %></strong>
+                    <p>
+                      <% if (output.splitFrameEnabled === true) { %>
+                        Split aktif
+                      <% } else if (output.splitFrameEnabled === false) { %>
+                        Split nonaktif
+                      <% } else { %>
+                        Mode split belum tercatat
+                      <% } %>
+                      <% if (typeof output.splitMinFaceCount === 'number') { %>
+                        | Min face <%= output.splitMinFaceCount %>
+                      <% } %>
+                    </p>
+                  </article>
+                  <article class="clip-output-review-card">
+                    <span>Face layout</span>
+                    <strong>
+                      <% if (typeof output.detectedFaceCount === 'number') { %>
+                        <%= output.detectedFaceCount %> face
+                      <% } else { %>
+                        Unknown
+                      <% } %>
+                    </strong>
+                    <p>
+                      <% if (typeof output.averageFaceCount === 'number') { %>
+                        Avg <%= output.averageFaceCount.toFixed(1) %>
+                      <% } %>
+                      <% if (output.singleFaceAnchor) { %>
+                        <%= typeof output.averageFaceCount === 'number' ? ' | ' : '' %>Anchor <%= output.singleFaceAnchor %>
+                      <% } %>
+                      <% if (output.splitFrameSupported === true) { %>
+                        <%= (typeof output.averageFaceCount === 'number' || output.singleFaceAnchor) ? ' | ' : '' %>Split supported
+                      <% } %>
+                    </p>
+                  </article>
                 </div>
-              </div>
-              <% if (output.subtitleAvailable) { %>
-                <div class="text-muted small mt-3">
-                  Subtitle tersedia:
-                  <%= output.subtitleDownloads.map((subtitle) => `${subtitle.label}${subtitle.language ? ` (${subtitle.language})` : ''}${subtitle.isBurnedIn ? ' burned-in' : ''}`).join(', ') %>
+                <div class="candidate-tags mb-3">
+                  <span><%= output.resolutionMatchesTarget === true ? 'Resolution OK' : output.resolutionMatchesTarget === false ? 'Resolution review' : 'Resolution pending' %></span>
+                  <span><%= output.audioPresent === true ? 'Audio OK' : output.audioPresent === false ? 'Audio missing' : 'Audio pending' %></span>
+                  <span><%= output.durationWithinTolerance === true ? 'Duration OK' : output.durationWithinTolerance === false ? 'Duration review' : 'Duration pending' %></span>
+                  <% if (output.finalDurationMs) { %><span>Final <%= Number(output.finalDurationMs) / 1000 %>s</span><% } %>
+                  <% if (output.previewDurationMs) { %><span>Preview <%= Number(output.previewDurationMs) / 1000 %>s</span><% } %>
                 </div>
-              <% } %>
+                <% if (output.validationWarnings.length) { %>
+                  <div class="clip-output-warning-box mb-3">
+                    <strong>Warning render</strong>
+                    <ul>
+                      <% output.validationWarnings.forEach((warning) => { %>
+                        <li><%= warning %></li>
+                      <% }) %>
+                    </ul>
+                  </div>
+                <% } %>
+                <% if (output.latestAttemptMessage) { %>
+                  <div class="clip-output-warning-box mb-0">
+                    <strong>Status render terbaru</strong>
+                    <p class="mb-0"><%= output.latestAttemptMessage %></p>
+                  </div>
+                <% } %>
+              </details>
             </article>
           <% }) %>
         </div>
@@ -1370,7 +1342,7 @@
         <details>
           <summary>Lihat fase pipeline</summary>
           <div class="table-responsive mt-3">
-            <table class="table align-middle">
+            <table class="table align-middle mobile-card-table technical-stage-table">
               <thead><tr><th>Phase</th><th>Status</th><th>Progress</th><th>Weight</th></tr></thead>
               <tbody>
                 <% if (!groupedStages.length) { %>
@@ -1378,10 +1350,10 @@
                 <% } %>
                 <% groupedStages.forEach((stage) => { %>
                   <tr data-stage-row="<%= stage.key %>">
-                    <td><strong><%= stage.label %></strong></td>
-                    <td><span class="status status-<%= stage.status.toLowerCase() %>" data-stage-status><%= stage.status %></span></td>
-                    <td data-stage-progress><%= stage.progressPercent %>%</td>
-                    <td><%= Number(stage.progressWeight).toString() %></td>
+                    <td data-label="Phase"><strong><%= stage.label %></strong></td>
+                    <td data-label="Status"><span class="status status-<%= stage.status.toLowerCase() %>" data-stage-status><%= stage.status %></span></td>
+                    <td data-label="Progress" data-stage-progress><%= stage.progressPercent %>%</td>
+                    <td data-label="Weight"><%= Number(stage.progressWeight).toString() %></td>
                   </tr>
                 <% }) %>
               </tbody>
@@ -1390,6 +1362,7 @@
         </details>
       </section>
 
+    <% } %>
     <% } %>
   </main>
 </div>

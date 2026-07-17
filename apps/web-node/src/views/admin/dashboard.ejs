@@ -14,13 +14,24 @@
     </div>
   </section>
   <section class="panel mt-4">
+    <div class="panel-heading"><div><h2>Media Storage Split</h2><p>Lihat dengan cepat apakah beban storage lebih banyak datang dari source mentah user atau dari hasil produksi clip dan TTS.</p></div></div>
+    <div class="p-4">
+      <div class="clip-output-review-grid">
+        <article class="clip-output-review-card"><span>Imported source</span><strong><%= mediaSummary.importedSource %> assets</strong><p>Source mentah hasil upload atau import user. Biasanya ini bucket yang paling cepat membesar.</p><a class="btn btn-sm btn-outline-primary mt-2" href="/admin/media?family=SOURCE_ONLY">Open source media</a></article>
+        <article class="clip-output-review-card"><span>Clip results</span><strong><%= mediaSummary.clipResults %> assets</strong><p>Video final hasil auto-clipping yang sudah siap direview atau diunduh.</p><a class="btn btn-sm btn-outline-primary mt-2" href="/admin/media?kind=CLIP_RESULT">Open clip outputs</a></article>
+        <article class="clip-output-review-card"><span>TTS outputs</span><strong><%= mediaSummary.ttsOutputs %> assets</strong><p>Audio hasil text-to-speech yang tersimpan di folder output user.</p><a class="btn btn-sm btn-outline-primary mt-2" href="/admin/media?kind=TTS_OUTPUT">Open TTS outputs</a></article>
+        <article class="clip-output-review-card"><span>Subtitle sidecars</span><strong><%= mediaSummary.subtitleArtifacts %> assets</strong><p>Artifact subtitle pendamping seperti SRT, ASS, VTT, dan JSON.</p><a class="btn btn-sm btn-outline-primary mt-2" href="/admin/media?kind=SUBTITLE_ARTIFACT">Open subtitle artifacts</a></article>
+      </div>
+    </div>
+  </section>
+  <section class="panel mt-4">
     <div class="panel-heading"><div><h2>Management Hub</h2><p>Shortcut area for the admin tasks that usually matter most during daily operations.</p></div></div>
     <div class="p-4">
       <div class="clip-output-review-grid">
         <article class="clip-output-review-card"><span>User management</span><strong>Accounts, roles, plans</strong><p>Create users, update status, revoke sessions, and audit who was impersonated.</p><a class="btn btn-sm btn-outline-primary mt-2" href="/admin/users">Open user management</a></article>
         <article class="clip-output-review-card"><span>Provider management</span><strong>Vendors, models, credentials</strong><p>Control routing readiness, platform credentials, timeout policy, and capability exposure.</p><a class="btn btn-sm btn-outline-primary mt-2" href="/admin/providers">Open provider management</a></article>
         <article class="clip-output-review-card"><span>Job operations</span><strong>Retries, failures, cross-tenant review</strong><p>Investigate stuck pipelines, failed jobs, and operator intervention history.</p><a class="btn btn-sm btn-outline-primary mt-2" href="/admin/jobs">Open job operations</a></article>
-        <article class="clip-output-review-card"><span>Platform settings</span><strong>Flags, secret configs, rollout policy</strong><p>Manage maintenance toggles, render defaults, webhook config, and platform-wide rules.</p><a class="btn btn-sm btn-outline-primary mt-2" href="/admin/system">Open platform settings</a></article>
+        <article class="clip-output-review-card"><span>Media governance</span><strong>Source vs output cleanup</strong><p>Bedakan video panjang import user dari hasil clip dan TTS, lalu cleanup permanen dengan filter yang lebih aman.</p><a class="btn btn-sm btn-outline-primary mt-2" href="/admin/media">Open media management</a></article>
       </div>
     </div>
   </section>

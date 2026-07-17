@@ -1,6 +1,7 @@
 import type { Prisma } from "../../generated/prisma/client.js";
 
 export const AUTO_CLIP_ANALYZER_RUNTIME_KEY = "auto_clip_analyzer_runtime";
+export const AUTO_CLIP_SOURCE_QUALITY_KEY = "auto_clip_source_quality";
 
 export type AutoClipAnalyzerMode = "openai_then_heuristic" | "heuristic_then_openai" | "heuristic";
 
@@ -8,6 +9,13 @@ export interface AutoClipAnalyzerRuntimeConfig {
   mode: AutoClipAnalyzerMode;
   provider: string;
   model: string;
+}
+
+export type AutoClipSourceQualityHeight = 360 | 480 | 720 | 1080;
+
+export interface AutoClipSourceQualityConfig {
+  targetHeight: AutoClipSourceQualityHeight;
+  minimumHeight: AutoClipSourceQualityHeight;
 }
 
 export const LOCAL_HEURISTIC_PROVIDER_CODE = "python-local";
@@ -18,6 +26,13 @@ export const DEFAULT_AUTO_CLIP_ANALYZER_RUNTIME_CONFIG: AutoClipAnalyzerRuntimeC
   provider: "openai",
   model: "gpt-5.5"
 };
+
+export const DEFAULT_AUTO_CLIP_SOURCE_QUALITY_CONFIG: AutoClipSourceQualityConfig = {
+  targetHeight: 1080,
+  minimumHeight: 480
+};
+
+const AUTO_CLIP_SOURCE_QUALITY_HEIGHTS = new Set<AutoClipSourceQualityHeight>([360, 480, 720, 1080]);
 
 export function normalizeAutoClipAnalyzerRuntimeConfig(
   value: Prisma.JsonValue | Record<string, unknown> | AutoClipAnalyzerRuntimeConfig | null | undefined
@@ -61,5 +76,33 @@ export function buildAutoClipAnalyzerRuntimeSettingValue(
     mode: normalized.mode,
     provider: normalized.provider,
     model: normalized.model
+  } satisfies Record<string, unknown>;
+}
+
+export function normalizeAutoClipSourceQualityConfig(
+  value: Prisma.JsonValue | Record<string, unknown> | AutoClipSourceQualityConfig | null | undefined
+): AutoClipSourceQualityConfig {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const rawTargetHeight = record.target_height ?? record.targetHeight;
+  const numericTargetHeight = typeof rawTargetHeight === "string" ? Number(rawTargetHeight) : rawTargetHeight;
+  const targetHeight = AUTO_CLIP_SOURCE_QUALITY_HEIGHTS.has(numericTargetHeight as AutoClipSourceQualityHeight)
+    ? (numericTargetHeight as AutoClipSourceQualityHeight)
+    : DEFAULT_AUTO_CLIP_SOURCE_QUALITY_CONFIG.targetHeight;
+
+  return {
+    targetHeight,
+    minimumHeight: targetHeight >= 720 ? 480 : targetHeight
+  };
+}
+
+export function buildAutoClipSourceQualitySettingValue(
+  value: Prisma.JsonValue | Record<string, unknown> | AutoClipSourceQualityConfig | null | undefined
+) {
+  const normalized = normalizeAutoClipSourceQualityConfig(value);
+  return {
+    target_height: normalized.targetHeight,
+    minimum_height: normalized.minimumHeight,
+    fallback_policy: normalized.targetHeight >= 720 ? "bounded_to_480" : "exact"
   } satisfies Record<string, unknown>;
 }

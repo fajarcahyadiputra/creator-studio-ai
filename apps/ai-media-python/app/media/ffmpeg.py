@@ -130,6 +130,8 @@ def build_clip_render_command(
     if video_preset not in {"ultrafast", "superfast", "veryfast", "faster", "fast", "medium"}:
         raise ValueError("unsupported video preset")
 
+    normalized_strategy = str(crop_strategy or "AUTO_REFRAME").strip().upper()
+
     if layout_template == "PODCAST_SPOTLIGHT_9X16":
         return _build_podcast_spotlight_render_command(
             source=source,
@@ -144,7 +146,23 @@ def build_clip_render_command(
             video_preset=video_preset,
             subtitle_path=subtitle_path,
             layout_options=layout_options or {},
-            crop_strategy=crop_strategy,
+            crop_strategy=normalized_strategy,
+        )
+
+    if _should_use_standard_split_screen(crop_strategy=normalized_strategy, layout_options=layout_options or {}):
+        return _build_standard_split_screen_render_command(
+            source=source,
+            destination=destination,
+            start_seconds=start_seconds,
+            duration_seconds=duration_seconds,
+            source_width=source_width,
+            source_height=source_height,
+            width=width,
+            height=height,
+            fps=fps,
+            video_preset=video_preset,
+            subtitle_path=subtitle_path,
+            layout_options=layout_options or {},
         )
 
     arguments: list[str] = [
@@ -165,7 +183,7 @@ def build_clip_render_command(
         target_height=height,
         fps=fps,
         subtitle_path=subtitle_path,
-        crop_strategy=crop_strategy,
+        crop_strategy=normalized_strategy,
         layout_options=layout_options or {},
     )
     arguments.extend(["-vf", filter_graph])
@@ -185,6 +203,223 @@ def build_clip_render_command(
         ]
     )
     return FfmpegCommand(executable="ffmpeg", arguments=tuple(arguments))
+
+
+def _should_use_standard_split_screen(*, crop_strategy: str, layout_options: dict[str, Any]) -> bool:
+    # A split strategy is a user preference. The analyzer must still confirm
+    # two distinct, stable faces before FFmpeg creates two panels.
+    return bool(layout_options.get("split_frame_enabled"))
+
+
+def _build_standard_split_screen_render_command(
+    *,
+    source: str | Path,
+    destination: str | Path,
+    start_seconds: float,
+    duration_seconds: float,
+    source_width: int | None,
+    source_height: int | None,
+    width: int,
+    height: int,
+    fps: int,
+    video_preset: str,
+    subtitle_path: str | Path | None,
+    layout_options: dict[str, Any],
+) -> FfmpegCommand:
+    top_height = height // 2
+    bottom_height = height - top_height
+    primary_anchor_ratio, secondary_anchor_ratio = _resolve_split_anchor_ratios(layout_options)
+    top_crop = _build_split_panel_crop_filter(
+        source_width=source_width,
+        source_height=source_height,
+        target_width=width,
+        target_height=top_height,
+        default_anchor=primary_anchor_ratio,
+        duration_seconds=duration_seconds,
+        layout_options=layout_options,
+        anchor_key="primary_anchor_ratio",
+    )
+    bottom_crop = _build_split_panel_crop_filter(
+        source_width=source_width,
+        source_height=source_height,
+        target_width=width,
+        target_height=bottom_height,
+        default_anchor=secondary_anchor_ratio,
+        duration_seconds=duration_seconds,
+        layout_options=layout_options,
+        anchor_key="secondary_anchor_ratio",
+    )
+    top_chain = ",".join(
+        [part for part in [top_crop, f"scale={width}:{top_height}", f"fps={fps}"] if part]
+    )
+    bottom_chain = ",".join(
+        [part for part in [bottom_crop, f"scale={width}:{bottom_height}", f"fps={fps}"] if part]
+    )
+    single_crop = _build_face_tracking_crop_filter(
+        source_width=source_width,
+        source_height=source_height,
+        target_width=width,
+        target_height=height,
+        layout_options=layout_options,
+    ) or _build_center_crop_filter(
+        source_width=source_width,
+        source_height=source_height,
+        target_width=width,
+        target_height=height,
+    )
+    single_chain = ",".join(
+        [part for part in [single_crop, f"scale={width}:{height}", f"fps={fps}"] if part]
+    )
+    split_enable_expression = _build_split_enable_expression(
+        layout_options=layout_options,
+        duration_seconds=duration_seconds,
+    )
+
+    graph_parts = [
+        f"[0:v]{single_chain}[clip_single]",
+        f"[0:v]{top_chain}[clip_top]",
+        f"[0:v]{bottom_chain}[clip_bottom]",
+        "[clip_top][clip_bottom]vstack=inputs=2[clip_split]",
+        f"[clip_single][clip_split]overlay=0:0:enable='{split_enable_expression}'[clip]",
+    ]
+    headline_filters = _build_standard_headline_filter_chain(
+        layout_options=layout_options,
+        target_width=width,
+        target_height=height,
+    )
+    current_label = "clip"
+    if headline_filters:
+        graph_parts.append(f"[clip]{','.join(headline_filters)}[clip_headline]")
+        current_label = "clip_headline"
+    if subtitle_path is not None:
+        escaped_subtitle = _escape_filter_value(subtitle_path)
+        graph_parts.append(f"[{current_label}]subtitles='{escaped_subtitle}'[vout]")
+    else:
+        graph_parts.append(f"[{current_label}]null[vout]")
+
+    arguments: list[str] = [
+        "-hide_banner",
+        "-nostdin",
+        "-y",
+        "-ss",
+        f"{start_seconds:.3f}",
+        "-t",
+        f"{duration_seconds:.3f}",
+        "-i",
+        str(source),
+        "-filter_complex",
+        ";".join(graph_parts),
+        "-map",
+        "[vout]",
+        "-map",
+        "0:a?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        video_preset,
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-movflags",
+        "+faststart",
+        "-shortest",
+        str(destination),
+    ]
+    return FfmpegCommand(executable="ffmpeg", arguments=tuple(arguments))
+
+
+def _build_split_panel_crop_filter(
+    *,
+    source_width: int | None,
+    source_height: int | None,
+    target_width: int,
+    target_height: int,
+    default_anchor: float,
+    duration_seconds: float,
+    layout_options: dict[str, Any],
+    anchor_key: str,
+) -> str | None:
+    crop_width, crop_height = _resolve_crop_dimensions(
+        source_width=source_width,
+        source_height=source_height,
+        target_width=target_width,
+        target_height=target_height,
+    )
+    if crop_width is None or crop_height is None or not source_width or not source_height:
+        return None
+
+    face_layout_summary = layout_options.get("face_layout_summary")
+    if not isinstance(face_layout_summary, dict):
+        return _build_region_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+            anchor=default_anchor,
+        )
+
+    sample_anchor_pairs = face_layout_summary.get("sample_anchor_pairs")
+    sample_offsets = face_layout_summary.get("sample_offsets_seconds")
+    if not isinstance(sample_anchor_pairs, list) or not isinstance(sample_offsets, list):
+        return _build_region_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+            anchor=default_anchor,
+        )
+
+    normalized_samples: list[tuple[float, float]] = []
+    for index, sample in enumerate(sample_anchor_pairs):
+        if index >= len(sample_offsets):
+            break
+        if not isinstance(sample, dict):
+            continue
+        offset_value = sample_offsets[index]
+        anchor_value = sample.get(anchor_key)
+        if not isinstance(offset_value, (int, float)) or not isinstance(anchor_value, (int, float)):
+            continue
+        normalized_samples.append((float(offset_value), float(anchor_value)))
+
+    if not normalized_samples:
+        return _build_region_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+            anchor=default_anchor,
+        )
+
+    expression = str(
+        _resolve_horizontal_crop_offset(
+            source_width=source_width,
+            crop_width=crop_width,
+            anchor=default_anchor,
+        )
+    )
+    for index in range(len(normalized_samples) - 1, -1, -1):
+        offset_seconds, anchor_ratio = normalized_samples[index]
+        start_seconds = 0.0 if index == 0 else max(0.0, (normalized_samples[index - 1][0] + offset_seconds) / 2)
+        end_seconds = (
+            float(duration_seconds)
+            if index == len(normalized_samples) - 1
+            else min(float(duration_seconds), (offset_seconds + normalized_samples[index + 1][0]) / 2)
+        )
+        if end_seconds <= start_seconds:
+            continue
+        x_offset = _resolve_horizontal_crop_offset(
+            source_width=source_width,
+            crop_width=crop_width,
+            anchor=anchor_ratio,
+        )
+        expression = (
+            f"if(between(t\\,{start_seconds:.3f}\\,{end_seconds:.3f})\\,{x_offset}\\,{expression})"
+        )
+
+    y_offset = max(0, int(round((source_height - crop_height) / 2)))
+    y_offset -= y_offset % 2
+    return f"crop={crop_width}:{crop_height}:{expression}:{y_offset}"
 
 
 def _build_podcast_spotlight_render_command(
@@ -280,10 +515,59 @@ def build_clip_filter_graph(
         filters.append(crop_filter)
     filters.append(f"scale={target_width}:{target_height}")
     filters.append(f"fps={fps}")
+    filters.extend(
+        _build_standard_headline_filter_chain(
+            layout_options=normalized_options,
+            target_width=target_width,
+            target_height=target_height,
+        )
+    )
     if subtitle_path is not None:
         escaped_subtitle = _escape_filter_value(subtitle_path)
         filters.append(f"subtitles='{escaped_subtitle}'")
     return ",".join(filters)
+
+
+def _build_standard_headline_filter_chain(
+    *,
+    layout_options: dict[str, Any],
+    target_width: int,
+    target_height: int,
+) -> list[str]:
+    if not layout_options.get("standard_headline_enabled") or target_height <= target_width:
+        return []
+    raw_files = layout_options.get("standard_headline_files")
+    if not isinstance(raw_files, list):
+        return []
+    headline_files = [value for value in raw_files if isinstance(value, (str, Path)) and str(value).strip()][:3]
+    if not headline_files:
+        return []
+
+    position = str(layout_options.get("standard_headline_position") or "BOTTOM").strip().upper()
+    scale = target_width / 1080
+    left = max(42, int(round(target_width * 0.09)))
+    font_size = max(34, int(round(58 * scale)))
+    line_height = max(54, int(round(74 * scale)))
+    base_y = int(round(target_height * (0.14 if position == "TOP" else 0.58)))
+    quote_width = max(54, int(round(78 * scale)))
+    quote_height = max(38, int(round(50 * scale)))
+    quote_y = max(24, base_y - quote_height - max(16, int(round(18 * scale))))
+    filters = [
+        f"drawbox=x={left}:y={quote_y}:w={quote_width}:h={quote_height}:color=0x61d6c5@0.96:t=fill",
+        (
+            "drawtext=text='❞':fontcolor=white:"
+            f"fontsize={max(28, int(round(38 * scale)))}:x={left + max(10, int(round(17 * scale)))}:"
+            f"y={quote_y + max(1, int(round(2 * scale)))}"
+        ),
+    ]
+    for index, text_file in enumerate(headline_files):
+        escaped_path = _escape_filter_value(text_file)
+        filters.append(
+            f"drawtext=textfile='{escaped_path}':fontcolor=0x111827:fontsize={font_size}:"
+            f"x={left}:y={base_y + (index * line_height)}:box=1:boxcolor=white@0.97:"
+            f"boxborderw={max(8, int(round(12 * scale)))}"
+        )
+    return filters
 
 
 def _build_podcast_spotlight_filter_graph(
@@ -303,41 +587,59 @@ def _build_podcast_spotlight_filter_graph(
     panel_x = 78
     panel_y = 646
     normalized_strategy = str(crop_strategy or layout_options.get("crop_strategy") or "AUTO_REFRAME").strip().upper()
-    split_frame_enabled = bool(layout_options.get("split_frame_enabled")) or normalized_strategy in {
-        "SPLIT_SCREEN",
-        "SPEAKER_AND_SCREEN",
-    }
+    split_frame_enabled = bool(layout_options.get("split_frame_enabled"))
     graph_parts: list[str] = []
 
     if split_frame_enabled:
-        left_width = panel_width // 2
-        right_width = panel_width - left_width
+        top_height = panel_height // 2
+        bottom_height = panel_height - top_height
         left_anchor_ratio, right_anchor_ratio = _resolve_split_anchor_ratios(layout_options)
-        left_crop = _build_region_crop_filter(
+        top_crop = _build_region_crop_filter(
             source_width=source_width,
             source_height=source_height,
-            target_width=left_width,
-            target_height=panel_height,
+            target_width=panel_width,
+            target_height=top_height,
             anchor=left_anchor_ratio,
         )
-        right_crop = _build_region_crop_filter(
+        bottom_crop = _build_region_crop_filter(
             source_width=source_width,
             source_height=source_height,
-            target_width=right_width,
-            target_height=panel_height,
+            target_width=panel_width,
+            target_height=bottom_height,
             anchor=right_anchor_ratio,
         )
-        left_chain = ",".join(
-            [part for part in [left_crop, f"scale={left_width}:{panel_height}", f"fps={fps}"] if part]
+        top_chain = ",".join(
+            [part for part in [top_crop, f"scale={panel_width}:{top_height}", f"fps={fps}"] if part]
         )
-        right_chain = ",".join(
-            [part for part in [right_crop, f"scale={right_width}:{panel_height}", f"fps={fps}"] if part]
+        bottom_chain = ",".join(
+            [part for part in [bottom_crop, f"scale={panel_width}:{bottom_height}", f"fps={fps}"] if part]
+        )
+        single_crop = _build_face_tracking_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=panel_width,
+            target_height=panel_height,
+            layout_options=layout_options,
+        ) or _build_center_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=panel_width,
+            target_height=panel_height,
+        )
+        single_chain = ",".join(
+            [part for part in [single_crop, f"scale={panel_width}:{panel_height}", f"fps={fps}"] if part]
+        )
+        split_enable_expression = _build_split_enable_expression(
+            layout_options=layout_options,
+            duration_seconds=float(layout_options.get("clip_duration_seconds") or 0),
         )
         graph_parts.extend(
             [
-                f"[0:v]{left_chain}[clip_left]",
-                f"[0:v]{right_chain}[clip_right]",
-                "[clip_left][clip_right]hstack=inputs=2[clip]",
+                f"[0:v]{single_chain}[clip_single]",
+                f"[0:v]{top_chain}[clip_top]",
+                f"[0:v]{bottom_chain}[clip_bottom]",
+                "[clip_top][clip_bottom]vstack=inputs=2[clip_split]",
+                f"[clip_single][clip_split]overlay=0:0:enable='{split_enable_expression}'[clip]",
             ]
         )
     else:
@@ -543,12 +845,17 @@ def _build_strategy_crop_filter(
             layout_options=layout_options,
         )
     if normalized_strategy in {"SPLIT_SCREEN", "SPEAKER_AND_SCREEN"}:
-        return _build_active_speaker_crop_filter(
+        return _build_face_tracking_crop_filter(
             source_width=source_width,
             source_height=source_height,
             target_width=target_width,
             target_height=target_height,
             layout_options=layout_options,
+        ) or _build_center_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
         )
     if normalized_strategy == "FACE_TRACKING":
         return _build_face_tracking_crop_filter(
@@ -590,6 +897,35 @@ def _build_face_tracking_crop_filter(
     face_layout_summary = layout_options.get("face_layout_summary")
     if not isinstance(face_layout_summary, dict):
         return None
+    tracking_samples = face_layout_summary.get("tracking_samples")
+    sample_offsets = face_layout_summary.get("sample_offsets_seconds")
+    duration_seconds = layout_options.get("clip_duration_seconds")
+    if (
+        isinstance(tracking_samples, list)
+        and isinstance(sample_offsets, list)
+        and isinstance(duration_seconds, (float, int))
+    ):
+        temporal_filter = _build_temporal_tracking_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+            tracking_samples=tracking_samples,
+            sample_offsets=sample_offsets,
+            duration_seconds=float(duration_seconds),
+        )
+        if temporal_filter:
+            return temporal_filter
+
+    anchor_ratio = face_layout_summary.get("single_face_anchor_ratio")
+    if isinstance(anchor_ratio, (float, int)):
+        return _build_region_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+            anchor=float(anchor_ratio),
+        )
     anchor = face_layout_summary.get("single_face_anchor")
     if anchor not in {"left", "center", "right"}:
         return None
@@ -600,6 +936,127 @@ def _build_face_tracking_crop_filter(
         target_height=target_height,
         anchor=str(anchor),
     )
+
+
+def _build_temporal_tracking_crop_filter(
+    *,
+    source_width: int | None,
+    source_height: int | None,
+    target_width: int,
+    target_height: int,
+    tracking_samples: list[Any],
+    sample_offsets: list[Any],
+    duration_seconds: float,
+) -> str | None:
+    crop_width, crop_height = _resolve_crop_dimensions(
+        source_width=source_width,
+        source_height=source_height,
+        target_width=target_width,
+        target_height=target_height,
+    )
+    if not source_width or not source_height or crop_width is None or crop_height is None:
+        return None
+
+    normalized: list[tuple[float, float]] = []
+    for index, sample in enumerate(tracking_samples):
+        if index >= len(sample_offsets) or not isinstance(sample, dict):
+            break
+        offset = sample_offsets[index]
+        anchor = sample.get("anchor_ratio")
+        if isinstance(offset, (float, int)) and isinstance(anchor, (float, int)):
+            normalized.append((float(offset), min(1.0, max(0.0, float(anchor)))))
+    if not normalized:
+        return None
+
+    fallback_x = _resolve_horizontal_crop_offset(
+        source_width=source_width,
+        crop_width=crop_width,
+        anchor=normalized[0][1],
+    )
+    expression = str(fallback_x)
+    for index in range(len(normalized) - 1, -1, -1):
+        offset_seconds, anchor_ratio = normalized[index]
+        start_seconds = 0.0 if index == 0 else (normalized[index - 1][0] + offset_seconds) / 2
+        end_seconds = duration_seconds if index == len(normalized) - 1 else (offset_seconds + normalized[index + 1][0]) / 2
+        if end_seconds <= start_seconds:
+            continue
+        x_offset = _resolve_horizontal_crop_offset(
+            source_width=source_width,
+            crop_width=crop_width,
+            anchor=anchor_ratio,
+        )
+        expression = f"if(between(t\\,{start_seconds:.3f}\\,{end_seconds:.3f})\\,{x_offset}\\,{expression})"
+
+    y_offset = max(0, int(round((source_height - crop_height) / 2)))
+    y_offset -= y_offset % 2
+    return f"crop={crop_width}:{crop_height}:{expression}:{y_offset}"
+
+
+def _build_split_enable_expression(*, layout_options: dict[str, Any], duration_seconds: float) -> str:
+    face_layout_summary = layout_options.get("face_layout_summary")
+    if not isinstance(face_layout_summary, dict):
+        return "0"
+    samples = face_layout_summary.get("sample_anchor_pairs")
+    offsets = face_layout_summary.get("sample_offsets_seconds")
+    if not isinstance(samples, list) or not isinstance(offsets, list) or duration_seconds <= 0:
+        return "0"
+
+    confirmed_indexes: set[int] = set()
+    for index, sample in enumerate(samples):
+        if index >= len(offsets) or not isinstance(sample, dict):
+            break
+        offset = offsets[index]
+        primary = sample.get("primary_anchor_ratio")
+        secondary = sample.get("secondary_anchor_ratio")
+        face_count = sample.get("face_count")
+        if not isinstance(offset, (float, int)):
+            continue
+        has_two_distinct_faces = (
+            isinstance(face_count, int)
+            and face_count >= 2
+            and isinstance(primary, (float, int))
+            and isinstance(secondary, (float, int))
+            and float(secondary) - float(primary) >= 0.20
+        )
+        if has_two_distinct_faces:
+            confirmed_indexes.add(index)
+
+    if not confirmed_indexes:
+        return "0"
+
+    # Face detectors commonly miss one adjacent sample when a speaker turns
+    # sideways. Preserve the split across that short gap instead of flashing
+    # back to a single crop.
+    expanded_indexes = set(confirmed_indexes)
+    for index in confirmed_indexes:
+        if index > 0:
+            expanded_indexes.add(index - 1)
+        if index + 1 < len(samples):
+            expanded_indexes.add(index + 1)
+
+    windows: list[tuple[float, float]] = []
+    for index in sorted(expanded_indexes):
+        offset = offsets[index] if index < len(offsets) else None
+        if not isinstance(offset, (float, int)):
+            continue
+        previous_offset = float(offsets[index - 1]) if index > 0 and isinstance(offsets[index - 1], (float, int)) else 0.0
+        next_offset = (
+            float(offsets[index + 1])
+            if index + 1 < len(offsets) and isinstance(offsets[index + 1], (float, int))
+            else duration_seconds
+        )
+        start = 0.0 if index == 0 else max(0.0, (previous_offset + float(offset)) / 2)
+        end = duration_seconds if index == len(samples) - 1 else min(duration_seconds, (float(offset) + next_offset) / 2)
+        if end > start:
+            windows.append((start, end))
+
+    merged_windows: list[tuple[float, float]] = []
+    for start, end in windows:
+        if merged_windows and start <= merged_windows[-1][1] + 0.05:
+            merged_windows[-1] = (merged_windows[-1][0], max(merged_windows[-1][1], end))
+        else:
+            merged_windows.append((start, end))
+    return "+".join(f"between(t\\,{start:.3f}\\,{end:.3f})" for start, end in merged_windows)
 
 
 def _build_active_speaker_crop_filter(
@@ -632,7 +1089,13 @@ def _build_active_speaker_crop_filter(
 
     active_strategy = layout_options.get("active_speaker_strategy")
     if not isinstance(active_strategy, dict):
-        return _build_center_crop_filter(
+        return _build_face_tracking_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+            layout_options=layout_options,
+        ) or _build_center_crop_filter(
             source_width=source_width,
             source_height=source_height,
             target_width=target_width,
@@ -641,17 +1104,37 @@ def _build_active_speaker_crop_filter(
 
     speaker_order = active_strategy.get("speaker_order")
     windows = active_strategy.get("windows")
-    if not isinstance(speaker_order, list) or len(speaker_order) < 2 or not isinstance(windows, list):
-        return _build_center_crop_filter(
+    if (
+        active_strategy.get("available") is not True
+        or not isinstance(speaker_order, list)
+        or len(speaker_order) < 2
+        or not isinstance(windows, list)
+    ):
+        return _build_face_tracking_crop_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+            layout_options=layout_options,
+        ) or _build_center_crop_filter(
             source_width=source_width,
             source_height=source_height,
             target_width=target_width,
             target_height=target_height,
         )
 
-    left_x = 0
+    left_anchor_ratio, right_anchor_ratio = _resolve_split_anchor_ratios(layout_options)
+    left_x = _resolve_horizontal_crop_offset(
+        source_width=source_width,
+        crop_width=crop_width,
+        anchor=left_anchor_ratio,
+    )
     center_x = max(0, ((source_width - crop_width) // 2) // 2 * 2)
-    right_x = max(0, ((source_width - crop_width)) // 2 * 2)
+    right_x = _resolve_horizontal_crop_offset(
+        source_width=source_width,
+        crop_width=crop_width,
+        anchor=right_anchor_ratio,
+    )
     speaker_to_x = {
         str(speaker_order[0]): left_x,
         str(speaker_order[1]): right_x,
@@ -671,7 +1154,9 @@ def _build_active_speaker_crop_filter(
             f"if(between(t\\,{float(start_seconds):.3f}\\,{float(end_seconds):.3f})\\,{anchor_x}\\,{expression})"
         )
 
-    return f"crop={crop_width}:{crop_height}:{expression}:0"
+    y_offset = max(0, int(round((source_height - crop_height) / 2)))
+    y_offset -= y_offset % 2
+    return f"crop={crop_width}:{crop_height}:{expression}:{y_offset}"
 
 
 def _build_region_crop_filter(
@@ -691,6 +1176,22 @@ def _build_region_crop_filter(
     if crop_width is None or crop_height is None or not source_width or not source_height:
         return None
 
+    x_offset = _resolve_horizontal_crop_offset(
+        source_width=source_width,
+        crop_width=crop_width,
+        anchor=anchor,
+    )
+    y_offset = max(0, int(round((source_height - crop_height) / 2)))
+    y_offset -= y_offset % 2
+    return f"crop={crop_width}:{crop_height}:{x_offset}:{y_offset}"
+
+
+def _resolve_horizontal_crop_offset(
+    *,
+    source_width: int,
+    crop_width: int,
+    anchor: str | float,
+) -> int:
     if isinstance(anchor, (float, int)):
         target_center_x = float(anchor) * float(source_width)
         x_offset = max(0, int(round(target_center_x - (crop_width / 2))))
@@ -703,9 +1204,7 @@ def _build_region_crop_filter(
         x_offset = max(0, int(round((source_width - crop_width) / 2)))
 
     x_offset -= x_offset % 2
-    y_offset = max(0, int(round((source_height - crop_height) / 2)))
-    y_offset -= y_offset % 2
-    return f"crop={crop_width}:{crop_height}:{x_offset}:{y_offset}"
+    return x_offset
 
 
 def _resolve_split_anchor_ratios(layout_options: dict[str, Any]) -> tuple[float, float]:

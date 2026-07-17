@@ -1,15 +1,7 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { requestContext } from "../../shared/http/request-context.js";
-
-const { writeAudit } = vi.hoisted(() => ({
-  writeAudit: vi.fn()
-}));
-
-vi.mock("../audit/audit-service.js", () => ({
-  writeAudit
-}));
 
 vi.mock("../auth/identity-middleware.js", () => ({
   requireAuth: (request: any, _response: any, next: any) => {
@@ -21,55 +13,56 @@ vi.mock("../auth/identity-middleware.js", () => ({
 import { mediaRouter } from "./routes.js";
 
 describe("media routes", () => {
-  beforeEach(() => {
-    writeAudit.mockReset();
+  it("redirects admin users to the new admin media page", async () => {
+    const response = await request(buildApp({ permissions: ["admin.jobs.manage"] })).get("/app/media");
+
+    expect(response.status).toBe(302);
+    expect(response.headers.location).toBe("/admin/media");
   });
 
-  it("renders media library page", async () => {
-    const service = {
-      getMediaLibraryPageData: vi.fn().mockResolvedValue({
-        filters: { q: "", type: "ALL", status: "ALL", view: "list", deleted: false },
-        typeOptions: [],
-        statusOptions: [],
-        storageBytes: 0,
-        assets: []
-      })
-    };
+  it("blocks non-admin users from the legacy page", async () => {
+    const response = await request(buildApp()).get("/app/media");
 
-    const response = await request(buildApp(service)).get("/app/media");
-
-    expect(response.status).toBe(200);
-    expect(service.getMediaLibraryPageData).toHaveBeenCalled();
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe("FORBIDDEN");
   });
 
-  it("renames media and writes an audit entry", async () => {
-    const service = {
-      rename: vi.fn().mockResolvedValue({ id: "asset-1", displayName: "Renamed asset" })
-    };
+  it("redirects admin downloads to the admin media page", async () => {
+    const response = await request(buildApp({ permissions: ["admin.jobs.manage"] })).get("/app/media/asset-1/download");
 
-    const response = await request(buildApp(service))
+    expect(response.status).toBe(302);
+    expect(response.headers.location).toBe("/admin/media/asset-1/download");
+  });
+
+  it("blocks legacy rename endpoint even for admins", async () => {
+    const response = await request(buildApp({ permissions: ["admin.jobs.manage"] }))
       .post("/api/v1/media/asset-1/rename")
       .send({ display_name: "Renamed asset" });
 
-    expect(response.status).toBe(200);
-    expect(service.rename).toHaveBeenCalledWith("user-1", "asset-1", "Renamed asset");
-    expect(writeAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "MEDIA_ASSET_RENAMED" }));
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe("FORBIDDEN");
   });
 
-  it("restores media and writes an audit entry", async () => {
-    const service = {
-      restore: vi.fn().mockResolvedValue({ id: "asset-1" })
-    };
+  it("blocks legacy restore endpoint", async () => {
+    const response = await request(buildApp({ permissions: ["admin.jobs.manage"] }))
+      .post("/api/v1/media/asset-1/restore")
+      .send({});
 
-    const response = await request(buildApp(service)).post("/api/v1/media/asset-1/restore").send({});
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe("FORBIDDEN");
+  });
 
-    expect(response.status).toBe(200);
-    expect(service.restore).toHaveBeenCalledWith("user-1", "asset-1");
-    expect(writeAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "MEDIA_ASSET_RESTORED" }));
+  it("blocks legacy delete endpoint even for admins", async () => {
+    const response = await request(buildApp({ permissions: ["admin.jobs.manage"] }))
+      .post("/api/v1/media/asset-1/delete")
+      .send({});
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe("FORBIDDEN");
   });
 });
 
-function buildApp(service: Record<string, ReturnType<typeof vi.fn>>) {
+function buildApp(options?: { permissions?: string[] }) {
   const app = express();
   app.use(express.json());
   app.use(requestContext);
@@ -77,14 +70,14 @@ function buildApp(service: Record<string, ReturnType<typeof vi.fn>>) {
     request.identity = {
       actorUserId: "user-1",
       effectiveUserId: "user-1",
-      permissions: new Set<string>(),
+      permissions: new Set<string>(options?.permissions ?? []),
       isImpersonating: false
     };
     request.session = { csrfToken: "csrf-token" } as never;
     response.render = ((_view: string, locals?: object) => response.status(200).json({ data: locals })) as never;
     next();
   });
-  app.use(mediaRouter(service as never));
+  app.use(mediaRouter());
   app.use((error: any, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     response.status(error.statusCode ?? 500).json({
       error: {
@@ -95,4 +88,3 @@ function buildApp(service: Record<string, ReturnType<typeof vi.fn>>) {
   });
   return app;
 }
-

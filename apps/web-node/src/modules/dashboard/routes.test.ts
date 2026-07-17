@@ -71,7 +71,11 @@ describe("dashboard tool routes", () => {
     const response = await request(buildApp()).get("/app/tools/auto-clipping");
 
     expect(response.status).toBe(200);
-    expect(response.body.data.formDefaults.layoutTemplate).toBe("PODCAST_SPOTLIGHT_9X16");
+    expect(response.body.data.formDefaults.layoutTemplate).toBe("STANDARD");
+    expect(response.body.data.formDefaults.hookStyle).toBe("");
+    expect(response.body.data.formDefaults.ctaPreference).toBe("");
+    expect(response.body.data.formDefaults.standalonePriority).toBe("FLEXIBLE");
+    expect(response.body.data.formDefaults.subtitleStyle).toBe("PODCAST_HIGHLIGHT");
     expect(response.body.data.formDefaults.channelName).toBe("");
   });
 

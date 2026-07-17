@@ -10,6 +10,7 @@
     <% } %>
     <% if (identity?.permissions?.has('admin.jobs.manage')) { %>
       <a class="nav-link <%= path.startsWith('/admin/jobs') ? 'active' : '' %>" href="/admin/jobs">Job Operations</a>
+      <a class="nav-link <%= path.startsWith('/admin/media') ? 'active' : '' %>" href="/admin/media">Media Management</a>
     <% } %>
     <% if (identity?.permissions?.has('admin.system.manage')) { %>
       <a class="nav-link <%= path.startsWith('/admin/system') ? 'active' : '' %>" href="/admin/system">Platform Settings</a>

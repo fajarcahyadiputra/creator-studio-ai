@@ -9,6 +9,10 @@ import {
   createPublicSignedObjectReadUrl,
   deleteObjectKeys
 } from "../../infrastructure/storage/s3.js";
+import {
+  buildClipOutputArtifactBasePath,
+  buildTtsOutputArtifactBasePath
+} from "../../infrastructure/job-object-keys.js";
 import { asyncHandler } from "../../shared/http/async-handler.js";
 import { validateBody } from "../../shared/http/validate.js";
 import { AppError, NotFoundError } from "../../shared/errors/app-error.js";
@@ -301,6 +305,10 @@ export function internalRouter(projection: JobProjectionService): Router {
           ? (updated.metadata as Record<string, unknown>)
           : {};
         const jobId = typeof metadata.job_id === "string" ? metadata.job_id : null;
+        const importedSourceUrl =
+          typeof metadata.source_url === "string" && metadata.source_url.trim().length > 0
+            ? metadata.source_url.trim()
+            : null;
 
         if (jobId) {
           await prisma.$transaction(async (tx) => {
@@ -322,6 +330,12 @@ export function internalRouter(projection: JobProjectionService): Router {
               where: { jobId },
               data: {
                 sourceMediaAssetId: updated.id,
+                ...(importedSourceUrl
+                  ? {
+                      sourceType: "EXTERNAL_URL",
+                      sourceUrl: importedSourceUrl,
+                    }
+                  : {}),
               }
             });
           });
@@ -403,20 +417,21 @@ export function internalRouter(projection: JobProjectionService): Router {
 
       const sourceMedia = clipOutput.job.sourceMediaAsset;
       const sourceDownloadUrl = await createInternalSignedObjectReadUrl(sourceMedia.objectKey, 3600);
+      const artifactBasePath = buildClipOutputArtifactBasePath(clipOutput.job.userId, clipOutput.jobId, clipOutput.id);
       const previewObjectKey =
-        clipOutput.previewObjectKey ?? `jobs/${clipOutput.jobId}/clip-outputs/${clipOutput.id}/preview.mp4`;
+        clipOutput.previewObjectKey ?? `${artifactBasePath}/preview.mp4`;
       const finalObjectKey =
-        clipOutput.finalObjectKey ?? `jobs/${clipOutput.jobId}/clip-outputs/${clipOutput.id}/final.mp4`;
+        clipOutput.finalObjectKey ?? `${artifactBasePath}/final.mp4`;
       const metadataObjectKey =
-        clipOutput.metadataObjectKey ?? `jobs/${clipOutput.jobId}/clip-outputs/${clipOutput.id}/metadata.json`;
+        clipOutput.metadataObjectKey ?? `${artifactBasePath}/metadata.json`;
       const subtitleFormat = resolveSubtitleFormat(clipOutput.renderSettings);
       const subtitleObjectKey =
         clipOutput.subtitles[0]?.objectKey
-        ?? `jobs/${clipOutput.jobId}/clip-outputs/${clipOutput.id}/subtitle.${subtitleFormat}`;
-      const subtitleSrtObjectKey = `jobs/${clipOutput.jobId}/clip-outputs/${clipOutput.id}/subtitle.srt`;
-      const subtitleAssObjectKey = `jobs/${clipOutput.jobId}/clip-outputs/${clipOutput.id}/subtitle.ass`;
-      const subtitleVttObjectKey = `jobs/${clipOutput.jobId}/clip-outputs/${clipOutput.id}/subtitle.vtt`;
-      const subtitleJsonObjectKey = `jobs/${clipOutput.jobId}/clip-outputs/${clipOutput.id}/subtitle.json`;
+        ?? `${artifactBasePath}/subtitle.${subtitleFormat}`;
+      const subtitleSrtObjectKey = `${artifactBasePath}/subtitle.srt`;
+      const subtitleAssObjectKey = `${artifactBasePath}/subtitle.ass`;
+      const subtitleVttObjectKey = `${artifactBasePath}/subtitle.vtt`;
+      const subtitleJsonObjectKey = `${artifactBasePath}/subtitle.json`;
       const transcriptWindow = buildClipTranscriptWindow({
         transcript: clipOutput.candidate.transcript,
         clipStartMs: clipOutput.candidate.startMs,
@@ -825,7 +840,11 @@ export function internalRouter(projection: JobProjectionService): Router {
       const extension = resolveTtsAudioExtension(preferredFormat);
       const mimeType = resolveTtsAudioMimeType(preferredFormat);
       const version = job.ttsRequest.outputs[0]?.version ?? 1;
-      const objectKey = `users/${job.userId}/jobs/${job.id}/tts/output-v${version}.${extension}`;
+      const objectKey = `${buildTtsOutputArtifactBasePath(
+        job.userId,
+        job.id,
+        job.ttsRequest.id
+      )}/output-v${version}.${extension}`;
 
       response.json({
         data: {

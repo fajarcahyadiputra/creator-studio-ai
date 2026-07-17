@@ -1,12 +1,17 @@
 <%- include('../partials/head', { title, csrfToken }) %>
-<div class="workspace-shell"><%- include('../partials/user-topbar') %><main class="workspace-main content-area">
-  <header class="page-header">
-    <div>
+<div class="workspace-shell"><%- include('../partials/user-topbar') %><main class="workspace-main content-area page-presets">
+  <header class="page-header user-page-hero">
+    <div class="user-page-hero__copy">
       <span class="eyebrow">Reusable setup</span>
       <h1>Templates & Presets</h1>
-      <p>Simpan template strategi clipping dan brand kit supaya job baru tinggal pilih preset, tanpa isi ulang field yang sama berulang-ulang.</p>
+      <p>Simpan strategi clipping dan brand kit yang sering dipakai supaya form baru tidak perlu diisi dari nol setiap kali bikin job.</p>
     </div>
   </header>
+  <section class="user-page-summary-grid user-page-summary-grid--compact">
+    <article class="user-page-summary-card user-page-summary-card--soft"><span>Clipping preset</span><strong>Strategy reusable</strong><p>Simpan editor brief, durasi, objective, dan subtitle default untuk job berikutnya.</p></article>
+    <article class="user-page-summary-card"><span>Brand kit</span><strong>Visual reusable</strong><p>Atur font, warna, safe margin, dan subtitle default supaya hasil render lebih konsisten.</p></article>
+    <article class="user-page-summary-card"><span>Simple workflow</span><strong>Manual or advanced</strong><p>Pakai brief editor untuk mayoritas kasus, lalu buka JSON hanya saat butuh kontrol teknis tambahan.</p></article>
+  </section>
 
   <section class="panel">
     <div class="panel-heading"><div><h2>Create clipping preset</h2><p>Gunakan preset untuk menyimpan strategi default. Isi brief editor dengan bahasa biasa, lalu buka JSON hanya jika memang perlu kontrol teknis tambahan.</p></div></div>

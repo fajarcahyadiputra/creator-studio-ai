@@ -153,6 +153,7 @@ describe("internal clip output routes", () => {
       },
       subtitles: [],
       job: {
+        userId: "user-1",
         sourceMediaAsset: {
           id: "asset-1",
           objectKey: "users/user-1/uploads/u1/source/video.mp4",
@@ -221,54 +222,59 @@ describe("internal clip output routes", () => {
         ]
       },
       output_targets: {
-        preview_object_key: "jobs/job-1/clip-outputs/output-1/preview.mp4",
-        final_object_key: "jobs/job-1/clip-outputs/output-1/final.mp4",
-        metadata_object_key: "jobs/job-1/clip-outputs/output-1/metadata.json",
-        thumbnail_object_key: "jobs/job-1/clip-outputs/output-1/thumbnail.jpg",
-        subtitle_object_key: "jobs/job-1/clip-outputs/output-1/subtitle.srt"
+        preview_object_key: "users/user-1/jobs/clip-outputs/job-1/output-1/preview.mp4",
+        final_object_key: "users/user-1/jobs/clip-outputs/job-1/output-1/final.mp4",
+        metadata_object_key: "users/user-1/jobs/clip-outputs/job-1/output-1/metadata.json",
+        subtitle_object_key: "users/user-1/jobs/clip-outputs/job-1/output-1/subtitle.srt"
       },
       artifact_uploads: [
         {
           artifact: "preview",
-          object_key: "jobs/job-1/clip-outputs/output-1/preview.mp4",
+          object_key: "users/user-1/jobs/clip-outputs/job-1/output-1/preview.mp4",
           content_type: "video/mp4",
-          upload_url: "http://minio:9000/upload/jobs/job-1/clip-outputs/output-1/preview.mp4"
+          upload_url: "http://minio:9000/upload/users/user-1/jobs/clip-outputs/job-1/output-1/preview.mp4"
         },
         {
           artifact: "final",
-          object_key: "jobs/job-1/clip-outputs/output-1/final.mp4",
+          object_key: "users/user-1/jobs/clip-outputs/job-1/output-1/final.mp4",
           content_type: "video/mp4",
-          upload_url: "http://minio:9000/upload/jobs/job-1/clip-outputs/output-1/final.mp4"
+          upload_url: "http://minio:9000/upload/users/user-1/jobs/clip-outputs/job-1/output-1/final.mp4"
         },
         {
           artifact: "metadata",
-          object_key: "jobs/job-1/clip-outputs/output-1/metadata.json",
+          object_key: "users/user-1/jobs/clip-outputs/job-1/output-1/metadata.json",
           content_type: "application/json",
-          upload_url: "http://minio:9000/upload/jobs/job-1/clip-outputs/output-1/metadata.json"
-        },
-        {
-          artifact: "thumbnail",
-          object_key: "jobs/job-1/clip-outputs/output-1/thumbnail.jpg",
-          content_type: "image/jpeg",
-          upload_url: "http://minio:9000/upload/jobs/job-1/clip-outputs/output-1/thumbnail.jpg"
+          upload_url: "http://minio:9000/upload/users/user-1/jobs/clip-outputs/job-1/output-1/metadata.json"
         },
         {
           artifact: "subtitle",
-          object_key: "jobs/job-1/clip-outputs/output-1/subtitle.srt",
+          object_key: "users/user-1/jobs/clip-outputs/job-1/output-1/subtitle.srt",
           content_type: "application/x-subrip",
-          upload_url: "http://minio:9000/upload/jobs/job-1/clip-outputs/output-1/subtitle.srt"
+          upload_url: "http://minio:9000/upload/users/user-1/jobs/clip-outputs/job-1/output-1/subtitle.srt"
+        },
+        {
+          artifact: "subtitle_srt",
+          object_key: "users/user-1/jobs/clip-outputs/job-1/output-1/subtitle.srt",
+          content_type: "application/x-subrip",
+          upload_url: "http://minio:9000/upload/users/user-1/jobs/clip-outputs/job-1/output-1/subtitle.srt"
+        },
+        {
+          artifact: "subtitle_ass",
+          object_key: "users/user-1/jobs/clip-outputs/job-1/output-1/subtitle.ass",
+          content_type: "text/x-ssa",
+          upload_url: "http://minio:9000/upload/users/user-1/jobs/clip-outputs/job-1/output-1/subtitle.ass"
         },
         {
           artifact: "subtitle_vtt",
-          object_key: "jobs/job-1/clip-outputs/output-1/subtitle.vtt",
+          object_key: "users/user-1/jobs/clip-outputs/job-1/output-1/subtitle.vtt",
           content_type: "text/vtt",
-          upload_url: "http://minio:9000/upload/jobs/job-1/clip-outputs/output-1/subtitle.vtt"
+          upload_url: "http://minio:9000/upload/users/user-1/jobs/clip-outputs/job-1/output-1/subtitle.vtt"
         },
         {
           artifact: "subtitle_json",
-          object_key: "jobs/job-1/clip-outputs/output-1/subtitle.json",
+          object_key: "users/user-1/jobs/clip-outputs/job-1/output-1/subtitle.json",
           content_type: "application/json",
-          upload_url: "http://minio:9000/upload/jobs/job-1/clip-outputs/output-1/subtitle.json"
+          upload_url: "http://minio:9000/upload/users/user-1/jobs/clip-outputs/job-1/output-1/subtitle.json"
         }
       ]
     });

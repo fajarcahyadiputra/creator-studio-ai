@@ -185,13 +185,13 @@ Mutating workflow operations require `Idempotency-Key`. Errors use a stable enve
 /app/tools/text-to-speech
 /app/tools/transcription
 /app/jobs/:jobId
-/app/media
 /app/publishing
 /app/presets
 /app/usage
 /app/settings/*
 /admin/dashboard
 /admin/users
+/admin/media
 /admin/roles
 /admin/jobs
 /admin/providers

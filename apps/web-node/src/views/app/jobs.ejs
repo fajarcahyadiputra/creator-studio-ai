@@ -1,6 +1,6 @@
 <%- include('../partials/head', { title, csrfToken }) %>
-<div class="workspace-shell"><%- include('../partials/user-topbar') %><main class="workspace-main content-area">
-  <header class="page-header"><div><span class="eyebrow">Hasil Clipping</span><h1>Jobs & Results</h1><p>Pantau progress, review hasil clipping, dan lanjutkan workflow creator tanpa kehilangan status.</p></div><a class="btn btn-primary" href="/app/tools/auto-clipping">New Auto Clip</a></header>
+<div class="workspace-shell"><%- include('../partials/user-topbar') %><main class="workspace-main content-area page-jobs">
+  <header class="page-header user-page-hero"><div class="user-page-hero__copy"><span class="eyebrow">Hasil & riwayat</span><h1>Jobs & Results</h1><p>Pantau progress, buka hasil terbaru, dan lanjutkan workflow creator tanpa kehilangan konteks dari job sebelumnya.</p></div><div class="user-page-actions"><a class="btn btn-primary" href="/app/tools/auto-clipping">New Auto Clip</a><a class="btn btn-outline-primary" href="/app/tools/text-to-speech">New Narration</a></div></header>
   <section class="panel">
     <div class="panel-heading"><div><h2>Filters</h2><p>Filter by tool, status, date, search term, or provider.</p></div></div>
     <div class="p-4">

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from math import ceil
 from typing import Any
 
 import cv2
@@ -32,7 +33,7 @@ def _build_detection_variants(
 def _deduplicate_faces(
     faces: list[dict[str, Any]],
     *,
-    overlap_threshold: float = 0.45,
+    overlap_threshold: float = 0.30,
 ) -> list[dict[str, Any]]:
     deduplicated: list[dict[str, Any]] = []
 
@@ -82,9 +83,11 @@ def detect_faces_in_image(
     if not hasattr(cv2, "data") or not hasattr(cv2.data, "haarcascades"):
         raise FaceDetectionUnavailable("OpenCV Haar cascade data path is unavailable")
 
-    classifier = cv2.CascadeClassifier(str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"))
-    if classifier.empty():
+    cascade_root = Path(cv2.data.haarcascades)
+    frontal_classifier = cv2.CascadeClassifier(str(cascade_root / "haarcascade_frontalface_default.xml"))
+    if frontal_classifier.empty():
         raise FaceDetectionUnavailable("OpenCV Haar cascade classifier could not be loaded")
+    profile_classifier = cv2.CascadeClassifier(str(cascade_root / "haarcascade_profileface.xml"))
 
     image = cv2.imread(str(image_path))
     if image is None:
@@ -102,27 +105,41 @@ def detect_faces_in_image(
             min_neighbors=min_neighbors,
         )
     ):
-        detections = classifier.detectMultiScale(
-            variant_image,
-            scaleFactor=variant_scale_factor,
-            minNeighbors=variant_min_neighbors,
-            minSize=(variant_min_face_size, variant_min_face_size),
-        )
-
-        for x, y, face_width, face_height in detections:
-            center_x = x + (face_width / 2)
-            detections_with_scores.append(
-                {
-                    "x": int(x),
-                    "y": int(y),
-                    "width": int(face_width),
-                    "height": int(face_height),
-                    "center_x": round(float(center_x), 2),
-                    "center_x_ratio": round(float(center_x / max(width, 1)), 4),
-                    "area": int(face_width * face_height),
-                    "detector_pass": variant_index + 1,
-                }
+        detector_inputs: list[tuple[Any, Any, bool, str]] = [
+            (frontal_classifier, variant_image, False, "frontal"),
+        ]
+        if not profile_classifier.empty():
+            detector_inputs.extend(
+                [
+                    (profile_classifier, variant_image, False, "profile"),
+                    (profile_classifier, cv2.flip(variant_image, 1), True, "profile_mirrored"),
+                ]
             )
+
+        for classifier, detector_image, mirrored, detector_name in detector_inputs:
+            detections = classifier.detectMultiScale(
+                detector_image,
+                scaleFactor=variant_scale_factor,
+                minNeighbors=variant_min_neighbors,
+                minSize=(variant_min_face_size, variant_min_face_size),
+            )
+
+            for x, y, face_width, face_height in detections:
+                resolved_x = width - int(x) - int(face_width) if mirrored else int(x)
+                center_x = resolved_x + (face_width / 2)
+                detections_with_scores.append(
+                    {
+                        "x": resolved_x,
+                        "y": int(y),
+                        "width": int(face_width),
+                        "height": int(face_height),
+                        "center_x": round(float(center_x), 2),
+                        "center_x_ratio": round(float(center_x / max(width, 1)), 4),
+                        "area": int(face_width * face_height),
+                        "detector_pass": variant_index + 1,
+                        "detector": detector_name,
+                    }
+                )
 
     return _deduplicate_faces(detections_with_scores)
 
@@ -137,9 +154,15 @@ def summarize_face_samples(samples: list[list[dict[str, Any]]]) -> dict[str, Any
             "multi_face_sample_count": 0,
             "single_face_sample_count": 0,
             "single_face_anchor": "center",
+            "single_face_anchor_ratio": 0.5,
             "supports_split_frame": False,
+            "split_layout_mode": "VERTICAL_STACK",
             "left_anchor_ratio": 0.28,
             "right_anchor_ratio": 0.72,
+            "stable_multi_face_sample_count": 0,
+            "split_confidence": 0.0,
+            "split_decision_reason": "no_face_samples",
+            "tracking_samples": [],
         }
 
     face_counts = [len(sample) for sample in samples]
@@ -167,19 +190,45 @@ def summarize_face_samples(samples: list[list[dict[str, Any]]]) -> dict[str, Any
     left_right_split_samples = 0
     left_anchor_samples: list[float] = []
     right_anchor_samples: list[float] = []
-    for sample in samples:
-        if len(sample) < 2:
-            continue
-        ratios = sorted(
+    sample_anchor_pairs: list[dict[str, Any]] = []
+    tracking_samples: list[dict[str, Any]] = []
+    for sample_index, sample in enumerate(samples):
+        dominant_face = sample[0] if sample else None
+        dominant_anchor = (
+            round(float(dominant_face["center_x_ratio"]), 4)
+            if isinstance(dominant_face, dict)
+            and isinstance(dominant_face.get("center_x_ratio"), (float, int))
+            else None
+        )
+        tracking_samples.append(
+            {
+                "sample_index": sample_index,
+                "anchor_ratio": dominant_anchor,
+                "face_count": len(sample),
+            }
+        )
+        normalized_ratios = sorted(
             float(face.get("center_x_ratio", 0.5))
             for face in sample[:3]
             if isinstance(face.get("center_x_ratio"), (float, int))
         )
+        sample_anchor_pairs.append(
+            {
+                "sample_index": sample_index,
+                "face_count": len(normalized_ratios),
+                "primary_anchor_ratio": round(normalized_ratios[0], 4) if normalized_ratios else None,
+                "secondary_anchor_ratio": round(normalized_ratios[-1], 4) if normalized_ratios else None,
+            }
+        )
+
+        if len(sample) < 2:
+            continue
+        ratios = normalized_ratios
         if len(ratios) < 2:
             continue
-        left_present = any(ratio <= 0.42 for ratio in ratios)
-        right_present = any(ratio >= 0.58 for ratio in ratios)
-        if left_present and right_present:
+        # Two detections must be spatially distinct. This prevents multiple
+        # detector passes over the same person from enabling split screen.
+        if ratios[-1] - ratios[0] >= 0.20:
             left_right_split_samples += 1
             left_anchor_samples.append(ratios[0])
             right_anchor_samples.append(ratios[-1])
@@ -188,6 +237,10 @@ def summarize_face_samples(samples: list[list[dict[str, Any]]]) -> dict[str, Any
     right_anchor_ratio = (
         round(sum(right_anchor_samples) / len(right_anchor_samples), 4) if right_anchor_samples else 0.72
     )
+
+    required_multi_face_samples = max(2, ceil(len(samples) * 0.30))
+    supports_split_frame = left_right_split_samples >= required_multi_face_samples
+    split_confidence = round(left_right_split_samples / max(len(samples), 1), 3)
 
     return {
         "status": "ready",
@@ -198,7 +251,21 @@ def summarize_face_samples(samples: list[list[dict[str, Any]]]) -> dict[str, Any
         "single_face_sample_count": single_face_sample_count,
         "left_right_split_samples": left_right_split_samples,
         "single_face_anchor": single_face_anchor,
-        "supports_split_frame": left_right_split_samples >= max(1, len(samples) // 3) and multi_face_sample_count >= 2,
+        "single_face_anchor_ratio": average_center,
+        "supports_split_frame": supports_split_frame,
+        "stable_multi_face_sample_count": left_right_split_samples,
+        "required_multi_face_sample_count": required_multi_face_samples,
+        "split_confidence": split_confidence,
+        "split_decision_reason": (
+            "two_faces_stable"
+            if supports_split_frame
+            else "two_faces_transient"
+            if left_right_split_samples > 0
+            else "single_face_only"
+        ),
+        "split_layout_mode": "VERTICAL_STACK",
         "left_anchor_ratio": left_anchor_ratio,
         "right_anchor_ratio": right_anchor_ratio,
+        "sample_anchor_pairs": sample_anchor_pairs,
+        "tracking_samples": tracking_samples,
     }

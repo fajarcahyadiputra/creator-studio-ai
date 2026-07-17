@@ -69,7 +69,7 @@ def test_clip_render_context_accepts_internal_payload() -> None:
             "artifact_uploads": [
                 {
                     "artifact": "preview",
-                    "object_key": "jobs/job-1/clip-outputs/output-1/preview.mp4",
+                    "object_key": "users/user-1/jobs/job-1/clip-outputs/output-1/preview.mp4",
                     "content_type": "video/mp4",
                     "upload_url": "http://minio:9000/upload/preview.mp4",
                 }

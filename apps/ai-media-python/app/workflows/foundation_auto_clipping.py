@@ -192,6 +192,7 @@ class FoundationAutoClippingWorkflow:
                                 "user_id": raw_input["user_id"],
                                 "project_id": input_snapshot.get("project_id"),
                                 "source_url": source_url,
+                                "target_video_height": _extract_source_target_video_height(input_snapshot),
                             },
                             start_to_close_timeout=EXTERNAL_SOURCE_ACTIVITY_TIMEOUT,
                             heartbeat_timeout=timedelta(seconds=60),
@@ -567,6 +568,19 @@ def _extract_external_source_url(input_snapshot: dict[str, Any]) -> str | None:
     if isinstance(source_url, str) and source_url:
         return source_url
     return None
+
+
+def _extract_source_target_video_height(input_snapshot: dict[str, Any]) -> int:
+    source = input_snapshot.get("source")
+    if not isinstance(source, dict):
+        return 1080
+    quality = source.get("download_quality")
+    if not isinstance(quality, dict):
+        return 1080
+    target_height = quality.get("target_height")
+    if target_height in {360, 480, 720, 1080}:
+        return int(target_height)
+    return 1080
 
 
 def _replace_source_with_media_asset(input_snapshot: dict[str, Any], media_asset_id: str) -> dict[str, Any]:

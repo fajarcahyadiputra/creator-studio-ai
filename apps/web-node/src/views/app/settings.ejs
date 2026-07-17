@@ -1,12 +1,17 @@
 <%- include('../partials/head', { title, csrfToken }) %>
-<div class="workspace-shell"><%- include('../partials/user-topbar') %><main class="workspace-main content-area">
-  <header class="page-header">
-    <div>
+<div class="workspace-shell"><%- include('../partials/user-topbar') %><main class="workspace-main content-area page-settings">
+  <header class="page-header user-page-hero">
+    <div class="user-page-hero__copy">
       <span class="eyebrow">Workspace settings</span>
       <h1>Settings</h1>
-      <p>Manage profile defaults, notification behavior, and account security.</p>
+      <p>Kelola default profile creator, logo channel, notifikasi, dan keamanan akun dari satu halaman yang lebih terstruktur.</p>
     </div>
   </header>
+  <section class="user-page-summary-grid user-page-summary-grid--compact">
+    <article class="user-page-summary-card user-page-summary-card--soft"><span>Channel identity</span><strong>Name, tagline, logo</strong><p>Dipakai untuk template visual user seperti layout auto-clipping 9:16.</p></article>
+    <article class="user-page-summary-card"><span>Workspace defaults</span><strong>Niche dan audience</strong><p>Membantu form baru terisi lebih cepat dengan konteks creator yang konsisten.</p></article>
+    <article class="user-page-summary-card"><span>Account safety</span><strong>Password dan session</strong><p>Atur akses akun aktif dan revoke session yang sudah tidak dipakai.</p></article>
+  </section>
 
   <section class="panel">
     <div class="panel-heading"><div><h2>Profile</h2><p>Name, locale, timezone, and creator defaults.</p></div></div>

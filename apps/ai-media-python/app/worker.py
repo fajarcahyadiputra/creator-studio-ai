@@ -76,10 +76,14 @@ async def main() -> None:
             submit_tts_segmentation_result,
             execute_tts_audio_synthesis,
         ],
-        max_concurrent_activities=20,
+        max_concurrent_activities=settings.TEMPORAL_MAX_CONCURRENT_ACTIVITIES,
     )
     logging.getLogger(__name__).info(
-        "Temporal worker started", extra={"task_queue": settings.TEMPORAL_AUTO_CLIP_TASK_QUEUE}
+        "Temporal worker started",
+        extra={
+            "task_queue": settings.TEMPORAL_AUTO_CLIP_TASK_QUEUE,
+            "max_concurrent_activities": settings.TEMPORAL_MAX_CONCURRENT_ACTIVITIES,
+        },
     )
     await worker.run()
 

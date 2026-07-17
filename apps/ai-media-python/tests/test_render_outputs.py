@@ -1,7 +1,101 @@
+import asyncio
+import sys
+
 import pytest
 
-from app.activities.render_outputs import SubtitleCue, SubtitleCueWord, _build_subtitle_cues, _render_ass, execute_clip_output_render
+from app.activities.render_outputs import (
+    SubtitleCue,
+    SubtitleCueWord,
+    _build_active_speaker_strategy,
+    _build_subtitle_cues,
+    _render_ass,
+    _run_command_with_heartbeat,
+    execute_clip_output_render,
+)
 from app.domain.contracts import TranscriptSegment
+
+
+def test_active_speaker_strategy_uses_clip_relative_timing_and_fast_switch_lead() -> None:
+    strategy = _build_active_speaker_strategy(
+        [
+            TranscriptSegment(
+                segment_id="segment-a",
+                start_seconds=100.0,
+                end_seconds=102.0,
+                text="Pembicara pertama",
+                speaker_label="A",
+            ),
+            TranscriptSegment(
+                segment_id="segment-b",
+                start_seconds=102.0,
+                end_seconds=105.0,
+                text="Pembicara kedua",
+                speaker_label="B",
+            ),
+        ],
+        clip_start_seconds=100.0,
+        clip_duration_seconds=5.0,
+    )
+
+    assert strategy["available"] is True
+    assert strategy["source"] == "transcript_diarization"
+    assert strategy["windows"][0]["start_seconds"] == pytest.approx(0.0)
+    assert strategy["windows"][0]["end_seconds"] == pytest.approx(1.88)
+    assert strategy["windows"][1]["start_seconds"] == pytest.approx(1.88)
+    assert strategy["windows"][1]["end_seconds"] == pytest.approx(5.0)
+
+
+def test_active_speaker_strategy_declares_face_tracking_fallback_without_diarization() -> None:
+    strategy = _build_active_speaker_strategy(
+        [
+            TranscriptSegment(
+                segment_id="segment-1",
+                start_seconds=20.0,
+                end_seconds=24.0,
+                text="Tidak ada label pembicara",
+                speaker_label=None,
+            )
+        ],
+        clip_start_seconds=20.0,
+        clip_duration_seconds=4.0,
+    )
+
+    assert strategy["available"] is False
+    assert strategy["source"] == "face_tracking_fallback"
+    assert strategy["windows"] == []
+
+
+@pytest.mark.asyncio
+async def test_render_subprocess_keeps_one_communicate_task_across_heartbeats(monkeypatch) -> None:
+    heartbeats: list[dict[str, object]] = []
+    monkeypatch.setattr("app.activities.render_outputs.activity.heartbeat", heartbeats.append)
+
+    await _run_command_with_heartbeat(
+        [sys.executable, "-c", "import time; time.sleep(0.08)"],
+        timeout_seconds=1,
+        heartbeat_interval_seconds=0.01,
+        heartbeat_details={"stage": "RENDERING_FINAL_CLIPS"},
+    )
+
+    assert heartbeats
+
+
+@pytest.mark.asyncio
+async def test_render_subprocess_is_cleaned_up_when_activity_is_cancelled(monkeypatch) -> None:
+    monkeypatch.setattr("app.activities.render_outputs.activity.heartbeat", lambda _details: None)
+    render_task = asyncio.create_task(
+        _run_command_with_heartbeat(
+            [sys.executable, "-c", "import time; time.sleep(10)"],
+            timeout_seconds=20,
+            heartbeat_interval_seconds=0.01,
+            heartbeat_details={"stage": "RENDERING_FINAL_CLIPS"},
+        )
+    )
+    await asyncio.sleep(0.04)
+    render_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await render_task
 
 
 @pytest.mark.asyncio
@@ -113,52 +207,52 @@ async def test_execute_clip_output_render_executes_render_pipeline(tmp_path, mon
                 ],
             },
             "output_targets": {
-                "preview_object_key": "jobs/job-1/clip-outputs/output-1/preview.mp4",
-                "final_object_key": "jobs/job-1/clip-outputs/output-1/final.mp4",
-                "metadata_object_key": "jobs/job-1/clip-outputs/output-1/metadata.json",
-                "thumbnail_object_key": "jobs/job-1/clip-outputs/output-1/thumbnail.jpg",
-                "subtitle_object_key": "jobs/job-1/clip-outputs/output-1/subtitle.srt",
+                "preview_object_key": "users/user-1/jobs/job-1/clip-outputs/output-1/preview.mp4",
+                "final_object_key": "users/user-1/jobs/job-1/clip-outputs/output-1/final.mp4",
+                "metadata_object_key": "users/user-1/jobs/job-1/clip-outputs/output-1/metadata.json",
+                "thumbnail_object_key": "users/user-1/jobs/job-1/clip-outputs/output-1/thumbnail.jpg",
+                "subtitle_object_key": "users/user-1/jobs/job-1/clip-outputs/output-1/subtitle.srt",
             },
             "artifact_uploads": [
                 {
                     "artifact": "preview",
-                    "object_key": "jobs/job-1/clip-outputs/output-1/preview.mp4",
+                    "object_key": "users/user-1/jobs/job-1/clip-outputs/output-1/preview.mp4",
                     "content_type": "video/mp4",
                     "upload_url": "http://minio:9000/upload/preview.mp4",
                 },
                 {
                     "artifact": "final",
-                    "object_key": "jobs/job-1/clip-outputs/output-1/final.mp4",
+                    "object_key": "users/user-1/jobs/job-1/clip-outputs/output-1/final.mp4",
                     "content_type": "video/mp4",
                     "upload_url": "http://minio:9000/upload/final.mp4",
                 },
                 {
                     "artifact": "metadata",
-                    "object_key": "jobs/job-1/clip-outputs/output-1/metadata.json",
+                    "object_key": "users/user-1/jobs/job-1/clip-outputs/output-1/metadata.json",
                     "content_type": "application/json",
                     "upload_url": "http://minio:9000/upload/metadata.json",
                 },
                 {
                     "artifact": "thumbnail",
-                    "object_key": "jobs/job-1/clip-outputs/output-1/thumbnail.jpg",
+                    "object_key": "users/user-1/jobs/job-1/clip-outputs/output-1/thumbnail.jpg",
                     "content_type": "image/jpeg",
                     "upload_url": "http://minio:9000/upload/thumbnail.jpg",
                 },
                 {
                     "artifact": "subtitle",
-                    "object_key": "jobs/job-1/clip-outputs/output-1/subtitle.srt",
+                    "object_key": "users/user-1/jobs/job-1/clip-outputs/output-1/subtitle.srt",
                     "content_type": "application/x-subrip",
                     "upload_url": "http://minio:9000/upload/subtitle.srt",
                 },
                 {
                     "artifact": "subtitle_vtt",
-                    "object_key": "jobs/job-1/clip-outputs/output-1/subtitle.vtt",
+                    "object_key": "users/user-1/jobs/job-1/clip-outputs/output-1/subtitle.vtt",
                     "content_type": "text/vtt",
                     "upload_url": "http://minio:9000/upload/subtitle.vtt",
                 },
                 {
                     "artifact": "subtitle_json",
-                    "object_key": "jobs/job-1/clip-outputs/output-1/subtitle.json",
+                    "object_key": "users/user-1/jobs/job-1/clip-outputs/output-1/subtitle.json",
                     "content_type": "application/json",
                     "upload_url": "http://minio:9000/upload/subtitle.json",
                 },
@@ -167,9 +261,9 @@ async def test_execute_clip_output_render_executes_render_pipeline(tmp_path, mon
     )
 
     assert result["quality_status"] == "PASSED"
-    assert result["preview_object_key"] == "jobs/job-1/clip-outputs/output-1/preview.mp4"
-    assert result["final_object_key"] == "jobs/job-1/clip-outputs/output-1/final.mp4"
-    assert result["subtitle_object_key"] == "jobs/job-1/clip-outputs/output-1/subtitle.srt"
+    assert result["preview_object_key"] == "users/user-1/jobs/job-1/clip-outputs/output-1/preview.mp4"
+    assert result["final_object_key"] == "users/user-1/jobs/job-1/clip-outputs/output-1/final.mp4"
+    assert result["subtitle_object_key"] == "users/user-1/jobs/job-1/clip-outputs/output-1/subtitle.srt"
     assert result["subtitle_format"] == "srt"
     assert result["subtitle_language"] == "id"
     assert result["quality_report"]["manifest_version"] == "phase2-render-manifest-v2"
@@ -306,3 +400,13 @@ def test_render_ass_outputs_karaoke_tags_when_word_highlight_enabled() -> None:
     )
 
     assert r"{\k80}PERBATASAN {\k80}JAWA" in rendered
+
+
+def test_render_ass_honors_top_and_safe_bottom_positions() -> None:
+    cue = SubtitleCue(start_seconds=0.0, end_seconds=2.0, text="Posisi subtitle aman")
+
+    top = _render_ass([cue], position="TOP", safe_margin_percent=12)
+    bottom = _render_ass([cue], position="BOTTOM", safe_margin_percent=12)
+
+    assert ",8,64,64,230,1" in top
+    assert ",2,64,64,230,1" in bottom

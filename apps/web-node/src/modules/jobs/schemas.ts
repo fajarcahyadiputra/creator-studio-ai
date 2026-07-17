@@ -251,6 +251,8 @@ export const regenerateAutoClipJobSchema = z
     aspect_ratio: z.enum(["9:16", "1:1", "4:5", "16:9", "CUSTOM"]),
     crop_strategy: z.enum(["CENTER", "ACTIVE_SPEAKER", "FACE_TRACKING", "AUTO_REFRAME", "SPLIT_SCREEN", "SPEAKER_AND_SCREEN", "BLURRED_BACKGROUND", "MANUAL"]),
     layout_template: z.enum(["STANDARD", "PODCAST_SPOTLIGHT_9X16"]).default("STANDARD"),
+    headline_overlay_enabled: booleanField(true),
+    headline_overlay_position: z.enum(["TOP", "BOTTOM"]).default("BOTTOM"),
     framing_detection_mode: z.enum(["COMBINED", "TRANSCRIPT_ONLY", "FACE_DETECTION_ONLY"]).default("COMBINED"),
     split_on_multi_face: booleanField(true),
     split_min_face_count: optionalInteger(1, 6),

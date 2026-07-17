@@ -161,7 +161,7 @@ Returns the structured Phase 2 output payload attached to a job.
             "format": "srt",
             "language": "id",
             "artifact": "subtitle_srt",
-            "object_key": "jobs/job-1/clip-outputs/output-1/subtitle.srt",
+            "object_key": "users/user-1/jobs/clip-outputs/job-1/output-1/subtitle.srt",
             "is_burned_in": false,
             "created_at": "2026-06-26T10:04:30.000Z"
           }

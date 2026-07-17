@@ -55,3 +55,9 @@ export const adminAutoClipAnalyzerRuntimeSchema = z.object({
   provider: optionalText(80),
   model: optionalText(160)
 });
+
+export const adminAutoClipSourceQualitySchema = z.object({
+  target_height: z.coerce.number().int().refine((value) => [360, 480, 720, 1080].includes(value), {
+    message: "Source quality must be 360, 480, 720, or 1080."
+  })
+});

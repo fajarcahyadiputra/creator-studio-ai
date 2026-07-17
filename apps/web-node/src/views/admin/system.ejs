@@ -34,6 +34,13 @@
     analyzerModeIsHeuristicOnly
       ? 'Heuristic scorer'
       : analyzerRuntime.model;
+  const sourceQuality = autoClipSourceQuality ?? {
+    targetHeight: 1080,
+    minimumHeight: 480,
+    isPersisted: false,
+    version: null,
+    updatedAt: null
+  };
   const featureFlagCategorySummary = Array.isArray(featureFlagCategories) ? featureFlagCategories.slice(0, 4) : [];
   const systemSettingCategorySummary = Array.isArray(systemSettingCategories) ? systemSettingCategories.slice(0, 4) : [];
 %>
@@ -52,6 +59,57 @@
     <article class="stat-card"><span>Enabled flags</span><strong><%= summary.enabledFeatureFlagCount %></strong></article>
     <article class="stat-card"><span>System settings</span><strong><%= summary.systemSettingCount %></strong></article>
     <article class="stat-card"><span>Secret settings</span><strong><%= summary.secretSettingCount %></strong></article>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>External source video quality</h2>
+        <p>Set the preferred resolution used when auto-clipping imports a video from YouTube or another external URL.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="form-message"></div>
+      <div class="clip-output-review-grid mb-4">
+        <article class="clip-output-review-card">
+          <span>Preferred quality</span>
+          <strong><%= sourceQuality.targetHeight %>p</strong>
+          <p>Downloader memilih stream terbaik yang tidak melebihi target ini.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Minimum fallback</span>
+          <strong><%= sourceQuality.minimumHeight %>p</strong>
+          <p><%= sourceQuality.targetHeight >= 720 ? 'Jika target tidak tersedia, kualitas boleh turun tetapi tidak melewati 480p.' : 'Target ini bersifat ketat dan tidak diturunkan otomatis.' %></p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Applied to</span>
+          <strong>New jobs &amp; regenerate</strong>
+          <p>Job aktif tetap memakai snapshot kualitas saat job tersebut dimulai.</p>
+        </article>
+      </div>
+      <form class="row g-3" data-api-form action="/api/v1/admin/system-settings/auto-clip-source-quality" method="post">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="col-md-5">
+          <label class="form-label" for="auto-clip-source-quality">Preferred source quality</label>
+          <select class="form-select" id="auto-clip-source-quality" name="target_height">
+            <option value="1080" <%= sourceQuality.targetHeight === 1080 ? 'selected' : '' %>>1080p - Full HD, fallback sampai 480p</option>
+            <option value="720" <%= sourceQuality.targetHeight === 720 ? 'selected' : '' %>>720p - HD, fallback sampai 480p</option>
+            <option value="480" <%= sourceQuality.targetHeight === 480 ? 'selected' : '' %>>480p - SD, tanpa fallback lebih rendah</option>
+            <option value="360" <%= sourceQuality.targetHeight === 360 ? 'selected' : '' %>>360p - Hemat storage, tanpa fallback lebih rendah</option>
+          </select>
+          <small class="text-muted d-block mt-1">Sistem selalu memilih kualitas tertinggi yang tersedia dalam batas aman pilihan ini.</small>
+        </div>
+        <div class="col-md-4 d-flex align-items-end">
+          <small class="text-muted">
+            Current source: <strong><%= sourceQuality.isPersisted ? 'system setting persisted' : 'default 1080p' %></strong>
+            <% if (sourceQuality.version) { %>| Version <%= sourceQuality.version %><% } %>
+          </small>
+        </div>
+        <div class="col-md-3 d-flex align-items-end">
+          <button class="btn btn-primary w-100" type="submit">Save source quality</button>
+        </div>
+      </form>
+    </div>
   </section>
 
   <section class="panel mt-4">

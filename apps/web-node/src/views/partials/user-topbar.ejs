@@ -9,6 +9,29 @@
       <span class="workspace-brand__text"><%= topbarAppName %></span>
     </a>
 
+    <details class="workspace-mobile-nav">
+      <summary>
+        <span>Menu</span>
+        <span class="workspace-mobile-nav__icon" aria-hidden="true"></span>
+      </summary>
+      <nav class="workspace-mobile-nav__menu" aria-label="Navigasi workspace">
+        <a class="<%= topbarPath === '/app/dashboard' ? 'active' : '' %>" href="/app/dashboard">Dashboard</a>
+        <span class="workspace-mobile-nav__label">Tools AI</span>
+        <a class="<%= topbarPath.startsWith('/app/tools/auto-clipping') ? 'active' : '' %>" href="/app/tools/auto-clipping">Auto Clipping</a>
+        <a class="<%= topbarPath.startsWith('/app/tools/text-to-speech') ? 'active' : '' %>" href="/app/tools/text-to-speech">Narration TTS</a>
+        <a class="workspace-mobile-nav__section-start <%= topbarPath.startsWith('/app/jobs') ? 'active' : '' %>" href="/app/jobs">Jobs & Results</a>
+        <a class="<%= topbarPath.startsWith('/app/presets') ? 'active' : '' %>" href="/app/presets">Templates</a>
+        <a class="<%= topbarPath.startsWith('/app/settings') ? 'active' : '' %>" href="/app/settings">Settings</a>
+        <% if (identity?.permissions?.has('admin.dashboard.view')) { %>
+          <a class="workspace-mobile-nav__admin <%= topbarPath.startsWith('/admin') ? 'active' : '' %>" href="/admin/dashboard">Admin Console</a>
+        <% } %>
+        <div class="workspace-mobile-nav__account">
+          <span><strong><%= currentUser?.displayName ?? 'Workspace User' %></strong><small><%= currentUser?.email ?? '' %></small></span>
+          <button class="btn btn-sm btn-outline-light" data-api-action="/api/v1/auth/logout">Logout</button>
+        </div>
+      </nav>
+    </details>
+
     <nav class="workspace-nav">
       <a class="workspace-nav__link <%= topbarPath === '/app/dashboard' ? 'active' : '' %>" href="/app/dashboard">Dashboard</a>
       <details class="workspace-nav__dropdown <%= topbarPath.includes('/app/tools') ? 'workspace-nav__dropdown--active' : '' %>">
@@ -19,7 +42,6 @@
         </div>
       </details>
       <a class="workspace-nav__link <%= topbarPath.startsWith('/app/jobs') ? 'active' : '' %>" href="/app/jobs">Hasil Clipping</a>
-      <a class="workspace-nav__link <%= topbarPath.startsWith('/app/media') ? 'active' : '' %>" href="/app/media">Media</a>
       <a class="workspace-nav__link <%= topbarPath.startsWith('/app/presets') ? 'active' : '' %>" href="/app/presets">Templates</a>
       <a class="workspace-nav__link <%= topbarPath.startsWith('/app/settings') ? 'active' : '' %>" href="/app/settings">Settings</a>
       <% if (identity?.permissions?.has('admin.dashboard.view')) { %>

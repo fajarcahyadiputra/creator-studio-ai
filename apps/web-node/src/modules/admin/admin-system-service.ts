@@ -4,9 +4,12 @@ import { prisma } from "../../infrastructure/database/prisma.js";
 import { NotFoundError } from "../../shared/errors/app-error.js";
 import {
   AUTO_CLIP_ANALYZER_RUNTIME_KEY,
+  AUTO_CLIP_SOURCE_QUALITY_KEY,
   buildAutoClipAnalyzerRuntimeSettingValue,
+  buildAutoClipSourceQualitySettingValue,
   DEFAULT_AUTO_CLIP_ANALYZER_RUNTIME_CONFIG,
   normalizeAutoClipAnalyzerRuntimeConfig,
+  normalizeAutoClipSourceQualityConfig,
   type AutoClipAnalyzerMode
 } from "./system-runtime-config.js";
 
@@ -32,6 +35,10 @@ interface AutoClipAnalyzerRuntimeInput {
   mode: AutoClipAnalyzerMode;
   provider?: string;
   model?: string;
+}
+
+interface AutoClipSourceQualityInput {
+  target_height: number;
 }
 
 interface AnalyzerProviderOption {
@@ -94,6 +101,7 @@ export class AdminSystemService {
       this.getProviderHealthSummary()
     ]);
     const analyzerRuntimeSetting = systemSettings.find((setting) => setting.key === AUTO_CLIP_ANALYZER_RUNTIME_KEY) ?? null;
+    const sourceQualitySetting = systemSettings.find((setting) => setting.key === AUTO_CLIP_SOURCE_QUALITY_KEY) ?? null;
 
     const mappedFeatureFlags = featureFlags.map((flag) => ({
       id: flag.id,
@@ -154,6 +162,16 @@ export class AdminSystemService {
         version: analyzerRuntimeSetting?.version ?? null,
         updatedAt: analyzerRuntimeSetting?.updatedAt ?? null,
         isPersisted: Boolean(analyzerRuntimeSetting)
+      },
+      autoClipSourceQuality: {
+        ...normalizeAutoClipSourceQualityConfig(sourceQualitySetting?.value as Prisma.JsonValue | undefined),
+        key: AUTO_CLIP_SOURCE_QUALITY_KEY,
+        description:
+          sourceQualitySetting?.description ??
+          "Controls the preferred resolution and bounded fallback used when importing external auto-clipping sources.",
+        version: sourceQualitySetting?.version ?? null,
+        updatedAt: sourceQualitySetting?.updatedAt ?? null,
+        isPersisted: Boolean(sourceQualitySetting)
       },
       providerHealthSummary,
       analyzerRuntimeProviderOptions,
@@ -219,6 +237,28 @@ export class AdminSystemService {
         key: AUTO_CLIP_ANALYZER_RUNTIME_KEY,
         description:
           "Controls whether auto-clipping candidate analysis uses OpenAI structured output or local heuristic scoring.",
+        isSecret: false,
+        value: valueJson as Prisma.InputJsonValue
+      }
+    });
+  }
+
+  public async upsertAutoClipSourceQuality(input: AutoClipSourceQualityInput) {
+    const valueJson = buildAutoClipSourceQualitySettingValue({ target_height: input.target_height });
+
+    return this.deps.prisma.systemSetting.upsert({
+      where: { key: AUTO_CLIP_SOURCE_QUALITY_KEY },
+      update: {
+        description:
+          "Controls the preferred resolution and bounded fallback used when importing external auto-clipping sources.",
+        isSecret: false,
+        value: valueJson as Prisma.InputJsonValue,
+        version: { increment: 1 }
+      },
+      create: {
+        key: AUTO_CLIP_SOURCE_QUALITY_KEY,
+        description:
+          "Controls the preferred resolution and bounded fallback used when importing external auto-clipping sources.",
         isSecret: false,
         value: valueJson as Prisma.InputJsonValue
       }

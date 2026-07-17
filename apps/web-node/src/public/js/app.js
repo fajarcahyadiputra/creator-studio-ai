@@ -578,6 +578,10 @@ if (autoClipForm) {
     if (layoutField instanceof HTMLSelectElement && aspectRatio !== "9:16") {
       layoutField.value = "STANDARD";
     }
+    const standardHeadlinePanel = autoClipForm.querySelector("[data-standard-headline-panel]");
+    if (standardHeadlinePanel instanceof HTMLElement) {
+      standardHeadlinePanel.hidden = aspectRatio !== "9:16" || layoutField?.value !== "STANDARD";
+    }
     syncSubmitSummary();
   };
 
@@ -614,6 +618,51 @@ if (autoClipForm) {
     helper.textContent = `${values.length}/${maxItems} item` + (tooLongCount ? ` | ${tooLongCount} item terlalu panjang` : "");
   };
 
+  const humanizeAutoClipValue = (kind, value) => {
+    const normalized = String(value || "").trim();
+    if (!normalized) return "-";
+    const maps = {
+      platform: {
+        YOUTUBE_SHORTS: "YouTube Shorts",
+        TIKTOK: "TikTok",
+        INSTAGRAM_REELS: "Instagram Reels",
+        FACEBOOK_REELS: "Facebook Reels",
+        CUSTOM: "Custom"
+      },
+      objective: {
+        EDUCATION: "Edukasi",
+        ENGAGEMENT: "Engagement",
+        STORYTELLING: "Storytelling",
+        CONTROVERSY: "Kontroversi",
+        PRODUCT_AWARENESS: "Product awareness",
+        LEAD_GENERATION: "Lead generation"
+      },
+      cropStrategy: {
+        AUTO_REFRAME: "Auto reframe",
+        FACE_TRACKING: "Face tracking",
+        ACTIVE_SPEAKER: "Active speaker",
+        SPLIT_SCREEN: "Split screen",
+        CENTER: "Center crop",
+        SPEAKER_AND_SCREEN: "Speaker and screen",
+        BLURRED_BACKGROUND: "Blurred background",
+        MANUAL: "Manual"
+      },
+      layoutTemplate: {
+        STANDARD: "Standard",
+        PODCAST_SPOTLIGHT_9X16: "Podcast Spotlight 9:16"
+      },
+      subtitleStyle: {
+        PODCAST_HIGHLIGHT: "Podcast Highlight",
+        DEFAULT: "Default clean",
+        BOLD_KINETIC: "Bold kinetic",
+        CLEAN_MINIMAL: "Clean minimal",
+        NEWS_FLASH: "News Flash",
+        CINEMATIC_QUOTE: "Cinematic quote"
+      }
+    };
+    return maps[kind]?.[normalized] || normalized;
+  };
+
   const syncSubmitSummary = () => {
     const sourceMode = sourceModeField?.value === "MEDIA_ASSET" ? "MEDIA_ASSET" : "EXTERNAL_URL";
     const selectedAssetLabel = mediaAssetField?.selectedOptions?.[0]?.textContent?.trim() || "Belum ada media asset dipilih.";
@@ -644,16 +693,16 @@ if (autoClipForm) {
         : (sourceUrlValue || "Belum ada external URL diisi.");
     }
     if (submitSummaryStrategy) {
-      submitSummaryStrategy.textContent = `${platform} | ${objective}`;
+      submitSummaryStrategy.textContent = `${humanizeAutoClipValue("platform", platform)} | ${humanizeAutoClipValue("objective", objective)}`;
     }
     if (submitSummaryDuration) {
       submitSummaryDuration.textContent = `${minDuration || "-"}-${maxDuration || "-"} detik | ${clipCount || "-"} clip | pool ${candidatePoolCount || "-"}`;
     }
     if (submitSummarySubtitle) {
-      submitSummarySubtitle.textContent = `${subtitleLanguage || "-"} | ${subtitleFormat || "-"}`;
+      submitSummarySubtitle.textContent = `${subtitleLanguage || "-"} | ${humanizeAutoClipValue("subtitleStyle", autoClipForm.querySelector('[name="subtitle_style"]')?.value || "")}`;
     }
     if (submitSummaryVisual) {
-      submitSummaryVisual.textContent = `${aspectRatio || "-"} | ${cropStrategy || "-"} | ${layoutTemplate || "STANDARD"}`;
+      submitSummaryVisual.textContent = `${aspectRatio || "-"} | ${humanizeAutoClipValue("cropStrategy", cropStrategy)} | ${humanizeAutoClipValue("layoutTemplate", layoutTemplate || "STANDARD")}`;
     }
     if (submitSummaryMode) {
       submitSummaryMode.textContent = advancedMode ? "Advanced Mode" : "Quick Mode";
@@ -776,6 +825,8 @@ if (autoClipForm) {
     setFieldValue("standalone_priority", config.standalone_priority);
     setFieldValue("aspect_ratio", config.aspect_ratio);
     setFieldValue("layout_template", config.layout_template || config.layoutTemplate);
+    setCheckboxValue("headline_overlay_enabled", config.headline_overlay_enabled ?? config.headlineOverlayEnabled);
+    setFieldValue("headline_overlay_position", config.headline_overlay_position || config.headlineOverlayPosition);
     setFieldValue("preferred_topics", joinTextList(config.preferred_topics));
     setFieldValue("topics_to_avoid", joinTextList(config.topics_to_avoid));
     setFieldValue("clip_style_tags", joinTextList(config.clip_style_tags));
@@ -830,6 +881,7 @@ if (autoClipForm) {
   advancedModeField?.addEventListener("change", syncSubmitSummary);
   sourceModeField?.addEventListener("change", syncSourceMode);
   autoClipForm.querySelector('[name="aspect_ratio"]')?.addEventListener("change", syncLayoutMode);
+  autoClipForm.querySelector('[name="layout_template"]')?.addEventListener("change", syncLayoutMode);
   presetSelector?.addEventListener("change", () => {
     applyPreset(presetSelector.value);
     syncLayoutMode();
@@ -918,6 +970,8 @@ if (autoClipForm) {
         settings: {
           mode: data.get("advanced_mode") === "on" ? "ADVANCED" : "QUICK",
           layout_template: String(data.get("layout_template") || "STANDARD").trim() || "STANDARD",
+          headline_overlay_enabled: data.get("headline_overlay_enabled") === "on",
+          headline_overlay_position: String(data.get("headline_overlay_position") || "BOTTOM").trim(),
           brand_kit_id: String(data.get("brand_kit_id") || "").trim() || undefined,
           framing_detection_mode: framingDetectionMode,
           split_on_multi_face: data.get("split_on_multi_face") === "on",
@@ -1272,6 +1326,19 @@ if (ttsForm) {
 
 for (const form of document.querySelectorAll('form[action^="/api/v1/tts/jobs/"][action$="/regenerate"]')) {
   setupTtsDurationEstimator(form);
+}
+
+for (const form of document.querySelectorAll('form[action^="/api/v1/auto-clipping/jobs/"][action$="/regenerate"]')) {
+  const layoutField = form.querySelector('[name="layout_template"]');
+  const aspectRatioField = form.querySelector('[name="aspect_ratio"]');
+  const panels = form.querySelectorAll("[data-regenerate-standard-headline]");
+  const syncStandardHeadlineControls = () => {
+    const visible = layoutField?.value === "STANDARD" && aspectRatioField?.value === "9:16";
+    for (const panel of panels) panel.hidden = !visible;
+  };
+  layoutField?.addEventListener("change", syncStandardHeadlineControls);
+  aspectRatioField?.addEventListener("change", syncStandardHeadlineControls);
+  syncStandardHeadlineControls();
 }
 
 const jobStreamRoot = document.querySelector("[data-job-stream]");
@@ -1793,6 +1860,12 @@ function validateAutoClipPayload(payload) {
     && !["COMBINED", "TRANSCRIPT_ONLY", "FACE_DETECTION_ONLY"].includes(String(visualSettings.framing_detection_mode))
   ) {
     errors.push("visual.settings.framing_detection_mode is invalid");
+  }
+  if (
+    visualSettings.headline_overlay_position !== undefined
+    && !["TOP", "BOTTOM"].includes(String(visualSettings.headline_overlay_position))
+  ) {
+    errors.push("visual.settings.headline_overlay_position is invalid");
   }
   if (
     visualSettings.split_min_face_count !== undefined

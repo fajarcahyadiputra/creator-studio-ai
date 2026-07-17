@@ -6,14 +6,17 @@ import { validateExternalSourceUrl } from "../../infrastructure/ingestion/client
 import {
   createInternalSignedObjectReadUrl,
   createPublicSignedObjectReadUrl,
-  deleteObjectKeys
+  deleteObjectKeys,
+  objectExists
 } from "../../infrastructure/storage/s3.js";
 import { temporalClient } from "../../infrastructure/temporal/client.js";
 import { env } from "../../config/env.js";
 import { AppError, ConflictError, NotFoundError } from "../../shared/errors/app-error.js";
 import {
   AUTO_CLIP_ANALYZER_RUNTIME_KEY,
-  buildAutoClipAnalyzerRuntimeSettingValue
+  AUTO_CLIP_SOURCE_QUALITY_KEY,
+  buildAutoClipAnalyzerRuntimeSettingValue,
+  buildAutoClipSourceQualitySettingValue
 } from "../admin/system-runtime-config.js";
 
 const CREATE_AUTO_CLIP_ATTEMPT_OPERATION_KEY = "CREATE_AUTO_CLIP_JOB_ATTEMPT";
@@ -22,7 +25,12 @@ const REGENERATE_JOB_ATTEMPT_OPERATION_KEY = "REGENERATE_JOB_ATTEMPT";
 
 interface CreateAutoClipInput {
   project_id?: string;
-  source: { type: "MEDIA_ASSET" | "EXTERNAL_URL"; media_asset_id?: string; url?: string };
+  source: {
+    type: "MEDIA_ASSET" | "EXTERNAL_URL";
+    media_asset_id?: string;
+    url?: string;
+    download_quality?: Record<string, unknown>;
+  };
   content: {
     title?: string;
     context?: string;
@@ -107,6 +115,8 @@ interface RegenerateAutoClipInput {
     | "BLURRED_BACKGROUND"
     | "MANUAL";
   layout_template: "STANDARD" | "PODCAST_SPOTLIGHT_9X16";
+  headline_overlay_enabled: boolean;
+  headline_overlay_position: "TOP" | "BOTTOM";
   framing_detection_mode: "COMBINED" | "TRANSCRIPT_ONLY" | "FACE_DETECTION_ONLY";
   split_on_multi_face: boolean;
   split_min_face_count?: number;
@@ -594,6 +604,8 @@ export class JobService {
             id: true,
             status: true,
             deletedAt: true,
+            objectKey: true,
+            metadata: true,
           },
         },
       }
@@ -620,11 +632,12 @@ export class JobService {
       );
     }
 
-    const retryInputSnapshot = restoreRunnableAutoClipSnapshot({
+    const retryInputSnapshot = await resolveRunnableAutoClipSnapshot({
       inputSnapshot: job.inputSnapshot,
       autoClipRequest: job.autoClipRequest,
       sourceMediaAsset: job.sourceMediaAsset,
     });
+    assertRunnableAutoClipSource(retryInputSnapshot);
     const attemptNumber = (job.attempts[0]?.attemptNumber ?? 0) + 1;
     const workflowId = `${job.id}:attempt:${attemptNumber}`;
     await prisma.$transaction([
@@ -721,6 +734,8 @@ export class JobService {
             id: true,
             status: true,
             deletedAt: true,
+            objectKey: true,
+            metadata: true,
           },
         },
       }
@@ -729,7 +744,7 @@ export class JobService {
     return this.createAutoClippingJob({
       userId,
       idempotencyKey,
-      input: restoreRunnableAutoClipSnapshot({
+      input: await resolveRunnableAutoClipSnapshot({
         inputSnapshot: job.inputSnapshot,
         autoClipRequest: job.autoClipRequest,
         sourceMediaAsset: job.sourceMediaAsset,
@@ -784,15 +799,12 @@ export class JobService {
       return prisma.job.findUniqueOrThrow({ where: { id: job.id } });
     }
 
-    const currentSnapshot = restoreExternalSourceSnapshot(
-      job.inputSnapshot,
-      job.autoClipRequest
-    ) as unknown as CreateAutoClipInput;
-    const runnableSnapshot = restoreRunnableAutoClipSnapshot({
-      inputSnapshot: currentSnapshot,
+    const runnableSnapshot = await resolveRunnableAutoClipSnapshot({
+      inputSnapshot: job.inputSnapshot,
       autoClipRequest: job.autoClipRequest,
       sourceMediaAsset: job.sourceMediaAsset,
     }) as unknown as CreateAutoClipInput;
+    assertRunnableAutoClipSource(runnableSnapshot as unknown as Record<string, unknown>);
     const nextInput = await prepareAutoClippingInput(
       params.userId,
       buildRegeneratedAutoClippingInput(runnableSnapshot, params.input)
@@ -1890,6 +1902,8 @@ function buildRegeneratedAutoClippingInput(
       settings: compactRecord({
         ...currentVisualSettings,
         layout_template: input.layout_template,
+        headline_overlay_enabled: input.headline_overlay_enabled,
+        headline_overlay_position: input.headline_overlay_position,
         framing_detection_mode: input.framing_detection_mode,
         split_on_multi_face: input.split_on_multi_face,
         split_min_face_count: input.split_min_face_count
@@ -2174,8 +2188,14 @@ export async function prepareAutoClippingInput(userId: string, input: CreateAuto
     typeof visualSettings.layout_template === "string" ? visualSettings.layout_template : undefined,
     typeof visual.aspect_ratio === "string" ? visual.aspect_ratio : undefined
   );
+  const headlineOverlayEnabled =
+    visual.aspect_ratio === "9:16"
+    && layoutTemplate === "STANDARD"
+    && visualSettings.headline_overlay_enabled !== false;
+  const headlineOverlayPosition = visualSettings.headline_overlay_position === "TOP" ? "TOP" : "BOTTOM";
   const branding = await resolveAutoClipBrandingContext(userId, visualSettings);
   const analyzerRuntime = await resolveAutoClipAnalyzerRuntimeSnapshot();
+  const sourceQuality = await resolveAutoClipSourceQualitySnapshot();
   const ai =
     input.ai && typeof input.ai === "object" && !Array.isArray(input.ai)
       ? { ...input.ai }
@@ -2183,12 +2203,17 @@ export async function prepareAutoClippingInput(userId: string, input: CreateAuto
 
   return {
     ...input,
-    source: normalizedSource,
+    source: {
+      ...normalizedSource,
+      download_quality: sourceQuality
+    },
     visual: {
       ...visual,
       settings: compactRecord({
         ...visualSettings,
         layout_template: layoutTemplate,
+        headline_overlay_enabled: headlineOverlayEnabled,
+        headline_overlay_position: headlineOverlayPosition,
         branding
       })
     },
@@ -2208,6 +2233,15 @@ async function resolveAutoClipAnalyzerRuntimeSnapshot() {
   return buildAutoClipAnalyzerRuntimeSettingValue(setting?.value as Prisma.JsonValue | undefined);
 }
 
+async function resolveAutoClipSourceQualitySnapshot() {
+  const setting = await prisma.systemSetting.findUnique({
+    where: { key: AUTO_CLIP_SOURCE_QUALITY_KEY },
+    select: { value: true }
+  });
+
+  return buildAutoClipSourceQualitySettingValue(setting?.value as Prisma.JsonValue | undefined);
+}
+
 function restoreExternalSourceSnapshot(
   inputSnapshot: unknown,
   autoClipRequest:
@@ -2216,7 +2250,8 @@ function restoreExternalSourceSnapshot(
         sourceUrl: string | null;
       }
     | null
-    | undefined
+    | undefined,
+  sourceMediaAssetMetadata?: unknown,
 ): Record<string, unknown> {
   const snapshot =
     inputSnapshot && typeof inputSnapshot === "object" && !Array.isArray(inputSnapshot)
@@ -2227,7 +2262,16 @@ function restoreExternalSourceSnapshot(
       ? { ...(snapshot.source as Record<string, unknown>) }
       : {};
 
-  if (autoClipRequest?.sourceType !== "EXTERNAL_URL" || !autoClipRequest.sourceUrl) {
+  const snapshotUrl = typeof source.url === "string" && source.url.trim().length > 0
+    ? source.url.trim()
+    : null;
+  const requestUrl = autoClipRequest?.sourceType === "EXTERNAL_URL" && autoClipRequest.sourceUrl
+    ? autoClipRequest.sourceUrl.trim()
+    : null;
+  const metadataUrl = extractExternalSourceUrlFromMetadata(sourceMediaAssetMetadata);
+  const sourceUrl = requestUrl || snapshotUrl || metadataUrl;
+
+  if (!sourceUrl) {
     return snapshot;
   }
 
@@ -2236,7 +2280,7 @@ function restoreExternalSourceSnapshot(
     source: {
       ...source,
       type: "EXTERNAL_URL",
-      url: autoClipRequest.sourceUrl,
+      url: sourceUrl,
       media_asset_id:
         typeof source.media_asset_id === "string" && source.media_asset_id.trim().length > 0
           ? source.media_asset_id
@@ -2259,11 +2303,18 @@ function restoreRunnableAutoClipSnapshot(params: {
         id: string;
         status: string;
         deletedAt: Date | null;
+        objectKey: string;
+        metadata: unknown;
       }
     | null
     | undefined;
+  sourceObjectAvailable?: boolean;
 }) {
-  const snapshot = restoreExternalSourceSnapshot(params.inputSnapshot, params.autoClipRequest);
+  const snapshot = restoreExternalSourceSnapshot(
+    params.inputSnapshot,
+    params.autoClipRequest,
+    params.sourceMediaAsset?.metadata,
+  );
   const source =
     snapshot.source && typeof snapshot.source === "object" && !Array.isArray(snapshot.source)
       ? { ...(snapshot.source as Record<string, unknown>) }
@@ -2272,11 +2323,34 @@ function restoreRunnableAutoClipSnapshot(params: {
     params.sourceMediaAsset
     && params.sourceMediaAsset.deletedAt === null
     && params.sourceMediaAsset.status === "READY"
+    && params.sourceObjectAvailable !== false
       ? params.sourceMediaAsset.id
       : null;
+  const externalSourceUrl =
+    typeof source.url === "string" && source.url.trim().length > 0
+      ? source.url.trim()
+      : null;
+
+  if (externalSourceUrl) {
+    return {
+      ...snapshot,
+      source: {
+        ...source,
+        type: "EXTERNAL_URL",
+        url: externalSourceUrl,
+        media_asset_id: reusableMediaAssetId ?? undefined,
+      },
+    };
+  }
 
   if (!reusableMediaAssetId) {
-    return snapshot;
+    return {
+      ...snapshot,
+      source: {
+        ...source,
+        media_asset_id: undefined,
+      },
+    };
   }
 
   return {
@@ -2288,6 +2362,45 @@ function restoreRunnableAutoClipSnapshot(params: {
       url: undefined,
     },
   };
+}
+
+async function resolveRunnableAutoClipSnapshot(
+  params: Omit<Parameters<typeof restoreRunnableAutoClipSnapshot>[0], "sourceObjectAvailable">
+) {
+  const sourceObjectAvailable = params.sourceMediaAsset
+    && params.sourceMediaAsset.deletedAt === null
+    && params.sourceMediaAsset.status === "READY"
+      ? await objectExists(params.sourceMediaAsset.objectKey)
+      : false;
+
+  return restoreRunnableAutoClipSnapshot({
+    ...params,
+    sourceObjectAvailable,
+  });
+}
+
+function extractExternalSourceUrlFromMetadata(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const sourceUrl = (metadata as Record<string, unknown>).source_url;
+  return typeof sourceUrl === "string" && sourceUrl.trim().length > 0 ? sourceUrl.trim() : null;
+}
+
+function assertRunnableAutoClipSource(snapshot: Record<string, unknown>) {
+  const source =
+    snapshot.source && typeof snapshot.source === "object" && !Array.isArray(snapshot.source)
+      ? (snapshot.source as Record<string, unknown>)
+      : {};
+  const hasMediaAsset = typeof source.media_asset_id === "string" && source.media_asset_id.trim().length > 0;
+  const hasExternalUrl =
+    source.type === "EXTERNAL_URL"
+    && typeof source.url === "string"
+    && source.url.trim().length > 0;
+  if (hasMediaAsset || hasExternalUrl) return;
+
+  throw new ConflictError(
+    "SOURCE_MEDIA_OBJECT_MISSING",
+    "The original uploaded source is no longer stored. Upload the source video again before retrying this job."
+  );
 }
 
 interface ClipOutputArtifactSource {
@@ -2514,6 +2627,7 @@ async function startClipOutputRenderWorkflow(
   await client.workflow.start("ClipOutputRenderWorkflow", {
     taskQueue: env.TEMPORAL_AUTO_CLIP_TASK_QUEUE,
     workflowId,
+    workflowTaskTimeout: "30s",
     args: [{ clip_output_id: clipOutputId }]
   });
 }

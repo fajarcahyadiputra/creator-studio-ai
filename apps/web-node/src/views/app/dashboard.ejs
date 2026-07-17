@@ -1,11 +1,16 @@
 <%- include('../partials/head', { title, csrfToken }) %>
 <div class="workspace-shell">
   <%- include('../partials/user-topbar') %>
-  <main class="workspace-main content-area">
-    <header class="page-header">
-      <div><span class="eyebrow">Creator workspace</span><h1>Welcome, <%= user.displayName %></h1><p>Track durable media jobs, review candidate clips, and continue your short-form workflow without losing progress.</p></div>
-      <div class="d-flex gap-2"><a class="btn btn-primary" href="/app/tools/auto-clipping">New Auto Clip</a><a class="btn btn-outline-primary" href="/app/jobs">View Jobs</a></div>
+  <main class="workspace-main content-area page-user-dashboard">
+    <header class="page-header user-page-hero">
+      <div class="user-page-hero__copy"><span class="eyebrow">Creator workspace</span><h1>Selamat datang, <%= user.displayName %></h1><p>Pantau pipeline aktif, lanjut review hasil clip, dan gerakkan workflow short-form kamu dari satu dashboard yang lebih rapi.</p></div>
+      <div class="user-page-actions"><a class="btn btn-primary" href="/app/tools/auto-clipping">New Auto Clip</a><a class="btn btn-outline-primary" href="/app/jobs">View Jobs</a></div>
     </header>
+    <section class="user-page-summary-grid">
+      <article class="user-page-summary-card user-page-summary-card--accent"><span>Workspace focus</span><strong><%= counts.RUNNING ?? 0 %> job aktif</strong><p>Prioritaskan review pada job yang sedang berjalan atau butuh perhatian.</p></article>
+      <article class="user-page-summary-card"><span>Output tersimpan</span><strong><%= summary.totalClipOutputs %> clip</strong><p>Semua hasil clip terbaru, subtitle, dan metadata bisa diakses dari detail job.</p></article>
+      <article class="user-page-summary-card"><span>Performa rata-rata</span><strong><%= summary.averageViralScore ? summary.averageViralScore.toFixed(2) : '-' %></strong><p>Gunakan skor ini untuk membaca kualitas output terbaru di workspace kamu.</p></article>
+    </section>
     <section class="workspace-highlight-grid">
       <article class="workspace-highlight-card">
         <span class="eyebrow">Quick Action</span>
@@ -61,16 +66,16 @@
     </section>
     <section class="panel mt-4">
       <div class="panel-heading"><div><h2>Recent jobs</h2><p>Progress is stored as an event timeline.</p></div><a href="/app/jobs">View all</a></div>
-      <div class="table-responsive"><table class="table align-middle"><thead><tr><th>Job</th><th>Project / Source</th><th>Tool</th><th>Status</th><th>Stage</th><th>Progress</th><th>Created</th></tr></thead><tbody>
+      <div class="table-responsive dashboard-table-wrap"><table class="table align-middle mobile-card-table dashboard-recent-jobs"><thead><tr><th>Job</th><th>Project / Source</th><th>Tool</th><th>Status</th><th>Stage</th><th>Progress</th><th>Created</th></tr></thead><tbody>
         <% if (!recent.length) { %><tr><td colspan="7" class="empty-cell">No jobs yet. Create an auto-clipping foundation job.</td></tr><% } %>
-        <% recent.forEach(job => { %><tr data-job-stream-row="<%= job.id %>"><td><a href="/app/jobs/<%= job.id %>"><code><%= job.id.slice(0,8) %></code></a></td><td><strong><%= job.projectName ?? 'No project' %></strong><br><small><%= job.sourceName ?? 'No source linked' %></small></td><td><%= job.type %></td><td><span class="status status-<%= job.status.toLowerCase() %>" data-job-row-status><%= job.status %></span></td><td data-job-row-stage><%= job.currentStage ?? '-' %></td><td><div class="progress"><div class="progress-bar" data-job-row-progress-bar style="width:<%= job.progressPercent %>%"></div></div><small data-job-row-progress-value><%= job.progressPercent %>%</small></td><td><%= job.createdAt.toLocaleString() %></td></tr><% }) %>
+        <% recent.forEach(job => { %><tr data-job-stream-row="<%= job.id %>"><td data-label="Job"><a href="/app/jobs/<%= job.id %>"><code><%= job.id.slice(0,8) %></code></a></td><td data-label="Project / Source"><strong><%= job.projectName ?? 'No project' %></strong><br><small><%= job.sourceName ?? 'No source linked' %></small></td><td data-label="Tool"><%= job.type %></td><td data-label="Status"><span class="status status-<%= job.status.toLowerCase() %>" data-job-row-status><%= job.status %></span></td><td data-label="Stage" data-job-row-stage><%= job.currentStage ?? '-' %></td><td data-label="Progress"><div class="dashboard-mobile-progress"><div class="progress"><div class="progress-bar" data-job-row-progress-bar style="width:<%= job.progressPercent %>%"></div></div><small data-job-row-progress-value><%= job.progressPercent %>%</small></div></td><td data-label="Created"><%= job.createdAt.toLocaleString() %></td></tr><% }) %>
       </tbody></table></div>
     </section>
     <section class="panel mt-4">
       <div class="panel-heading"><div><h2>Recent outputs</h2><p>Latest generated clip outputs attached to your jobs.</p></div></div>
-      <div class="table-responsive"><table class="table align-middle"><thead><tr><th>Output</th><th>Title</th><th>Score</th><th>Created</th></tr></thead><tbody>
+      <div class="table-responsive dashboard-table-wrap"><table class="table align-middle mobile-card-table dashboard-recent-outputs"><thead><tr><th>Output</th><th>Title</th><th>Score</th><th>Created</th></tr></thead><tbody>
         <% if (!summary.recentOutputs.length) { %><tr><td colspan="4" class="empty-cell">No clip outputs yet.</td></tr><% } %>
-        <% summary.recentOutputs.forEach((output) => { %><tr><td><a href="/app/jobs/<%= output.jobId %>"><code><%= output.id.slice(0,8) %></code></a></td><td><%= output.title %></td><td><%= output.score.toFixed(2) %></td><td><%= output.createdAt.toLocaleString() %></td></tr><% }) %>
+        <% summary.recentOutputs.forEach((output) => { %><tr><td data-label="Output"><a href="/app/jobs/<%= output.jobId %>"><code><%= output.id.slice(0,8) %></code></a></td><td data-label="Title"><%= output.title %></td><td data-label="Score"><strong><%= output.score.toFixed(2) %></strong></td><td data-label="Created"><%= output.createdAt.toLocaleString() %></td></tr><% }) %>
       </tbody></table></div>
     </section>
   </main>

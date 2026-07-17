@@ -80,6 +80,8 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
     subtitle_burned_in = _resolve_subtitle_burned_in(context.render_settings)
     subtitle_max_lines = _resolve_subtitle_max_lines(context.render_settings)
     subtitle_word_highlight = _resolve_subtitle_word_highlight(context.render_settings)
+    subtitle_position = _resolve_subtitle_position(context.render_settings)
+    subtitle_safe_margin_percent = _resolve_subtitle_safe_margin_percent(context.render_settings)
     width, height = _resolve_dimensions(aspect_ratio)
     fps = 30
     clip_start_seconds = int(context.candidate.start_ms) / 1000
@@ -121,6 +123,8 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
                 subtitle_cues,
                 layout_template=layout_template,
                 word_highlight=subtitle_word_highlight,
+                position=subtitle_position,
+                safe_margin_percent=subtitle_safe_margin_percent,
             ),
             encoding="utf-8",
         )
@@ -341,8 +345,25 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
             "subtitle_burned_in": subtitle_burned_in,
             "crop_mode": "split_frame" if layout_options.get("split_frame_enabled") else "single_frame",
             "crop_strategy": crop_strategy,
+            "split_frame_enabled": bool(layout_options.get("split_frame_enabled")),
+            "split_decision_reason": layout_options.get("split_decision_reason"),
+            "split_frame_fallback_mode": layout_options.get("split_frame_fallback_mode"),
             "layout_template": layout_template,
             "speaker_count": speaker_count,
+            "active_speaker_available": bool(
+                isinstance(layout_options.get("active_speaker_strategy"), dict)
+                and layout_options["active_speaker_strategy"].get("available")
+            ),
+            "active_speaker_source": (
+                layout_options["active_speaker_strategy"].get("source")
+                if isinstance(layout_options.get("active_speaker_strategy"), dict)
+                else None
+            ),
+            "active_speaker_switch_lead_seconds": (
+                layout_options["active_speaker_strategy"].get("switch_lead_seconds")
+                if isinstance(layout_options.get("active_speaker_strategy"), dict)
+                else None
+            ),
         },
         "subtitle": {
             "format": subtitle_format if subtitle_path_for_upload else None,
@@ -659,6 +680,24 @@ def _resolve_subtitle_word_highlight(render_settings: dict[str, Any]) -> bool:
     return value is True
 
 
+def _resolve_subtitle_position(render_settings: dict[str, Any]) -> str:
+    settings = _resolve_subtitle_settings(render_settings)
+    value = settings.get("position")
+    if isinstance(value, str) and value.strip().upper() in {"TOP", "CENTER", "BOTTOM"}:
+        return value.strip().upper()
+    return "BOTTOM"
+
+
+def _resolve_subtitle_safe_margin_percent(render_settings: dict[str, Any]) -> float:
+    settings = _resolve_subtitle_settings(render_settings)
+    value = settings.get("safe_margin_percent")
+    try:
+        resolved = float(value)
+    except (TypeError, ValueError):
+        return 12.0
+    return max(0.0, min(resolved, 30.0))
+
+
 def _resolve_render_metadata(render_settings: dict[str, Any]) -> dict[str, Any]:
     metadata = render_settings.get("metadata")
     if not isinstance(metadata, dict):
@@ -715,13 +754,15 @@ async def _detect_face_layout_summary(
                 "-frames:v",
                 "1",
                 "-vf",
-                "scale=640:-2",
+                "scale=960:-2",
                 str(frame_path),
             ]
             await _run_command(command, timeout_seconds=min(timeout_seconds, 20))
             if not frame_path.exists():
                 continue
-            detected_faces = detect_faces_in_image(frame_path)
+            # OpenCV cascade detection is CPU-bound and must not block the
+            # Temporal worker event loop while other workflows heartbeat.
+            detected_faces = await asyncio.to_thread(detect_faces_in_image, frame_path)
             samples.append(detected_faces)
     except FaceDetectionUnavailable as error:
         return {
@@ -735,7 +776,9 @@ async def _detect_face_layout_summary(
             "single_face_sample_count": 0,
             "left_right_split_samples": 0,
             "single_face_anchor": "center",
+            "single_face_anchor_ratio": 0.5,
             "supports_split_frame": False,
+            "split_layout_mode": "VERTICAL_STACK",
             "left_anchor_ratio": 0.28,
             "right_anchor_ratio": 0.72,
             "technical_detail": str(error),
@@ -746,6 +789,8 @@ async def _detect_face_layout_summary(
             "warning": f"Face detection skipped because frame sampling failed: {error}",
             "reason": "frame_sampling_failed",
             "detection_backend": "ffmpeg+opencv",
+            "single_face_anchor_ratio": 0.5,
+            "split_layout_mode": "VERTICAL_STACK",
             "left_anchor_ratio": 0.28,
             "right_anchor_ratio": 0.72,
         }
@@ -796,20 +841,32 @@ def _build_layout_options(
     speaker_count = _resolve_speaker_count(render_settings=render_settings, transcript_segments=transcript_segments)
     raw_detected_face_count = face_layout_summary.get("max_face_count")
     detected_face_count = int(raw_detected_face_count) if isinstance(raw_detected_face_count, (int, float)) else 0
-    active_speaker_strategy = _build_active_speaker_strategy(transcript_segments)
-    multi_subject_count = _resolve_multi_subject_count(
-        framing_detection_mode=framing_detection_mode,
-        speaker_count=speaker_count,
-        detected_face_count=detected_face_count,
+    clip_start_seconds = float(candidate.start_ms) / 1000.0
+    clip_duration_seconds = max(0.0, float(candidate.duration_ms) / 1000.0)
+    active_speaker_strategy = _build_active_speaker_strategy(
+        transcript_segments,
+        clip_start_seconds=clip_start_seconds,
+        clip_duration_seconds=clip_duration_seconds,
     )
     face_detection_unavailable = face_layout_summary.get("status") == "unavailable"
     explicit_split_strategy = crop_strategy in {"SPLIT_SCREEN", "SPEAKER_AND_SCREEN"}
-    should_split_frame = crop_strategy in {"SPLIT_SCREEN", "SPEAKER_AND_SCREEN"} or (
-        crop_strategy == "AUTO_REFRAME"
-        and split_on_multi_face
-        and multi_subject_count >= split_min_face_count
-        and bool(face_layout_summary.get("supports_split_frame") or framing_detection_mode != "FACE_DETECTION_ONLY")
+    split_frame_supported = bool(face_layout_summary.get("supports_split_frame"))
+    split_frame_requested = explicit_split_strategy or (
+        crop_strategy == "AUTO_REFRAME" and split_on_multi_face
     )
+    should_split_frame = (
+        split_frame_requested
+        and detected_face_count >= max(2, split_min_face_count)
+        and split_frame_supported
+    )
+    if should_split_frame:
+        split_decision_reason = "two_faces_stable"
+    elif face_detection_unavailable:
+        split_decision_reason = "face_detection_unavailable"
+    elif detected_face_count < 2:
+        split_decision_reason = "single_face_only"
+    else:
+        split_decision_reason = "two_faces_not_stable"
     channel_name = _resolve_string(branding_data.get("channel_name")) or "Creator Studio"
     channel_tagline = _resolve_string(branding_data.get("channel_tagline"))
     base_options = {
@@ -817,14 +874,17 @@ def _build_layout_options(
         "framing_detection_mode": framing_detection_mode,
         "speaker_count": speaker_count,
         "detected_face_count": detected_face_count,
-        "split_frame_enabled": should_split_frame and layout_template == "PODCAST_SPOTLIGHT_9X16",
+        "split_frame_enabled": should_split_frame,
+        "split_decision_reason": split_decision_reason,
         "split_on_multi_face": split_on_multi_face,
         "split_min_face_count": split_min_face_count,
-        "split_frame_fallback_mode": (
-            "speaker_inferred"
-            if explicit_split_strategy and face_detection_unavailable and speaker_count >= split_min_face_count
-            else "detected"
+        "split_layout_mode": (
+            str(face_layout_summary.get("split_layout_mode")).strip().upper()
+            if isinstance(face_layout_summary.get("split_layout_mode"), str)
+            else "VERTICAL_STACK"
         ),
+        "split_frame_fallback_mode": "single_face_tracking" if not should_split_frame else "detected",
+        "clip_duration_seconds": clip_duration_seconds,
         "active_speaker_strategy": active_speaker_strategy,
         "face_layout_summary": face_layout_summary,
         "branding": {
@@ -836,6 +896,28 @@ def _build_layout_options(
     }
 
     if layout_template != "PODCAST_SPOTLIGHT_9X16":
+        headline_enabled = visual_settings.get("headline_overlay_enabled") is True
+        headline_position = (
+            "TOP" if str(visual_settings.get("headline_overlay_position") or "").strip().upper() == "TOP" else "BOTTOM"
+        )
+        if headline_enabled:
+            headline = _select_display_headline(candidate=candidate, metadata=metadata)
+            wrapped_headline = _wrap_overlay_text(headline, max_chars=22, max_lines=3)
+            headline_files: list[str] = []
+            for index, line in enumerate(wrapped_headline.splitlines()[:3], start=1):
+                normalized_line = line.strip()
+                if not normalized_line:
+                    continue
+                path = working_directory / f"standard-headline-{index}.txt"
+                path.write_text(normalized_line, encoding="utf-8")
+                headline_files.append(str(path))
+            base_options.update(
+                {
+                    "standard_headline_enabled": bool(headline_files),
+                    "standard_headline_position": headline_position,
+                    "standard_headline_files": headline_files,
+                }
+            )
         return base_options
 
     source_label = f"Source: {channel_name}"
@@ -906,26 +988,65 @@ def _resolve_multi_subject_count(
     return max(speaker_count, detected_face_count)
 
 
-def _build_active_speaker_strategy(transcript_segments: list[TranscriptSegment]) -> dict[str, Any]:
+def _build_active_speaker_strategy(
+    transcript_segments: list[TranscriptSegment],
+    *,
+    clip_start_seconds: float,
+    clip_duration_seconds: float,
+) -> dict[str, Any]:
     speaker_order: list[str] = []
     speaker_windows: list[dict[str, Any]] = []
+    clip_end_seconds = clip_start_seconds + clip_duration_seconds
 
     for segment in transcript_segments:
         label = segment.speaker_label.strip() if isinstance(segment.speaker_label, str) else ""
-        if not label:
+        if not label or segment.end_seconds <= clip_start_seconds or segment.start_seconds >= clip_end_seconds:
             continue
         if label not in speaker_order:
             speaker_order.append(label)
+        relative_start = max(0.0, float(segment.start_seconds) - clip_start_seconds)
+        relative_end = min(clip_duration_seconds, float(segment.end_seconds) - clip_start_seconds)
+        if relative_end <= relative_start:
+            continue
+        if (
+            speaker_windows
+            and speaker_windows[-1]["speaker_label"] == label
+            and relative_start - float(speaker_windows[-1]["end_seconds"]) <= 0.35
+        ):
+            speaker_windows[-1]["end_seconds"] = relative_end
+            continue
         speaker_windows.append(
             {
                 "speaker_label": label,
-                "start_seconds": float(segment.start_seconds),
-                "end_seconds": float(segment.end_seconds),
+                "start_seconds": relative_start,
+                "end_seconds": relative_end,
             }
         )
 
+    # Anticipate a speaker change slightly so the face is already framed when
+    # the first syllable starts, without creating overlapping crop windows.
+    switch_lead_seconds = 0.12
+    for index in range(1, len(speaker_windows)):
+        previous = speaker_windows[index - 1]
+        current = speaker_windows[index]
+        if previous["speaker_label"] == current["speaker_label"]:
+            continue
+        switch_at = max(float(previous["start_seconds"]), float(current["start_seconds"]) - switch_lead_seconds)
+        previous["end_seconds"] = min(float(previous["end_seconds"]), switch_at)
+        current["start_seconds"] = switch_at
+
+    speaker_windows = [
+        window
+        for window in speaker_windows
+        if float(window["end_seconds"]) - float(window["start_seconds"]) >= 0.08
+    ]
+    active_speakers = speaker_order[:2]
+
     return {
-        "speaker_order": speaker_order[:2],
+        "available": len(active_speakers) >= 2 and bool(speaker_windows),
+        "source": "transcript_diarization" if len(active_speakers) >= 2 else "face_tracking_fallback",
+        "switch_lead_seconds": switch_lead_seconds,
+        "speaker_order": active_speakers,
         "windows": speaker_windows,
     }
 
@@ -1765,10 +1886,14 @@ def _resolve_subtitle_layout_limits(
     normalized_max_lines = max(1, min(max_lines, 4))
     if layout_template == "PODCAST_SPOTLIGHT_9X16":
         if normalized_max_lines <= 2:
-            return (4, 22)
+            return (3, 16)
         if normalized_max_lines == 3:
-            return (5, 24)
-        return (6, 26)
+            return (4, 20)
+        return (5, 24)
+    if normalized_max_lines <= 2:
+        return (4, 18)
+    if normalized_max_lines == 3:
+        return (5, 24)
     return (8, 48)
 
 
@@ -1782,7 +1907,7 @@ def _format_subtitle_text(
     if not words:
         return ""
 
-    normalized_words = [word.strip() for word in words if word.strip()]
+    normalized_words = _normalize_subtitle_words(words)
     if not normalized_words:
         return ""
 
@@ -2061,7 +2186,7 @@ def _build_subtitle_cue_words(
     max_words_per_line: int,
     max_chars_per_line: int,
 ) -> tuple[SubtitleCueWord, ...]:
-    normalized_words = [word.strip() for word in words if word.strip()]
+    normalized_words = _normalize_subtitle_words(words)
     if not normalized_words:
         return ()
 
@@ -2094,6 +2219,16 @@ def _build_subtitle_cue_words(
         )
 
     return tuple(cue_words)
+
+
+def _normalize_subtitle_words(words: list[str]) -> list[str]:
+    normalized_words: list[str] = []
+    for raw_word in words:
+        compact = " ".join(str(raw_word).split()).strip()
+        if not compact:
+            continue
+        normalized_words.extend(part for part in compact.split(" ") if part)
+    return normalized_words
 
 
 def _subtitle_has_dangling_tail(words: list[str]) -> bool:
@@ -2203,15 +2338,26 @@ def _render_ass(
     *,
     layout_template: str | None = None,
     word_highlight: bool = False,
+    position: str = "BOTTOM",
+    safe_margin_percent: float = 12.0,
 ) -> str:
-    style_line = "Style: Default,Arial,56,&H00FFFFFF,&H0000FFFF,&H00111111,&H66000000,1,0,0,0,100,100,0,0,1,3,0,2,64,64,80,1"
+    normalized_position = position.strip().upper()
+    alignment = 8 if normalized_position == "TOP" else 5 if normalized_position == "CENTER" else 2
+    margin_v = 0 if alignment == 5 else max(120, int(round(1920 * safe_margin_percent / 100)))
+    style_line = (
+        "Style: Default,Arial,56,&H00FFFFFF,&H0000FFFF,&H00111111,&H66000000,"
+        f"1,0,0,0,100,100,0,0,1,3,0,{alignment},64,64,{margin_v},1"
+    )
     if layout_template == "PODCAST_SPOTLIGHT_9X16":
         style_line = (
-            "Style: Default,Arial,50,&H00FFFFFF,&H00C8F7A7,&H00131823,&H00000000,"
+            "Style: Default,Arial,42,&H00FFFFFF,&H006FF7C9,&H00131823,&H00000000,"
             "1,0,0,0,100,100,0,0,1,2.6,0,2,170,170,410,1"
         )
     elif word_highlight:
-        style_line = "Style: Default,Arial,56,&H00FFFFFF,&H00C8F7A7,&H00111111,&H66000000,1,0,0,0,100,100,0,0,1,3,0,2,64,64,80,1"
+        style_line = (
+            "Style: Default,Arial,56,&H00FFFFFF,&H00C8F7A7,&H00111111,&H66000000,"
+            f"1,0,0,0,100,100,0,0,1,3,0,{alignment},64,64,{margin_v},1"
+        )
 
     header = [
         "[Script Info]",
@@ -2271,7 +2417,7 @@ def _render_ass_cue_text(cue: SubtitleCue, *, word_highlight: bool) -> str:
         if word.line_break_before and parts:
             parts.append(r"\N")
         escaped_text = _escape_ass_text(word.text)
-        parts.append(rf"{{\k{max(1, word.duration_centiseconds)}}}{escaped_text}")
+        parts.append(rf"{{\kf{max(1, word.duration_centiseconds)}}}{escaped_text}")
         parts.append(" ")
 
     return "".join(parts).strip()
@@ -2316,12 +2462,15 @@ async def _run_command(command: list[str], *, timeout_seconds: float) -> None:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
+    communication_task = asyncio.create_task(process.communicate())
     try:
-        _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+        _stdout, stderr = await asyncio.wait_for(asyncio.shield(communication_task), timeout=timeout_seconds)
     except asyncio.TimeoutError:
-        process.kill()
-        await process.communicate()
+        await _stop_subprocess(process, communication_task)
         raise TimeoutError(f"command timed out: {command[0]}")
+    except asyncio.CancelledError:
+        await _stop_subprocess(process, communication_task)
+        raise
     if process.returncode != 0:
         message = stderr.decode("utf-8", errors="replace").strip() or "command exited with a non-zero status"
         raise RuntimeError(message)
@@ -2332,7 +2481,7 @@ async def _run_command_with_heartbeat(
     *,
     timeout_seconds: float,
     heartbeat_details: dict[str, Any],
-    heartbeat_interval_seconds: int = 10,
+    heartbeat_interval_seconds: float = 10,
 ) -> None:
     process = await asyncio.create_subprocess_exec(
         *command,
@@ -2340,19 +2489,21 @@ async def _run_command_with_heartbeat(
         stderr=asyncio.subprocess.PIPE,
     )
     started_at = monotonic()
+    communication_task = asyncio.create_task(process.communicate())
 
-    while True:
-        try:
-            _stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
+    try:
+        while True:
+            done, _pending = await asyncio.wait(
+                {communication_task},
                 timeout=heartbeat_interval_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
             )
-            break
-        except asyncio.TimeoutError:
+            if communication_task in done:
+                _stdout, stderr = communication_task.result()
+                break
             elapsed_seconds = monotonic() - started_at
             if elapsed_seconds >= timeout_seconds:
-                process.kill()
-                await process.communicate()
+                await _stop_subprocess(process, communication_task)
                 raise TimeoutError(f"command timed out: {command[0]}")
             activity.heartbeat(
                 {
@@ -2360,10 +2511,36 @@ async def _run_command_with_heartbeat(
                     "elapsed_seconds": int(elapsed_seconds),
                 }
             )
+    except asyncio.CancelledError:
+        await _stop_subprocess(process, communication_task)
+        raise
 
     if process.returncode != 0:
         message = stderr.decode("utf-8", errors="replace").strip() or "command exited with a non-zero status"
         raise RuntimeError(message)
+
+
+async def _stop_subprocess(
+    process: asyncio.subprocess.Process,
+    communication_task: asyncio.Task[tuple[bytes, bytes]],
+) -> None:
+    if process.returncode is None:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            await process.wait()
+
+    if not communication_task.done():
+        communication_task.cancel()
+    await asyncio.gather(communication_task, return_exceptions=True)
 
 
 async def _generate_thumbnail(

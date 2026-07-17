@@ -1,0 +1,498 @@
+<%
+  const activeAssets = assets.filter((asset) => !asset.deletedAt).length;
+  const importedAssets = assets.filter((asset) => asset.kind === "IMPORTED_SOURCE").length;
+  const clipAssets = assets.filter((asset) => asset.kind === "CLIP_RESULT").length;
+  const ttsAssets = assets.filter((asset) => asset.kind === "TTS_OUTPUT").length;
+  const subtitleAssets = assets.filter((asset) => asset.kind === "SUBTITLE_ARTIFACT").length;
+  const otherAssets = assets.filter((asset) => asset.kind === "OTHER").length;
+  const sourceOnlyAssets = assets.filter((asset) => asset.family === "SOURCE_ONLY").length;
+  const outputOnlyAssets = assets.filter((asset) => asset.family === "OUTPUTS_ONLY").length;
+  const otherOnlyAssets = assets.filter((asset) => asset.family === "OTHER_ONLY").length;
+  const groupedAssets = [
+    {
+      key: "IMPORTED_SOURCE",
+      title: "User imported source media",
+      description: "Video atau audio mentah hasil upload dan import link user sebelum masuk proses clipping atau TTS.",
+      helper: "Ini bucket yang paling penting dipisahkan dari output final.",
+      tone: "primary",
+      items: assets.filter((asset) => asset.kind === "IMPORTED_SOURCE")
+    },
+    {
+      key: "CLIP_RESULT",
+      title: "Clip render outputs",
+      description: "Video hasil akhir auto-clipping beserta metadata render dan artifact yang terkait langsung dengan clip output.",
+      helper: "Biasanya ini yang dipertahankan untuk review dan distribusi.",
+      tone: "success",
+      items: assets.filter((asset) => asset.kind === "CLIP_RESULT")
+    },
+    {
+      key: "TTS_OUTPUT",
+      title: "TTS audio outputs",
+      description: "Audio hasil workflow text-to-speech yang sudah selesai dirender dari script atau segment narasi.",
+      helper: "Membantu cleanup audio output tanpa tercampur source mentah.",
+      tone: "warning",
+      items: assets.filter((asset) => asset.kind === "TTS_OUTPUT")
+    },
+    {
+      key: "SUBTITLE_ARTIFACT",
+      title: "Subtitle sidecars",
+      description: "File subtitle sidecar seperti SRT, ASS, VTT, dan JSON yang dipakai oleh output clip atau workflow lain.",
+      helper: "Paling berguna untuk audit artifact teks dan export pendamping.",
+      tone: "info",
+      items: assets.filter((asset) => asset.kind === "SUBTITLE_ARTIFACT")
+    },
+    {
+      key: "OTHER",
+      title: "Other / uncategorized assets",
+      description: "Asset yang belum cocok masuk bucket utama dan perlu pengecekan manual sebelum dibersihkan.",
+      helper: "Kalau bucket ini besar, biasanya metadata atau object key perlu dinormalkan.",
+      tone: "secondary",
+      items: assets.filter((asset) => asset.kind === "OTHER")
+    }
+  ];
+  const hasBulkDeletionScope = filters.family !== "ALL" || filters.kind !== "ALL" || Boolean(filters.userId);
+
+  function buildQuery(overrides = {}) {
+    const params = new URLSearchParams();
+    const merged = {
+      q: filters.q,
+      type: filters.type,
+      status: filters.status,
+      kind: filters.kind,
+      family: filters.family,
+      user_id: filters.userId,
+      view: filters.view,
+      deleted: filters.deleted ? "true" : "",
+      ...overrides
+    };
+
+    Object.entries(merged).forEach(([key, value]) => {
+      if (typeof value === "string" && value.length > 0 && value !== "ALL") {
+        params.set(key, value);
+      }
+    });
+
+    return params.toString();
+  }
+%>
+<%- include("../partials/head", { title, csrfToken }) %>
+<div class="app-shell"><%- include("../partials/admin-sidebar") %><main class="content-area">
+  <header class="page-header">
+    <div>
+      <span class="eyebrow">Storage operations</span>
+      <h1>Media Management</h1>
+      <p>Pisahkan source media user dari hasil clip, output TTS, dan subtitle artifact supaya cleanup admin lebih aman dan lebih cepat dipahami.</p>
+    </div>
+    <a class="btn btn-outline-primary" href="/admin/dashboard">Back to dashboard</a>
+  </header>
+
+  <section class="stat-grid">
+    <article class="stat-card">
+      <span>Visible assets</span>
+      <strong><%= assets.length %></strong>
+      <small><%= activeAssets %> active rows</small>
+    </article>
+    <article class="stat-card">
+      <span>Active storage</span>
+      <strong><%= (storageBytes / (1024 * 1024)).toFixed(1) %> MB</strong>
+      <small>Hanya asset yang belum deleted</small>
+    </article>
+    <article class="stat-card">
+      <span>Imported source</span>
+      <strong><%= importedAssets %></strong>
+      <small>Source mentah milik user</small>
+    </article>
+    <article class="stat-card">
+      <span>Clip results</span>
+      <strong><%= clipAssets %></strong>
+      <small>Hasil akhir auto-clipping</small>
+    </article>
+    <article class="stat-card">
+      <span>TTS outputs</span>
+      <strong><%= ttsAssets %></strong>
+      <small>Audio hasil text-to-speech</small>
+    </article>
+    <article class="stat-card">
+      <span>Subtitle sidecars</span>
+      <strong><%= subtitleAssets %></strong>
+      <small><%= otherAssets %> other assets</small>
+    </article>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Media buckets by purpose</h2>
+        <p>Ringkasan cepat untuk membedakan family asset produksi sebelum admin melakukan download atau hard delete.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="clip-output-review-grid">
+        <% kindCounts.forEach((entry) => { %>
+          <article class="clip-output-review-card">
+            <span><%= entry.kind.replaceAll("_", " ") %></span>
+            <strong><%= entry.count %> assets</strong>
+            <p>
+              <% if (entry.kind === "IMPORTED_SOURCE") { %>Video atau audio source yang datang dari upload maupun external import user.<% } %>
+              <% if (entry.kind === "CLIP_RESULT") { %>Hasil final auto-clipping, metadata render, atau artifact yang terkait clip output.<% } %>
+              <% if (entry.kind === "TTS_OUTPUT") { %>Output audio dari tool text-to-speech.<% } %>
+              <% if (entry.kind === "SUBTITLE_ARTIFACT") { %>File subtitle sidecar seperti SRT, VTT, ASS, atau JSON.<% } %>
+              <% if (entry.kind === "OTHER") { %>Asset lain yang belum masuk kategori produksi utama.<% } %>
+            </p>
+          </article>
+        <% }) %>
+      </div>
+      <div class="alert alert-light border mt-4 mb-0">
+        <strong>Operational note:</strong>
+        hard delete dari halaman ini menghapus row database dan object bucket sekaligus. Cek dulu apakah asset termasuk
+        <code>IMPORTED_SOURCE</code>, <code>CLIP_RESULT</code>, atau <code>TTS_OUTPUT</code> agar source mentah user tidak tercampur dengan output final tim.
+      </div>
+      <div class="alert alert-secondary border mt-3 mb-0">
+        <strong>Storage layout:</strong>
+        asset clip dan TTS baru disimpan per user di pola
+        <code>users/{userId}/jobs/{jobId}/...</code>,
+        sedangkan source import user tetap tinggal di folder import user. Ini membantu cleanup admin membedakan video panjang mentah vs hasil produksi final.
+      </div>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Storage families</h2>
+        <p>Pisahan visual ini membantu admin melihat kelompok asset tanpa harus selalu melakukan filter satu per satu.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="row g-3">
+        <% groupedAssets.forEach((group) => { %>
+          <div class="col-12 col-xl-6">
+            <article class="clip-output-review-card h-100">
+              <div class="d-flex justify-content-between align-items-start gap-3">
+                <div>
+                  <span class="status status-<%= group.tone %>"><%= group.key %></span>
+                  <h3 class="h5 mt-3 mb-2"><%= group.title %></h3>
+                  <p class="mb-2"><%= group.description %></p>
+                  <small class="text-muted"><%= group.helper %></small>
+                </div>
+                <div class="text-end">
+                  <strong class="d-block fs-4"><%= group.items.length %></strong>
+                  <small class="text-muted">assets</small>
+                </div>
+              </div>
+              <div class="d-flex flex-wrap gap-2 mt-3">
+                <% group.items.slice(0, 4).forEach((asset) => { %>
+                  <span class="status"><%= asset.displayName.length > 28 ? `${asset.displayName.slice(0, 28)}...` : asset.displayName %></span>
+                <% }) %>
+                <% if (group.items.length > 4) { %>
+                  <span class="status">+<%= group.items.length - 4 %> more</span>
+                <% } %>
+              </div>
+            </article>
+          </div>
+        <% }) %>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Filters</h2>
+        <p>Filter lintas user, bucket asset, jenis media, dan status supaya cleanup lebih presisi.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="d-flex flex-wrap gap-2 mb-4">
+        <a class="btn btn-sm <%= filters.family === "SOURCE_ONLY" ? "btn-primary" : "btn-outline-secondary" %>" href="/admin/media?<%= buildQuery({ family: "SOURCE_ONLY" }) %>">Source only (<%= sourceOnlyAssets %>)</a>
+        <a class="btn btn-sm <%= filters.family === "OUTPUTS_ONLY" ? "btn-primary" : "btn-outline-secondary" %>" href="/admin/media?<%= buildQuery({ family: "OUTPUTS_ONLY" }) %>">Outputs only (<%= outputOnlyAssets %>)</a>
+        <a class="btn btn-sm <%= filters.family === "OTHER_ONLY" ? "btn-primary" : "btn-outline-secondary" %>" href="/admin/media?<%= buildQuery({ family: "OTHER_ONLY" }) %>">Other only (<%= otherOnlyAssets %>)</a>
+        <a class="btn btn-sm <%= filters.family === "ALL" ? "btn-primary" : "btn-outline-secondary" %>" href="/admin/media?<%= buildQuery({ family: "ALL" }) %>">All families</a>
+      </div>
+
+      <form class="row g-3" method="get" action="/admin/media">
+        <div class="col-md-4">
+          <label class="form-label">Search</label>
+          <input class="form-control" name="q" value="<%= filters.q %>" placeholder="name, object key, email, display name">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Type</label>
+          <select class="form-select" name="type">
+            <option value="ALL" <%= filters.type === "ALL" ? "selected" : "" %>>All</option>
+            <% typeOptions.forEach((type) => { %><option value="<%= type %>" <%= filters.type === type ? "selected" : "" %>><%= type %></option><% }) %>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Status</label>
+          <select class="form-select" name="status">
+            <option value="ALL" <%= filters.status === "ALL" ? "selected" : "" %>>All</option>
+            <% statusOptions.forEach((status) => { %><option value="<%= status %>" <%= filters.status === status ? "selected" : "" %>><%= status %></option><% }) %>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Bucket</label>
+          <select class="form-select" name="kind">
+            <option value="ALL" <%= filters.kind === "ALL" ? "selected" : "" %>>All</option>
+            <% kindOptions.forEach((kind) => { %><option value="<%= kind %>" <%= filters.kind === kind ? "selected" : "" %>><%= kind %></option><% }) %>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Family</label>
+          <select class="form-select" name="family">
+            <option value="ALL" <%= filters.family === "ALL" ? "selected" : "" %>>All</option>
+            <% familyOptions.forEach((family) => { %><option value="<%= family %>" <%= filters.family === family ? "selected" : "" %>><%= family %></option><% }) %>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">User</label>
+          <select class="form-select" name="user_id">
+            <option value="" <%= !filters.userId ? "selected" : "" %>>All users</option>
+            <% userOptions.forEach((user) => { %><option value="<%= user.id %>" <%= filters.userId === user.id ? "selected" : "" %>><%= user.displayName %></option><% }) %>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">View</label>
+          <select class="form-select" name="view">
+            <option value="list" <%= filters.view === "list" ? "selected" : "" %>>List</option>
+            <option value="grid" <%= filters.view === "grid" ? "selected" : "" %>>Grid</option>
+          </select>
+        </div>
+        <div class="col-md-3 d-flex align-items-end">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="deleted" value="true" id="deleted" <%= filters.deleted ? "checked" : "" %>>
+            <label class="form-check-label" for="deleted">Include deleted rows</label>
+          </div>
+        </div>
+        <div class="col-md-7 d-flex align-items-end gap-2">
+          <button class="btn btn-primary" type="submit">Apply filters</button>
+          <a class="btn btn-outline-secondary" href="/admin/media">Reset</a>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Bulk cleanup actions</h2>
+        <p>Bulk delete mengikuti filter aktif. Gunakan minimal family, bucket, atau user supaya operasi tetap terarah dan tidak menyapu seluruh media sekaligus.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="d-flex flex-wrap gap-2 mb-3">
+        <span class="status">Family: <%= filters.family %></span>
+        <span class="status">Bucket: <%= filters.kind %></span>
+        <span class="status">User: <%= filters.userId || "ALL" %></span>
+      </div>
+      <form
+        data-api-form
+        data-confirm="Bulk delete ini akan menghapus asset yang cocok dengan filter aktif dari database dan MinIO. Lanjutkan?"
+        action="/api/v1/admin/media/bulk-delete"
+        method="post"
+        class="d-flex flex-wrap gap-2 align-items-center"
+      >
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="q" value="<%= filters.q %>">
+        <input type="hidden" name="type" value="<%= filters.type %>">
+        <input type="hidden" name="status" value="<%= filters.status %>">
+        <input type="hidden" name="kind" value="<%= filters.kind %>">
+        <input type="hidden" name="family" value="<%= filters.family %>">
+        <input type="hidden" name="user_id" value="<%= filters.userId %>">
+        <input type="hidden" name="view" value="<%= filters.view %>">
+        <% if (filters.deleted) { %><input type="hidden" name="deleted" value="true"><% } %>
+        <button class="btn btn-outline-danger" type="submit" <%= hasBulkDeletionScope ? "" : "disabled" %>>Delete filtered assets</button>
+        <small class="text-muted">
+          <% if (hasBulkDeletionScope) { %>Bulk delete siap dipakai untuk scope filter aktif.<% } else { %>Aktifkan filter family, bucket, atau user dulu sebelum bulk delete diizinkan.<% } %>
+        </small>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Per-user storage breakdown</h2>
+        <p>Bedakan user yang paling banyak menyimpan source mentah dari user yang lebih dominan menyimpan hasil clip atau output TTS.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <% if (!userSummaries.length) { %>
+        <div class="empty-cell">No user storage summary matched the current filters.</div>
+      <% } else { %>
+        <div class="table-responsive">
+          <table class="table align-middle">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Imported source</th>
+                <th>Clip results</th>
+                <th>TTS outputs</th>
+                <th>Subtitle</th>
+                <th>Total storage</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% userSummaries.slice(0, 20).forEach((summary) => { %>
+                <tr>
+                  <td>
+                    <strong><%= summary.displayName %></strong><br>
+                    <small><%= summary.email %></small>
+                  </td>
+                  <td><span class="status status-kind-imported_source"><%= summary.importedSourceCount %></span></td>
+                  <td><span class="status status-kind-clip_result"><%= summary.clipResultCount %></span></td>
+                  <td><span class="status status-kind-tts_output"><%= summary.ttsOutputCount %></span></td>
+                  <td><span class="status status-kind-subtitle_artifact"><%= summary.subtitleArtifactCount %></span></td>
+                  <td>
+                    <strong><%= (summary.totalStorageBytes / (1024 * 1024)).toFixed(1) %> MB</strong><br>
+                    <small><%= summary.totalAssets %> assets total</small>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+    </div>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>Assets</h2>
+        <p>Hard delete menghapus row database dan object di bucket, bukan soft delete. Gunakan informasi bucket dan storage root di bawah untuk memastikan jenis asset yang sedang dibersihkan.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <% if (!assets.length) { %>
+        <div class="empty-cell">No media assets matched the current filters.</div>
+      <% } %>
+
+      <% if (filters.view === "grid") { %>
+        <div class="candidate-grid">
+          <% assets.forEach((asset) => { %>
+            <article class="candidate-card">
+              <div class="candidate-topline">
+                <span class="status status-kind-<%= asset.kind.toLowerCase() %>"><%= asset.kind %></span>
+                <strong><%= asset.type %></strong>
+              </div>
+              <h3><%= asset.displayName %></h3>
+              <p class="candidate-summary"><%= asset.userDisplayName %> · <%= asset.userEmail %></p>
+              <dl class="candidate-meta">
+                <div><dt>Project</dt><dd><%= asset.projectName ?? "-" %></dd></div>
+                <div><dt>Duration</dt><dd><%= asset.durationMs ? `${Math.round(asset.durationMs / 1000)}s` : "-" %></dd></div>
+                <div><dt>Size</dt><dd><%= asset.sizeBytes ? `${(asset.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : "-" %></dd></div>
+                <div><dt>Bucket</dt><dd><%= asset.kind %></dd></div>
+                <div><dt>Family</dt><dd><%= asset.family %></dd></div>
+              </dl>
+              <div class="mt-3">
+                <small class="text-muted d-block">Storage root</small>
+                <code><%= asset.objectPathPreview.storageRoot %></code><br>
+                <small class="text-muted"><%= asset.objectPathPreview.storageNote %></small>
+              </div>
+              <div class="admin-media-preview mt-3">
+                <% if (asset.preview.kind === "video" && asset.preview.url) { %>
+                  <video class="admin-media-preview__player" controls preload="metadata" playsinline>
+                    <source src="<%= asset.preview.url %>" type="<%= asset.mimeType ?? 'video/mp4' %>">
+                  </video>
+                <% } else if (asset.preview.kind === "audio" && asset.preview.url) { %>
+                  <div class="admin-media-preview__audio">
+                    <span class="status status-kind-tts_output">Audio preview</span>
+                    <audio class="w-100 mt-2" controls preload="metadata">
+                      <source src="<%= asset.preview.url %>" type="<%= asset.mimeType ?? 'audio/mpeg' %>">
+                    </audio>
+                  </div>
+                <% } else if (asset.preview.kind === "image" && asset.preview.url) { %>
+                  <img class="admin-media-preview__image" src="<%= asset.preview.url %>" alt="<%= asset.displayName %>">
+                <% } else { %>
+                  <div class="admin-media-preview__empty">Preview tidak tersedia untuk jenis asset ini.</div>
+                <% } %>
+              </div>
+              <div class="d-flex flex-wrap gap-2 mt-3">
+                <span class="status <%= asset.family === "SOURCE_ONLY" ? "status-kind-imported_source" : "status-kind-clip_result" %>"><%= asset.family === "SOURCE_ONLY" ? "Source media" : "Output media" %></span>
+                <% asset.sourceLabels.forEach((label) => { %><span class="status"><%= label %></span><% }) %>
+              </div>
+              <div class="d-flex flex-wrap gap-2 mt-3">
+                <a class="btn btn-sm btn-outline-primary" href="/admin/media/<%= asset.id %>/download">Download</a>
+                <form data-api-form action="/api/v1/admin/media/<%= asset.id %>/delete" method="post">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">Delete permanently</button>
+                </form>
+              </div>
+            </article>
+          <% }) %>
+        </div>
+      <% } else { %>
+        <div class="table-responsive">
+          <table class="table align-middle">
+            <thead><tr><th>Asset</th><th>Preview</th><th>User</th><th>Kind</th><th>Storage</th><th>Sources</th><th>Actions</th></tr></thead>
+            <tbody>
+              <% assets.forEach((asset) => { %>
+                <tr>
+                  <td>
+                    <strong><%= asset.displayName %></strong><br>
+                    <small><%= asset.originalFileName ?? "-" %></small><br>
+                    <small><span class="status status-kind-<%= asset.kind.toLowerCase() %>"><%= asset.kind %></span></small><br>
+                    <small><code><%= asset.objectKey %></code></small>
+                  </td>
+                  <td>
+                    <div class="admin-media-preview admin-media-preview--table">
+                      <% if (asset.preview.kind === "video" && asset.preview.url) { %>
+                        <video class="admin-media-preview__player" controls preload="metadata" playsinline>
+                          <source src="<%= asset.preview.url %>" type="<%= asset.mimeType ?? 'video/mp4' %>">
+                        </video>
+                      <% } else if (asset.preview.kind === "audio" && asset.preview.url) { %>
+                        <div class="admin-media-preview__audio">
+                          <audio class="w-100" controls preload="metadata">
+                            <source src="<%= asset.preview.url %>" type="<%= asset.mimeType ?? 'audio/mpeg' %>">
+                          </audio>
+                        </div>
+                      <% } else if (asset.preview.kind === "image" && asset.preview.url) { %>
+                        <img class="admin-media-preview__image" src="<%= asset.preview.url %>" alt="<%= asset.displayName %>">
+                      <% } else { %>
+                        <div class="admin-media-preview__empty">No preview</div>
+                      <% } %>
+                    </div>
+                  </td>
+                  <td>
+                    <strong><%= asset.userDisplayName %></strong><br>
+                    <small><%= asset.userEmail %></small><br>
+                    <small><%= asset.projectName ?? "No project" %></small>
+                  </td>
+                  <td>
+                    <span class="status status-kind-<%= asset.kind.toLowerCase() %>"><%= asset.kind %></span><br>
+                    <small><%= asset.type %> | <%= asset.mimeType ?? "-" %></small><br>
+                    <small><%= asset.family %></small><br>
+                    <small><%= asset.deletedAt ? "Deleted row" : "Active row" %></small>
+                  </td>
+                  <td>
+                    <%= asset.sizeBytes ? `${(asset.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : "-" %><br>
+                    <small><%= asset.durationMs ? `${Math.round(asset.durationMs / 1000)}s` : "-" %> | <%= asset.width && asset.height ? `${asset.width}x${asset.height}` : "-" %></small><br>
+                    <small><code><%= asset.objectPathPreview.storageRoot %></code></small><br>
+                    <small><%= asset.objectPathPreview.storageNote %></small><br>
+                    <small><%= asset.deletedAt ? `Deleted ${asset.deletedAt.toLocaleString()}` : asset.createdAt.toLocaleString() %></small>
+                  </td>
+                  <td>
+                    <span class="status <%= asset.family === "SOURCE_ONLY" ? "status-kind-imported_source" : "status-kind-clip_result" %>"><%= asset.family === "SOURCE_ONLY" ? "Source media" : "Output media" %></span>
+                    <% asset.sourceLabels.forEach((label) => { %>
+                      <span class="status"><%= label %></span>
+                    <% }) %>
+                  </td>
+                  <td>
+                    <div class="d-grid gap-2">
+                      <a class="btn btn-sm btn-outline-primary" href="/admin/media/<%= asset.id %>/download">Download</a>
+                      <form data-api-form action="/api/v1/admin/media/<%= asset.id %>/delete" method="post">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <button class="btn btn-sm btn-outline-danger" type="submit">Delete permanently</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+    </div>
+  </section>
+</main></div>
+<%- include("../partials/footer") %>

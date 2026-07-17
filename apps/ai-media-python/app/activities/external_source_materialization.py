@@ -23,17 +23,45 @@ from app.media.ffmpeg import summarize_ffprobe_payload
 
 logger = logging.getLogger(__name__)
 
+SUPPORTED_SOURCE_VIDEO_HEIGHTS = {360, 480, 720, 1080}
 
-def _build_ytdlp_options(*, skip_download: bool, output_template: str | None = None) -> dict[str, Any]:
+
+def _normalize_target_video_height(value: Any) -> int:
+    try:
+        height = int(value)
+    except (TypeError, ValueError):
+        height = 1080
+    if height not in SUPPORTED_SOURCE_VIDEO_HEIGHTS:
+        raise ApplicationError(
+            "target_video_height must be 360, 480, 720, or 1080",
+            non_retryable=True,
+            type="InvalidInput",
+        )
+    return height
+
+
+def _build_source_format_selector(target_height: int) -> str:
+    minimum_height = 480 if target_height >= 720 else target_height
+    height_filter = f"[height<={target_height}][height>={minimum_height}]"
+    return (
+        f"bestvideo{height_filter}+bestaudio/"
+        f"bestvideo{height_filter}[ext=mp4]+bestaudio[ext=m4a]/"
+        f"best{height_filter}[ext=mp4]/"
+        f"best{height_filter}"
+    )
+
+
+def _build_ytdlp_options(
+    *,
+    skip_download: bool,
+    output_template: str | None = None,
+    target_video_height: int = 1080,
+    player_client: str | None = None,
+) -> dict[str, Any]:
     options: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android", "web"],
-            }
-        },
         "http_headers": {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -52,14 +80,12 @@ def _build_ytdlp_options(*, skip_download: bool, output_template: str | None = N
         options["skip_download"] = True
         return options
 
+    if player_client:
+        options["extractor_args"] = {"youtube": {"player_client": [player_client]}}
+
     options.update(
         {
-            # Auto-clipping only needs a stable source for audio extraction and clip renders.
-            # Capping to 720p reduces failure rates and disk pressure versus fetching the best stream.
-            "format": (
-                "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/"
-                "best[height<=720][ext=mp4]/best[ext=mp4]/best[height<=720]/best"
-            ),
+            "format": _build_source_format_selector(target_video_height),
             "merge_output_format": "mp4",
             "outtmpl": output_template,
             "restrictfilenames": True,
@@ -74,6 +100,7 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
     job_id = _require_string(payload.get("job_id"), "job_id")
     user_id = _require_string(payload.get("user_id"), "user_id")
     source_url = _require_string(payload.get("source_url"), "source_url")
+    target_video_height = _normalize_target_video_height(payload.get("target_video_height", 1080))
     project_id = payload.get("project_id")
     if project_id is not None and not isinstance(project_id, str):
         raise ApplicationError("project_id must be a string when provided", non_retryable=True, type="InvalidInput")
@@ -109,7 +136,7 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
 
         stage = "download"
         downloaded_path = await _await_with_heartbeat(
-            asyncio.to_thread(_download_source_media, source_url, download_template),
+            asyncio.to_thread(_download_source_media, source_url, download_template, target_video_height),
             {
                 "job_id": job_id,
                 "stage": "PROBING_MEDIA",
@@ -182,6 +209,8 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
                 "source": "external-url-import",
                 "source_url": source_url,
                 "provider": "yt-dlp",
+                "requested_video_height": target_video_height,
+                "minimum_video_height": 480 if target_video_height >= 720 else target_video_height,
                 "extractor": info.get("extractor"),
                 "webpage_url": info.get("webpage_url") or source_url,
             },
@@ -215,6 +244,8 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
             "extension": extension,
             "size_bytes": str(size_bytes),
             "checksum_sha256": checksum_sha256,
+            "requested_video_height": target_video_height,
+            "downloaded_video_height": result.height,
         }
     except Exception as error:
         failure_reason = _summarize_materialization_error(stage=stage, error=error)
@@ -290,15 +321,50 @@ def _extract_source_info(source_url: str) -> dict[str, Any]:
     return info
 
 
-def _download_source_media(source_url: str, output_template: str) -> Path:
-    with YoutubeDL(_build_ytdlp_options(skip_download=False, output_template=output_template)) as ydl:
-        ydl.download([source_url])
+def _download_source_media(source_url: str, output_template: str, target_video_height: int = 1080) -> Path:
+    base_dir = Path(output_template).parent
+    file_template = Path(output_template).name
+    failures: list[str] = []
 
-    candidates = sorted(Path(output_template).parent.iterdir())
-    files = [candidate for candidate in candidates if candidate.is_file()]
-    if not files:
-        raise RuntimeError("yt-dlp completed without producing a local media file")
-    return max(files, key=lambda item: item.stat().st_size)
+    # YouTube periodically restricts adaptive streams by player client. Keep each
+    # attempt isolated so a stale .part file can never corrupt the next fallback.
+    for attempt_name, player_client in (("android-vr", "android_vr"), ("default", None)):
+        attempt_dir = base_dir / attempt_name
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        attempt_template = str(attempt_dir / file_template)
+        try:
+            with YoutubeDL(
+                _build_ytdlp_options(
+                    skip_download=False,
+                    output_template=attempt_template,
+                    target_video_height=target_video_height,
+                    player_client=player_client,
+                )
+            ) as ydl:
+                ydl.download([source_url])
+
+            files = [
+                candidate
+                for candidate in attempt_dir.iterdir()
+                if candidate.is_file() and not candidate.name.endswith((".part", ".ytdl"))
+            ]
+            if files:
+                selected = max(files, key=lambda item: item.stat().st_size)
+                logger.info(
+                    "external source download strategy succeeded",
+                    extra={
+                        "download_strategy": attempt_name,
+                        "target_video_height": target_video_height,
+                        "downloaded_path": str(selected),
+                    },
+                )
+                return selected
+            failures.append(f"{attempt_name}: no media file was produced")
+        except DownloadError as error:
+            failures.append(f"{attempt_name}: {str(error).strip()}")
+            shutil.rmtree(attempt_dir, ignore_errors=True)
+
+    raise DownloadError("; ".join(failures))
 
 
 def _build_activity_workdir_name() -> str:

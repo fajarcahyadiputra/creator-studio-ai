@@ -104,6 +104,40 @@ describe("admin system management routes", () => {
     expect(writeAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "ADMIN_SYSTEM_SETTING_CREATED" }));
   });
 
+  it("updates bounded auto-clipping source quality", async () => {
+    const adminSystemService = {
+      upsertAutoClipSourceQuality: vi.fn().mockResolvedValue({
+        id: "setting-source-quality",
+        key: "auto_clip_source_quality",
+        isSecret: false,
+        version: 2
+      })
+    };
+
+    const response = await request(buildApp(adminSystemService))
+      .post("/api/v1/admin/system-settings/auto-clip-source-quality")
+      .send({ target_height: "720" });
+
+    expect(response.status).toBe(200);
+    expect(adminSystemService.upsertAutoClipSourceQuality).toHaveBeenCalledWith({ target_height: 720 });
+    expect(writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "ADMIN_SYSTEM_SETTING_UPDATED" })
+    );
+  });
+
+  it("rejects unsupported auto-clipping source quality", async () => {
+    const adminSystemService = {
+      upsertAutoClipSourceQuality: vi.fn()
+    };
+
+    const response = await request(buildApp(adminSystemService))
+      .post("/api/v1/admin/system-settings/auto-clip-source-quality")
+      .send({ target_height: "1440" });
+
+    expect(response.status).toBe(422);
+    expect(adminSystemService.upsertAutoClipSourceQuality).not.toHaveBeenCalled();
+  });
+
   it("blocks access without admin.system.manage permission", async () => {
     const adminSystemService = {
       getSystemManagementPageData: vi.fn()
@@ -145,4 +179,3 @@ function buildApp(
   });
   return app;
 }
-

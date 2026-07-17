@@ -53,6 +53,65 @@ function normalizeAnalyzerModelLabel(model: string | null, mode: string | null) 
   return model;
 }
 
+const AUTO_CLIP_PLATFORM_LABELS: Record<string, string> = {
+  YOUTUBE_SHORTS: "YouTube Shorts",
+  TIKTOK: "TikTok",
+  INSTAGRAM_REELS: "Instagram Reels",
+  FACEBOOK_REELS: "Facebook Reels",
+  CUSTOM: "Custom"
+};
+
+const AUTO_CLIP_OBJECTIVE_LABELS: Record<string, string> = {
+  EDUCATION: "Edukasi",
+  ENGAGEMENT: "Engagement",
+  STORYTELLING: "Storytelling",
+  CONTROVERSY: "Kontroversi",
+  PRODUCT_AWARENESS: "Product awareness",
+  LEAD_GENERATION: "Lead generation"
+};
+
+const AUTO_CLIP_CROP_STRATEGY_LABELS: Record<string, string> = {
+  AUTO_REFRAME: "Auto reframe",
+  FACE_TRACKING: "Face tracking",
+  ACTIVE_SPEAKER: "Active speaker",
+  SPLIT_SCREEN: "Split screen",
+  CENTER: "Center crop",
+  SPEAKER_AND_SCREEN: "Speaker and screen",
+  BLURRED_BACKGROUND: "Blurred background",
+  MANUAL: "Manual"
+};
+
+const AUTO_CLIP_LAYOUT_TEMPLATE_LABELS: Record<string, string> = {
+  STANDARD: "Standard",
+  PODCAST_SPOTLIGHT_9X16: "Podcast Spotlight 9:16"
+};
+
+const AUTO_CLIP_SUBTITLE_STYLE_LABELS: Record<string, string> = {
+  PODCAST_HIGHLIGHT: "Podcast Highlight",
+  DEFAULT: "Default clean",
+  BOLD_KINETIC: "Bold kinetic",
+  CLEAN_MINIMAL: "Clean minimal",
+  NEWS_FLASH: "News Flash",
+  CINEMATIC_QUOTE: "Cinematic quote"
+};
+
+const AUTO_CLIP_STANDALONE_LABELS: Record<string, string> = {
+  REQUIRED: "Harus mandiri",
+  PREFERRED: "Diutamakan mandiri",
+  FLEXIBLE: "Fleksibel"
+};
+
+const AUTO_CLIP_FRAMING_MODE_LABELS: Record<string, string> = {
+  COMBINED: "Combined",
+  TRANSCRIPT_ONLY: "Transcript only",
+  FACE_DETECTION_ONLY: "Face detection only"
+};
+
+function displayAutoClipLabel(map: Record<string, string> | null | undefined, value: string | null | undefined) {
+  if (!value) return "-";
+  return map?.[value] ?? value;
+}
+
 dashboardRouter.get(
   "/app/dashboard",
   requireAuth,
@@ -628,6 +687,14 @@ dashboardRouter.get(
 
     response.render("app/job-detail", {
       title: `Job ${job.id.slice(0, 8)}`,
+      displayAutoClipLabel,
+      platformLabels: AUTO_CLIP_PLATFORM_LABELS,
+      objectiveLabels: AUTO_CLIP_OBJECTIVE_LABELS,
+      cropStrategyLabels: AUTO_CLIP_CROP_STRATEGY_LABELS,
+      layoutTemplateLabels: AUTO_CLIP_LAYOUT_TEMPLATE_LABELS,
+      subtitleStyleLabels: AUTO_CLIP_SUBTITLE_STYLE_LABELS,
+      standaloneLabels: AUTO_CLIP_STANDALONE_LABELS,
+      framingModeLabels: AUTO_CLIP_FRAMING_MODE_LABELS,
       job: {
         ...job,
         progressPercent: progressView.percent,
@@ -803,6 +870,10 @@ dashboardRouter.get(
                 aspectRatio: toOptionalString(visualConfig.aspect_ratio),
                 cropStrategy: toOptionalString(visualConfig.crop_strategy),
                 layoutTemplate: toOptionalString(toJsonRecord(visualConfig.settings).layout_template) ?? "STANDARD",
+                headlineOverlayEnabled:
+                  toOptionalBoolean(toJsonRecord(visualConfig.settings).headline_overlay_enabled) ?? true,
+                headlineOverlayPosition:
+                  toOptionalString(toJsonRecord(visualConfig.settings).headline_overlay_position) ?? "BOTTOM",
                 framingDetectionMode:
                   toOptionalString(toJsonRecord(visualConfig.settings).framing_detection_mode) ?? "COMBINED",
                 splitOnMultiFace:
@@ -1225,8 +1296,8 @@ function buildAutoClipFormDefaults(
     minDuration: 30,
     maxDuration: 55,
     minimumViralScore: 7.5,
-    hookStyle: "QUESTION",
-    ctaPreference: "COMMENT",
+    hookStyle: "",
+    ctaPreference: "",
     clipStyleTags: "storytelling, edukasi, shocking, jawaban_tajam",
     viralityPriorities: "hook 0-2 detik, konflik, opini nendang, ending memancing komentar",
     selectionBrief: [
@@ -1242,7 +1313,7 @@ function buildAutoClipFormDefaults(
       "Hook text harus pendek, tajam, dan memancing rasa penasaran.",
       "Utamakan caption yang mudah dipahami audience Indonesia dan hashtag yang relevan, natural, dan tidak spammy."
     ].join(" "),
-    standalonePriority: "PREFERRED",
+    standalonePriority: "FLEXIBLE",
     requireSpokenAudio: true,
     profanityHandling: "KEEP",
     preferredTopics: "hook 3 detik pertama, audience retention, storytelling, CTA komentar",
@@ -1274,8 +1345,10 @@ function buildAutoClipFormDefaults(
     subtitleFontFamily: "Montserrat",
     subtitlePosition: "BOTTOM",
     subtitleMaxLines: 2,
-    subtitleSafeMarginPercent: 8,
-    layoutTemplate: "PODCAST_SPOTLIGHT_9X16",
+    subtitleSafeMarginPercent: 12,
+    layoutTemplate: "STANDARD",
+    headlineOverlayEnabled: true,
+    headlineOverlayPosition: "BOTTOM",
     framingDetectionMode: "COMBINED",
     splitOnMultiFace: true,
     splitMinFaceCount: 2,
@@ -1385,6 +1458,14 @@ function mergeAutoClipDefaults(
       toStringValue(presetConfig.layout_template)
       ?? toStringValue(presetConfig.layoutTemplate)
       ?? baseDefaults.layoutTemplate,
+    headlineOverlayEnabled:
+      toOptionalBoolean(presetConfig.headline_overlay_enabled)
+      ?? toOptionalBoolean(presetConfig.headlineOverlayEnabled)
+      ?? baseDefaults.headlineOverlayEnabled,
+    headlineOverlayPosition:
+      toStringValue(presetConfig.headline_overlay_position)
+      ?? toStringValue(presetConfig.headlineOverlayPosition)
+      ?? baseDefaults.headlineOverlayPosition,
     framingDetectionMode:
       toStringValue(presetConfig.framing_detection_mode)
       ?? toStringValue(presetConfig.framingDetectionMode)
@@ -1449,7 +1530,22 @@ dashboardRouter.get(
   requireAuth,
   requirePermission("admin.dashboard.view"),
   asyncHandler(async (request, response) => {
-    const [users, jobGroups, recentUsers, userStatusGroups, providerCount, enabledProviderCount, featureFlagCount, enabledFeatureFlagCount, systemSettingCount, secretSystemSettingCount] = await Promise.all([
+    const [
+      users,
+      jobGroups,
+      recentUsers,
+      userStatusGroups,
+      providerCount,
+      enabledProviderCount,
+      featureFlagCount,
+      enabledFeatureFlagCount,
+      systemSettingCount,
+      secretSystemSettingCount,
+      importedSourceMediaCount,
+      clipResultMediaCount,
+      ttsOutputMediaCount,
+      subtitleArtifactCount
+    ] = await Promise.all([
       prisma.user.count({ where: { deletedAt: null } }),
       prisma.job.groupBy({ by: ["status"], _count: true }),
       prisma.user.findMany({ where: { deletedAt: null }, orderBy: { createdAt: "desc" }, take: 10 }),
@@ -1459,7 +1555,31 @@ dashboardRouter.get(
       prisma.featureFlag.count(),
       prisma.featureFlag.count({ where: { enabled: true } }),
       prisma.systemSetting.count(),
-      prisma.systemSetting.count({ where: { isSecret: true } })
+      prisma.systemSetting.count({ where: { isSecret: true } }),
+      prisma.mediaAsset.count({
+        where: {
+          deletedAt: null,
+          OR: [{ sourceJobs: { some: {} } }, { transcripts: { some: {} } }]
+        }
+      }),
+      prisma.mediaAsset.count({
+        where: {
+          deletedAt: null,
+          OR: [{ clipOutputs: { some: {} } }, { metadata: { path: ["source"], equals: "clip-output-render" } }]
+        }
+      }),
+      prisma.mediaAsset.count({
+        where: {
+          deletedAt: null,
+          OR: [{ ttsOutputs: { some: {} } }, { metadata: { path: ["source"], equals: "tts-render" } }]
+        }
+      }),
+      prisma.mediaAsset.count({
+        where: {
+          deletedAt: null,
+          OR: [{ subtitleAssets: { some: {} } }, { type: "SUBTITLE" }]
+        }
+      })
     ]);
     const jobCounts = Object.fromEntries(jobGroups.map((item) => [item.status, item._count]));
     const userStatusCounts = Object.fromEntries(userStatusGroups.map((item) => [item.status, item._count]));
@@ -1480,6 +1600,12 @@ dashboardRouter.get(
       systemSummary: {
         total: systemSettingCount,
         secret: secretSystemSettingCount
+      },
+      mediaSummary: {
+        importedSource: importedSourceMediaCount,
+        clipResults: clipResultMediaCount,
+        ttsOutputs: ttsOutputMediaCount,
+        subtitleArtifacts: subtitleArtifactCount
       },
       recentUsers,
       csrfToken: request.session.csrfToken
