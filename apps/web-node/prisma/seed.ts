@@ -159,6 +159,7 @@ async function ensureDefaultClippingPreset(userId: string): Promise<void> {
       style: "Bold Clean",
       font_family: "Montserrat",
       position: "BOTTOM",
+      text_case: "UPPERCASE",
       max_lines: 2,
       safe_margin_percent: 8,
       burn_in: true,
@@ -236,6 +237,7 @@ async function ensureDefaultBrandKit(userId: string): Promise<void> {
     subtitlePreset: {
       style: "Bold Clean",
       position: "BOTTOM",
+      text_case: "UPPERCASE",
       max_lines: 2,
       safe_margin_percent: 8
     }

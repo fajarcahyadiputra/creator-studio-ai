@@ -6,13 +6,70 @@ import pytest
 from app.activities.render_outputs import (
     SubtitleCue,
     SubtitleCueWord,
+    _attach_speaker_anchor_map,
+    _apply_subtitle_text_case,
     _build_active_speaker_strategy,
     _build_subtitle_cues,
+    _detect_face_layout_summary,
     _render_ass,
     _run_command_with_heartbeat,
     execute_clip_output_render,
 )
-from app.domain.contracts import TranscriptSegment
+from app.domain.contracts import TranscriptSegment, TranscriptWord
+
+
+@pytest.mark.asyncio
+async def test_face_layout_processes_only_frames_ffmpeg_actually_emits(tmp_path, monkeypatch) -> None:
+    async def fake_run_command(*_args, **_kwargs) -> None:
+        (tmp_path / "face-sample-001.jpg").write_bytes(b"frame-1")
+        (tmp_path / "face-sample-002.jpg").write_bytes(b"frame-2")
+
+    detected_paths: list[str] = []
+
+    def fake_detect(path, **_kwargs):
+        detected_paths.append(str(path))
+        return [
+            {
+                "x": 300,
+                "y": 80,
+                "width": 120,
+                "height": 140,
+                "center_x": 360.0,
+                "center_x_ratio": 0.5625,
+                "area": 16800,
+                "image_width": 640,
+                "image_height": 360,
+                "detector": "yunet",
+            }
+        ]
+
+    monkeypatch.setattr("app.activities.render_outputs._run_command_with_heartbeat", fake_run_command)
+    monkeypatch.setattr("app.activities.render_outputs.detect_faces_in_image", fake_detect)
+    monkeypatch.setattr(
+        "app.activities.render_outputs.get_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "FACE_DETECTION_YUNET_MODEL_PATH": None,
+                "FACE_DETECTION_YUNET_SCORE_THRESHOLD": 0.72,
+            },
+        )(),
+    )
+
+    summary = await _detect_face_layout_summary(
+        source="source.mp4",
+        clip_start_seconds=0.0,
+        clip_duration_seconds=2.0,
+        working_directory=tmp_path,
+        timeout_seconds=30.0,
+    )
+
+    assert len(detected_paths) == 2
+    assert summary["sample_count"] == 2
+    assert summary["valid_face_sample_count"] == 2
+    assert summary["detection_backend"] == "opencv_yunet"
+    assert summary["detection_sources"] == ["yunet"]
 
 
 def test_active_speaker_strategy_uses_clip_relative_timing_and_fast_switch_lead() -> None:
@@ -40,9 +97,77 @@ def test_active_speaker_strategy_uses_clip_relative_timing_and_fast_switch_lead(
     assert strategy["available"] is True
     assert strategy["source"] == "transcript_diarization"
     assert strategy["windows"][0]["start_seconds"] == pytest.approx(0.0)
-    assert strategy["windows"][0]["end_seconds"] == pytest.approx(1.88)
-    assert strategy["windows"][1]["start_seconds"] == pytest.approx(1.88)
+    assert strategy["windows"][0]["end_seconds"] == pytest.approx(1.8)
+    assert strategy["windows"][1]["start_seconds"] == pytest.approx(1.8)
     assert strategy["windows"][1]["end_seconds"] == pytest.approx(5.0)
+    assert strategy["transition_seconds"] == pytest.approx(0.16)
+
+
+def test_active_speaker_strategy_prefers_word_timing_and_collapses_micro_turns() -> None:
+    strategy = _build_active_speaker_strategy(
+        [
+            TranscriptSegment(
+                segment_id="segment-a1",
+                start_seconds=10.0,
+                end_seconds=11.0,
+                text="Pembicara pertama",
+                speaker_label="A",
+                words=[TranscriptWord(start_seconds=10.1, end_seconds=10.9, text="pertama")],
+            ),
+            TranscriptSegment(
+                segment_id="segment-b-short",
+                start_seconds=11.0,
+                end_seconds=11.15,
+                text="ya",
+                speaker_label="B",
+            ),
+            TranscriptSegment(
+                segment_id="segment-a2",
+                start_seconds=11.15,
+                end_seconds=12.0,
+                text="Pembicara pertama lanjut",
+                speaker_label="A",
+            ),
+            TranscriptSegment(
+                segment_id="segment-b",
+                start_seconds=12.0,
+                end_seconds=14.0,
+                text="Pembicara kedua",
+                speaker_label="B",
+            ),
+        ],
+        clip_start_seconds=10.0,
+        clip_duration_seconds=4.0,
+    )
+
+    assert [window["speaker_label"] for window in strategy["windows"]] == ["A", "B"]
+    assert strategy["windows"][0]["end_seconds"] == pytest.approx(1.8)
+    assert strategy["windows"][1]["speech_start_seconds"] == pytest.approx(2.0)
+
+
+def test_speaker_anchor_map_uses_single_face_visual_evidence() -> None:
+    strategy = {
+        "speaker_order": ["A", "B"],
+        "windows": [
+            {"speaker_label": "A", "start_seconds": 0.0, "end_seconds": 2.0},
+            {"speaker_label": "B", "start_seconds": 2.0, "end_seconds": 4.0},
+        ],
+    }
+    _attach_speaker_anchor_map(
+        strategy,
+        {
+            "sample_offsets_seconds": [1.0, 3.0],
+            "sample_anchor_pairs": [
+                {"face_count": 1, "primary_anchor_ratio": 0.76},
+                {"face_count": 1, "primary_anchor_ratio": 0.24},
+            ],
+            "left_anchor_ratio": 0.24,
+            "right_anchor_ratio": 0.76,
+        },
+    )
+
+    assert strategy["speaker_anchor_ratios"] == {"A": 0.76, "B": 0.24}
+    assert strategy["speaker_anchor_source"] == "single_face_visual_evidence"
 
 
 def test_active_speaker_strategy_declares_face_tracking_fallback_without_diarization() -> None:
@@ -382,7 +507,7 @@ def test_render_ass_uses_ass_line_break_escape_for_multiline_cues() -> None:
     assert r"Oh wow baru ngerti gue.\NMasa kok ini apa sih?" in rendered
 
 
-def test_render_ass_outputs_karaoke_tags_when_word_highlight_enabled() -> None:
+def test_render_ass_outputs_timed_blue_mint_word_highlight_events() -> None:
     rendered = _render_ass(
         [
             SubtitleCue(
@@ -399,7 +524,36 @@ def test_render_ass_outputs_karaoke_tags_when_word_highlight_enabled() -> None:
         word_highlight=True,
     )
 
-    assert r"{\k80}PERBATASAN {\k80}JAWA" in rendered
+    assert "Style: Highlight,Arial,48" in rendered
+    assert "&H00F78F4B&" in rendered
+    assert "&H00C4E77D&" in rendered
+    assert "Dialogue: 2,0:00:00.00,0:00:00.80,Highlight" in rendered
+    assert "Dialogue: 2,0:00:00.80,0:00:01.60,Highlight" in rendered
+    assert "PERBATASAN" in rendered
+    assert "JAWA" in rendered
+
+
+def test_apply_subtitle_text_case_preserves_word_timing_and_line_breaks() -> None:
+    source = [
+        SubtitleCue(
+            start_seconds=1.0,
+            end_seconds=2.0,
+            text="Perbatasan Jawa",
+            words=(
+                SubtitleCueWord(text="Perbatasan", duration_centiseconds=60),
+                SubtitleCueWord(text="Jawa", duration_centiseconds=40, line_break_before=True),
+            ),
+        )
+    ]
+
+    uppercase = _apply_subtitle_text_case(source, "UPPERCASE")
+    lowercase = _apply_subtitle_text_case(source, "LOWERCASE")
+
+    assert uppercase[0].text == "PERBATASAN JAWA"
+    assert [word.text for word in uppercase[0].words] == ["PERBATASAN", "JAWA"]
+    assert uppercase[0].words[1].line_break_before is True
+    assert uppercase[0].words[1].duration_centiseconds == 40
+    assert lowercase[0].text == "perbatasan jawa"
 
 
 def test_render_ass_honors_top_and_safe_bottom_positions() -> None:

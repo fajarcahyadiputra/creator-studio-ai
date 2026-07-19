@@ -24,6 +24,11 @@ from app.media.ffmpeg import summarize_ffprobe_payload
 logger = logging.getLogger(__name__)
 
 SUPPORTED_SOURCE_VIDEO_HEIGHTS = {360, 480, 720, 1080}
+YOUTUBE_DOWNLOAD_STRATEGIES: tuple[tuple[str, str | None], ...] = (
+    ("android-creator", "android_creator"),
+    ("android-vr", "android_vr"),
+    ("default", None),
+)
 
 
 def _normalize_target_video_height(value: Any) -> int:
@@ -44,8 +49,9 @@ def _build_source_format_selector(target_height: int) -> str:
     minimum_height = 480 if target_height >= 720 else target_height
     height_filter = f"[height<={target_height}][height>={minimum_height}]"
     return (
-        f"bestvideo{height_filter}+bestaudio/"
+        f"bestvideo{height_filter}[vcodec^=avc1]+bestaudio[ext=m4a]/"
         f"bestvideo{height_filter}[ext=mp4]+bestaudio[ext=m4a]/"
+        f"bestvideo{height_filter}+bestaudio/"
         f"best{height_filter}[ext=mp4]/"
         f"best{height_filter}"
     )
@@ -74,6 +80,9 @@ def _build_ytdlp_options(
         "fragment_retries": 10,
         "file_access_retries": 5,
         "extractor_retries": 5,
+        # YouTube player responses and signed media URLs expire quickly. Reusing
+        # extractor cache across retries can repeat the same rejected URL.
+        "cachedir": False,
     }
 
     if skip_download:
@@ -328,7 +337,7 @@ def _download_source_media(source_url: str, output_template: str, target_video_h
 
     # YouTube periodically restricts adaptive streams by player client. Keep each
     # attempt isolated so a stale .part file can never corrupt the next fallback.
-    for attempt_name, player_client in (("android-vr", "android_vr"), ("default", None)):
+    for attempt_name, player_client in YOUTUBE_DOWNLOAD_STRATEGIES:
         attempt_dir = base_dir / attempt_name
         attempt_dir.mkdir(parents=True, exist_ok=True)
         attempt_template = str(attempt_dir / file_template)

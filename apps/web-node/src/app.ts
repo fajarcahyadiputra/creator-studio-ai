@@ -67,19 +67,19 @@ function buildPublicHomeContent(language: PublicHomeLanguage) {
       navRegister: "Get Started",
       languageLabel: "Language",
       heroEyebrow: "AI clipping workflow for creator teams",
-      heroTitle: "Turn long videos into short clips your team can publish faster.",
+      heroTitle: "Find the best moments. Turn them into clips people want to watch.",
       heroDescription:
-        "Creator Studio AI helps creators, podcast teams, agencies, and brands transform long videos into vertical clips with transcript-aware analysis, subtitle styling, render automation, and cleaner review loops.",
-      heroPrimaryCta: "Start Free",
-      heroSecondaryCta: "See Workspace",
-      heroProof: "Used for clipping, subtitles, voice, review, and export in one workspace.",
+        "Upload a long video. Creator Studio AI finds moments with a strong hook and payoff, builds subtitles, and renders vertical clips ready for review.",
+      heroPrimaryCta: "Create My First Clip",
+      heroSecondaryCta: "Already a member? Login",
+      heroProof: "Start without a complicated setup. Every stage stays visible.",
       heroPoints: [
         "Find hook-heavy moments with clearer editorial reasoning.",
         "Review progress, retries, regenerate flows, and output artifacts from one job detail page.",
         "Ship 9:16 short clips faster for TikTok, Reels, and YouTube Shorts."
       ],
       previewLabel: "Product Preview",
-      previewTitle: "One workflow for ingest, analysis, subtitles, render, and final export.",
+      previewTitle: "From long-form video to a polished 9:16 output in one clear workflow.",
       previewSteps: ["Upload", "Analyze", "Subtitle", "Render", "Export"],
       previewMetrics: [
         { value: "9:16", label: "Vertical-ready outputs" },
@@ -239,19 +239,19 @@ function buildPublicHomeContent(language: PublicHomeLanguage) {
     navRegister: "Coba Gratis",
     languageLabel: "Bahasa",
     heroEyebrow: "Workflow AI clipping untuk creator dan tim konten",
-    heroTitle: "Ubah video panjang jadi short clip yang lebih cepat tayang.",
+    heroTitle: "Temukan momen terbaik. Jadikan clip yang orang mau tonton.",
     heroDescription:
-      "Creator Studio AI membantu creator, podcaster, agency, media team, dan brand Indonesia mengubah video panjang menjadi clip vertikal dengan analisis momen, subtitle, render otomatis, dan workflow review yang lebih rapi.",
-    heroPrimaryCta: "Mulai Gratis",
-    heroSecondaryCta: "Lihat Workspace",
-    heroProof: "Satu workspace untuk clipping, subtitle, voice, review, dan export.",
+      "Upload video panjang. Creator Studio AI mencari momen dengan hook dan payoff kuat, membuat subtitle, lalu merender clip vertikal yang siap kamu review.",
+    heroPrimaryCta: "Buat Clip Pertama",
+    heroSecondaryCta: "Sudah punya akun? Masuk",
+    heroProof: "Mulai tanpa setup rumit. Setiap tahap tetap bisa kamu pantau.",
     heroPoints: [
       "Cari momen dengan hook kuat dan payoff yang lebih jelas.",
       "Lihat progress, retry, regenerate, dan hasil output dari satu halaman job detail.",
       "Percepat produksi 9:16 untuk TikTok, Reels, dan YouTube Shorts."
     ],
     previewLabel: "Preview Produk",
-    previewTitle: "Satu alur kerja untuk ingest, analisis, subtitle, render, sampai export final.",
+    previewTitle: "Dari video panjang ke output 9:16 yang rapi dalam satu alur kerja.",
     previewSteps: ["Upload", "Analyze", "Subtitle", "Render", "Export"],
     previewMetrics: [
       { value: "9:16", label: "Output siap vertikal" },

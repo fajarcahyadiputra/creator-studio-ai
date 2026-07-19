@@ -7,6 +7,13 @@
         <span><%= appName %></span>
       </a>
 
+      <nav class="marketing-nav__links" aria-label="<%= selectedLanguage === 'id' ? 'Navigasi halaman' : 'Page navigation' %>">
+        <a href="#tools"><%= selectedLanguage === 'id' ? 'Tools AI' : 'AI tools' %></a>
+        <a href="#hasil"><%= selectedLanguage === 'id' ? 'Contoh hasil' : 'Examples' %></a>
+        <a href="#cara-kerja"><%= selectedLanguage === 'id' ? 'Cara kerja' : 'How it works' %></a>
+        <a href="#faq">FAQ</a>
+      </nav>
+
       <div class="marketing-nav__cluster">
         <div class="marketing-language-switch" aria-label="<%= home.languageLabel %>">
           <a
@@ -37,52 +44,54 @@
           <a class="btn btn-outline-dark btn-lg" href="/login"><%= home.heroSecondaryCta %></a>
         </div>
 
-        <div class="marketing-proofbar">
-          <% home.previewSteps.forEach((step) => { %>
-            <span><%= step %></span>
+        <p class="marketing-hero__proof"><span aria-hidden="true">&#10003;</span> <%= home.heroProof %></p>
+
+        <div class="marketing-proofbar" aria-label="Workflow">
+          <% home.previewSteps.forEach((step, index) => { %>
+            <span><b><%= String(index + 1).padStart(2, '0') %></b><%= step %></span>
           <% }) %>
         </div>
-
-        <p class="marketing-hero__proof"><%= home.heroProof %></p>
-
-        <ul class="marketing-points">
-          <% home.heroPoints.forEach((point) => { %>
-            <li><%= point %></li>
-          <% }) %>
-        </ul>
       </div>
 
       <div class="marketing-hero__preview">
-        <div class="marketing-preview-card">
-          <div class="marketing-preview-card__label"><%= home.previewLabel %></div>
-          <h2><%= home.previewTitle %></h2>
+        <div class="marketing-studio-demo">
+          <div class="marketing-studio-demo__topbar">
+            <span class="marketing-studio-demo__status"><i></i><%= selectedLanguage === 'id' ? 'Output siap direview' : 'Output ready to review' %></span>
+            <span>creator-studio / auto-clip</span>
+          </div>
+          <div class="marketing-studio-demo__canvas">
+            <div class="marketing-studio-phone" aria-label="<%= home.previewLabel %>">
+              <div class="marketing-studio-phone__brand"><span>CS</span><small>Creator Studio AI</small></div>
+              <div class="marketing-studio-phone__headline">
+                <strong><%= selectedLanguage === 'id' ? 'SATU JAWABAN' : 'ONE ANSWER' %></strong>
+                <em><%= selectedLanguage === 'id' ? 'UBAH SEMUANYA' : 'CHANGES EVERYTHING' %></em>
+              </div>
+              <div class="marketing-studio-phone__scene">
+                <span class="marketing-studio-phone__person marketing-studio-phone__person--one"></span>
+                <span class="marketing-studio-phone__person marketing-studio-phone__person--two"></span>
+                <span class="marketing-studio-phone__mic"></span>
+              </div>
+              <div class="marketing-studio-phone__subtitle">
+                <span><%= selectedLanguage === 'id' ? 'yang orang cari bukan video panjang,' : 'people do not need another long video,' %></span>
+                <strong><%= selectedLanguage === 'id' ? 'tapi momen yang tepat.' : 'they need the right moment.' %></strong>
+              </div>
+              <div class="marketing-studio-phone__timeline"><i></i></div>
+            </div>
 
-          <div class="marketing-preview-pillrow">
-            <% home.previewSteps.forEach((step) => { %>
-              <span><%= step %></span>
-            <% }) %>
-          </div>
-
-          <div class="marketing-preview-progress">
-            <span>Source ingest & prep</span>
-            <div class="progress progress-lg"><div class="progress-bar bg-success" style="width: 100%"></div></div>
-          </div>
-          <div class="marketing-preview-progress">
-            <span>Candidate analysis & scoring</span>
-            <div class="progress progress-lg"><div class="progress-bar bg-warning" style="width: 82%"></div></div>
-          </div>
-          <div class="marketing-preview-progress">
-            <span>Render, subtitles, and exports</span>
-            <div class="progress progress-lg"><div class="progress-bar" style="width: 100%"></div></div>
-          </div>
-
-          <div class="marketing-preview-metrics">
-            <% home.previewMetrics.forEach((metric) => { %>
-              <article>
-                <strong><%= metric.value %></strong>
-                <span><%= metric.label %></span>
-              </article>
-            <% }) %>
+            <div class="marketing-studio-demo__insights">
+              <div class="marketing-studio-demo__label"><%= home.previewLabel %></div>
+              <h2><%= home.previewTitle %></h2>
+              <div class="marketing-studio-score">
+                <div><span>Viral score</span><strong>9.1<small>/10</small></strong></div>
+                <div class="marketing-studio-score__bars"><i></i><i></i><i></i><i></i><i></i></div>
+              </div>
+              <ul class="marketing-studio-checks">
+                <li><span>&#10003;</span><%= selectedLanguage === 'id' ? 'Hook terdeteksi' : 'Hook detected' %></li>
+                <li><span>&#10003;</span><%= selectedLanguage === 'id' ? 'Ending tetap utuh' : 'Complete ending' %></li>
+                <li><span>&#10003;</span><%= selectedLanguage === 'id' ? 'Subtitle siap render' : 'Subtitles ready' %></li>
+              </ul>
+              <div class="marketing-studio-export"><span>9:16</span><span>SRT</span><span>MP4</span></div>
+            </div>
           </div>
         </div>
       </div>
@@ -118,7 +127,7 @@
     </div>
   </section>
 
-  <section class="marketing-section marketing-section--compact">
+  <section id="cara-kerja" class="marketing-section marketing-section--compact">
     <div class="marketing-section__header">
       <span class="eyebrow"><%= home.workflowEyebrow %></span>
       <h2><%= home.workflowTitle %></h2>
@@ -134,7 +143,7 @@
     </div>
   </section>
 
-  <section class="marketing-section marketing-section--tools">
+  <section id="tools" class="marketing-section marketing-section--tools">
     <div class="marketing-section__header marketing-section__header--split">
       <div>
         <span class="eyebrow"><%= home.toolsEyebrow %></span>
@@ -145,6 +154,7 @@
     <div class="marketing-tools-grid">
       <% home.tools.forEach((tool, index) => { %>
         <article class="marketing-tool-card <%= index === 0 ? 'marketing-tool-card--primary' : 'marketing-tool-card--secondary' %>">
+          <div class="marketing-tool-card__icon" aria-hidden="true"><%= index === 0 ? '01' : '02' %></div>
           <span class="marketing-tool-card__eyebrow"><%= tool.eyebrow %></span>
           <h3><%= tool.title %></h3>
           <p><%= tool.description %></p>
@@ -161,7 +171,7 @@
     </div>
   </section>
 
-  <section class="marketing-section marketing-section--showcase">
+  <section id="hasil" class="marketing-section marketing-section--showcase">
     <div class="marketing-section__header marketing-section__header--centered">
       <span class="eyebrow"><%= home.showcaseEyebrow %></span>
       <h2><%= home.showcaseTitle %></h2>
@@ -173,6 +183,11 @@
           <div class="marketing-showcase-card__frame">
             <div class="marketing-showcase-card__badge"><%= slide.badge %></div>
             <div class="marketing-showcase-card__video">
+              <div class="marketing-showcase-card__speaker" aria-hidden="true">
+                <span class="marketing-showcase-card__speaker-head"></span>
+                <span class="marketing-showcase-card__speaker-body"></span>
+                <span class="marketing-showcase-card__speaker-mic"></span>
+              </div>
               <div class="marketing-showcase-card__play">▶</div>
               <div class="marketing-showcase-card__subtitle">
                 <span><%= index === 0 ? 'MENGHILANGKAN ADAB' : index === 1 ? 'INI KAKINYA DIPEGANGIN' : 'LOH, LU BAYANGIN, GUYS.' %></span>
@@ -206,7 +221,7 @@
     </div>
   </section>
 
-  <section class="marketing-section marketing-section--faq">
+  <section id="faq" class="marketing-section marketing-section--faq">
     <div class="marketing-faq-shell">
       <div class="marketing-faq-copy">
         <span class="eyebrow"><%= home.faqEyebrow %></span>

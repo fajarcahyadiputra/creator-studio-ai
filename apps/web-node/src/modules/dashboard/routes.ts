@@ -33,6 +33,7 @@ function resolveRequestOrigin(request: { protocol: string; get(name: string): st
 function normalizeAnalyzerModeLabel(mode: string | null) {
   if (!mode) return null;
   if (mode === "heuristic") return "Heuristic only (Python local)";
+  if (mode === "hybrid") return "Hybrid (OpenAI + Python heuristic)";
   if (mode === "heuristic_then_openai") return "Heuristic + OpenAI";
   if (mode === "openai_then_heuristic") return "OpenAI + heuristic";
   return mode;
@@ -71,6 +72,7 @@ const AUTO_CLIP_OBJECTIVE_LABELS: Record<string, string> = {
 };
 
 const AUTO_CLIP_CROP_STRATEGY_LABELS: Record<string, string> = {
+  SMART_SPEAKER: "Smart speaker (1-4 wajah)",
   AUTO_REFRAME: "Auto reframe",
   FACE_TRACKING: "Face tracking",
   ACTIVE_SPEAKER: "Active speaker",
@@ -87,7 +89,7 @@ const AUTO_CLIP_LAYOUT_TEMPLATE_LABELS: Record<string, string> = {
 };
 
 const AUTO_CLIP_SUBTITLE_STYLE_LABELS: Record<string, string> = {
-  PODCAST_HIGHLIGHT: "Podcast Highlight",
+  PODCAST_HIGHLIGHT: "Highlight per kata biru/mint",
   DEFAULT: "Default clean",
   BOLD_KINETIC: "Bold kinetic",
   CLEAN_MINIMAL: "Clean minimal",
@@ -538,6 +540,18 @@ dashboardRouter.get(
               : null,
           speakerCount:
             typeof renderPlan.speaker_count === "number" ? renderPlan.speaker_count : null,
+          activeSpeakerCount:
+            typeof renderPlan.active_speaker_count === "number"
+              ? renderPlan.active_speaker_count
+              : typeof faceLayout.max_active_speaker_count === "number"
+                ? faceLayout.max_active_speaker_count
+                : null,
+          activeSpeakerSource:
+            typeof renderPlan.active_speaker_source === "string"
+              ? renderPlan.active_speaker_source
+              : typeof renderPlan.split_evidence_source === "string"
+                ? renderPlan.split_evidence_source
+                : null,
           detectedFaceCount:
             typeof faceLayout.max_face_count === "number" ? faceLayout.max_face_count : null,
           averageFaceCount:
@@ -721,6 +735,12 @@ dashboardRouter.get(
           const attemptedProvider =
             typeof analyzer.attempted_provider === "string" ? analyzer.attempted_provider : null;
           const attemptedModel = typeof analyzer.attempted_model === "string" ? analyzer.attempted_model : null;
+          const candidateSourceCounts =
+            analyzer.candidate_source_counts &&
+            typeof analyzer.candidate_source_counts === "object" &&
+            !Array.isArray(analyzer.candidate_source_counts)
+              ? (analyzer.candidate_source_counts as Record<string, unknown>)
+              : {};
 
           return {
             analysisMode,
@@ -737,7 +757,12 @@ dashboardRouter.get(
             providerRequestId: typeof analyzer.provider_request_id === "string" ? analyzer.provider_request_id : null,
             requestId: typeof analyzer.request_id === "string" ? analyzer.request_id : null,
             latencyMs: typeof analyzer.latency_ms === "number" ? analyzer.latency_ms : null,
-            fallbackReason: typeof analyzer.fallback_reason === "string" ? analyzer.fallback_reason : null
+            fallbackReason: typeof analyzer.fallback_reason === "string" ? analyzer.fallback_reason : null,
+            fallbackTrigger: typeof analyzer.fallback_trigger === "string" ? analyzer.fallback_trigger : null,
+            openaiCandidateCount:
+              typeof candidateSourceCounts.openai === "number" ? candidateSourceCounts.openai : null,
+            heuristicCandidateCount:
+              typeof candidateSourceCounts.heuristic === "number" ? candidateSourceCounts.heuristic : null
           };
         })(),
         tts: ttsSummary
@@ -892,7 +917,8 @@ dashboardRouter.get(
                 maxLines: toOptionalNumber(toJsonRecord(subtitleConfig.settings).max_lines),
                 safeMarginPercent: toOptionalNumber(toJsonRecord(subtitleConfig.settings).safe_margin_percent),
                 profanityCensor: toOptionalBoolean(toJsonRecord(subtitleConfig.settings).profanity_censor),
-                wordHighlight: toOptionalBoolean(toJsonRecord(subtitleConfig.settings).word_highlight)
+                wordHighlight: toOptionalBoolean(toJsonRecord(subtitleConfig.settings).word_highlight),
+                textCase: toOptionalString(toJsonRecord(subtitleConfig.settings).text_case) ?? "UPPERCASE"
               },
               provider: {
                 credentialMode: toOptionalString(providerConfig.credential_mode),
@@ -1336,12 +1362,13 @@ function buildAutoClipFormDefaults(
     ].join(" "),
     sensitiveTopics: "klaim medis, saran legal, data pribadi",
     aspectRatio: "9:16",
-    cropStrategy: "AUTO_REFRAME",
+    cropStrategy: "SMART_SPEAKER",
     subtitleLanguage: "id",
     subtitlePrimaryFormat: "ASS",
     subtitleEnabled: true,
     subtitleBurnIn: true,
     subtitleStyle: "PODCAST_HIGHLIGHT",
+    subtitleTextCase: "UPPERCASE",
     subtitleFontFamily: "Montserrat",
     subtitlePosition: "BOTTOM",
     subtitleMaxLines: 2,
@@ -1444,6 +1471,10 @@ function mergeAutoClipDefaults(
     subtitleEnabled: toOptionalBoolean(subtitleConfig.enabled) ?? baseDefaults.subtitleEnabled,
     subtitleBurnIn: toOptionalBoolean(subtitleConfig.burn_in) ?? baseDefaults.subtitleBurnIn,
     subtitleStyle: toStringValue(subtitleConfig.style) ?? baseDefaults.subtitleStyle,
+    subtitleTextCase:
+      toStringValue(subtitlePreset.text_case) ??
+      toStringValue(subtitleConfig.text_case) ??
+      baseDefaults.subtitleTextCase,
     subtitleFontFamily:
       toStringValue(subtitleConfig.font_family) ?? toStringValue(fontConfig.primary) ?? baseDefaults.subtitleFontFamily,
     subtitlePosition:

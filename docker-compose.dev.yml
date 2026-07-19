@@ -49,6 +49,7 @@ services:
     volumes:
       - .:/workspace
       - ./model_tts:/models/tts:ro
+      - ./model_face:/models/face:ro
     develop:
       watch:
         - path: ./apps/ai-media-python/app
@@ -86,6 +87,7 @@ services:
     volumes:
       - .:/workspace
       - ./model_tts:/models/tts:ro
+      - ./model_face:/models/face:ro
     develop:
       watch:
         - path: ./.env

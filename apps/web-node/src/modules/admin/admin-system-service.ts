@@ -530,7 +530,7 @@ const SYSTEM_SETTING_TEMPLATES = [
     is_secret: false,
     value_json: {
       aspect_ratio: "9:16",
-      crop_strategy: "AUTO_REFRAME",
+      crop_strategy: "SMART_SPEAKER",
       subtitle_primary_format: "ASS",
       burn_in_default: false
     }

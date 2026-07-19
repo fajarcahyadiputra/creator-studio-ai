@@ -578,6 +578,21 @@ if (autoClipForm) {
     if (layoutField instanceof HTMLSelectElement && aspectRatio !== "9:16") {
       layoutField.value = "STANDARD";
     }
+    const podcastSpotlightSelected = aspectRatio === "9:16" && layoutField?.value === "PODCAST_SPOTLIGHT_9X16";
+    const cropStrategyPanel = autoClipForm.querySelector("[data-crop-strategy-panel]");
+    const cropStrategyField = autoClipForm.querySelector('[name="crop_strategy"]');
+    if (cropStrategyPanel instanceof HTMLElement) {
+      cropStrategyPanel.hidden = podcastSpotlightSelected;
+    }
+    if (podcastSpotlightSelected && cropStrategyField instanceof HTMLSelectElement) {
+      if (cropStrategyField.value !== "SMART_SPEAKER") {
+        cropStrategyField.dataset.standardValue = cropStrategyField.value;
+      }
+      cropStrategyField.value = "SMART_SPEAKER";
+    } else if (cropStrategyField instanceof HTMLSelectElement && cropStrategyField.dataset.standardValue) {
+      cropStrategyField.value = cropStrategyField.dataset.standardValue;
+      delete cropStrategyField.dataset.standardValue;
+    }
     const standardHeadlinePanel = autoClipForm.querySelector("[data-standard-headline-panel]");
     if (standardHeadlinePanel instanceof HTMLElement) {
       standardHeadlinePanel.hidden = aspectRatio !== "9:16" || layoutField?.value !== "STANDARD";
@@ -638,6 +653,7 @@ if (autoClipForm) {
         LEAD_GENERATION: "Lead generation"
       },
       cropStrategy: {
+        SMART_SPEAKER: "Smart speaker (1-4 wajah)",
         AUTO_REFRAME: "Auto reframe",
         FACE_TRACKING: "Face tracking",
         ACTIVE_SPEAKER: "Active speaker",
@@ -652,12 +668,17 @@ if (autoClipForm) {
         PODCAST_SPOTLIGHT_9X16: "Podcast Spotlight 9:16"
       },
       subtitleStyle: {
-        PODCAST_HIGHLIGHT: "Podcast Highlight",
+        PODCAST_HIGHLIGHT: "Highlight per kata biru/mint",
         DEFAULT: "Default clean",
         BOLD_KINETIC: "Bold kinetic",
         CLEAN_MINIMAL: "Clean minimal",
         NEWS_FLASH: "News Flash",
         CINEMATIC_QUOTE: "Cinematic quote"
+      },
+      subtitleTextCase: {
+        UPPERCASE: "HURUF BESAR",
+        LOWERCASE: "huruf kecil",
+        ORIGINAL: "Sesuai transcript"
       }
     };
     return maps[kind]?.[normalized] || normalized;
@@ -676,8 +697,10 @@ if (autoClipForm) {
     const subtitleLanguage = String(autoClipForm.querySelector('[name="subtitle_language"]')?.value || "id").trim();
     const subtitleFormat = String(autoClipForm.querySelector('[name="subtitle_primary_format"]')?.value || "ASS").trim();
     const aspectRatio = String(autoClipForm.querySelector('[name="aspect_ratio"]')?.value || "9:16").trim();
-    const cropStrategy = String(autoClipForm.querySelector('[name="crop_strategy"]')?.value || "AUTO_REFRAME").trim();
     const layoutTemplate = String(autoClipForm.querySelector('[name="layout_template"]')?.value || "STANDARD").trim();
+    const cropStrategy = layoutTemplate === "PODCAST_SPOTLIGHT_9X16"
+      ? "SMART_SPEAKER"
+      : String(autoClipForm.querySelector('[name="crop_strategy"]')?.value || "AUTO_REFRAME").trim();
     const rightsConfirmed = autoClipForm.querySelector('[name="rights_confirmed"]')?.checked === true;
     const advancedMode = advancedModeField?.checked === true;
     const preferredTopics = splitCsv(autoClipForm.querySelector('[name="preferred_topics"]')?.value || "");
@@ -699,10 +722,13 @@ if (autoClipForm) {
       submitSummaryDuration.textContent = `${minDuration || "-"}-${maxDuration || "-"} detik | ${clipCount || "-"} clip | pool ${candidatePoolCount || "-"}`;
     }
     if (submitSummarySubtitle) {
-      submitSummarySubtitle.textContent = `${subtitleLanguage || "-"} | ${humanizeAutoClipValue("subtitleStyle", autoClipForm.querySelector('[name="subtitle_style"]')?.value || "")}`;
+      const subtitleTextCase = autoClipForm.querySelector('[name="subtitle_text_case"]')?.value || "UPPERCASE";
+      submitSummarySubtitle.textContent = `${subtitleLanguage || "-"} | ${humanizeAutoClipValue("subtitleStyle", autoClipForm.querySelector('[name="subtitle_style"]')?.value || "")} | ${humanizeAutoClipValue("subtitleTextCase", subtitleTextCase)}`;
     }
     if (submitSummaryVisual) {
-      submitSummaryVisual.textContent = `${aspectRatio || "-"} | ${humanizeAutoClipValue("cropStrategy", cropStrategy)} | ${humanizeAutoClipValue("layoutTemplate", layoutTemplate || "STANDARD")}`;
+      submitSummaryVisual.textContent = layoutTemplate === "PODCAST_SPOTLIGHT_9X16"
+        ? `${aspectRatio || "-"} | Framing otomatis | ${humanizeAutoClipValue("layoutTemplate", layoutTemplate)}`
+        : `${aspectRatio || "-"} | ${humanizeAutoClipValue("cropStrategy", cropStrategy)} | ${humanizeAutoClipValue("layoutTemplate", layoutTemplate || "STANDARD")}`;
     }
     if (submitSummaryMode) {
       submitSummaryMode.textContent = advancedMode ? "Advanced Mode" : "Quick Mode";
@@ -842,6 +868,7 @@ if (autoClipForm) {
     setCheckboxValue("subtitle_enabled", subtitle.enabled);
     setCheckboxValue("subtitle_burn_in", subtitle.burn_in);
     setFieldValue("subtitle_style", subtitle.style);
+    setFieldValue("subtitle_text_case", subtitle.text_case || subtitle.textCase);
     setFieldValue("subtitle_font_family", subtitle.font_family);
     setFieldValue("framing_detection_mode", config.framing_detection_mode || config.framingDetectionMode);
     setCheckboxValue(
@@ -915,6 +942,7 @@ if (autoClipForm) {
       .map((value) => value.trim())
       .filter(Boolean);
     const subtitlePosition = String(data.get("subtitle_position") || "").trim();
+    const subtitleTextCase = String(data.get("subtitle_text_case") || "UPPERCASE").trim().toUpperCase();
     const subtitleStyle = normalizeSubtitleStyleValue(data.get("subtitle_style"));
     const subtitleFontFamily = String(data.get("subtitle_font_family") || "").trim();
     const subtitlePrimaryFormat = String(data.get("subtitle_primary_format") || "ASS").trim().toUpperCase();
@@ -966,7 +994,9 @@ if (autoClipForm) {
       }),
       visual: {
         aspect_ratio: String(data.get("aspect_ratio")),
-        crop_strategy: String(data.get("crop_strategy")),
+        crop_strategy: String(data.get("layout_template")) === "PODCAST_SPOTLIGHT_9X16"
+          ? "SMART_SPEAKER"
+          : String(data.get("crop_strategy") || "SMART_SPEAKER"),
         settings: {
           mode: data.get("advanced_mode") === "on" ? "ADVANCED" : "QUICK",
           layout_template: String(data.get("layout_template") || "STANDARD").trim() || "STANDARD",
@@ -992,6 +1022,7 @@ if (autoClipForm) {
             style: subtitleStyle || undefined,
             font_family: subtitleFontFamily || undefined,
             position: subtitlePosition || undefined,
+            text_case: subtitleTextCase,
             max_lines: data.get("subtitle_max_lines") ? Number(data.get("subtitle_max_lines")) : undefined,
             safe_margin_percent: data.get("subtitle_safe_margin_percent")
               ? Number(data.get("subtitle_safe_margin_percent"))
@@ -1332,9 +1363,22 @@ for (const form of document.querySelectorAll('form[action^="/api/v1/auto-clippin
   const layoutField = form.querySelector('[name="layout_template"]');
   const aspectRatioField = form.querySelector('[name="aspect_ratio"]');
   const panels = form.querySelectorAll("[data-regenerate-standard-headline]");
+  const cropStrategyPanel = form.querySelector("[data-regenerate-crop-strategy]");
+  const cropStrategyField = form.querySelector('[name="crop_strategy"]');
   const syncStandardHeadlineControls = () => {
     const visible = layoutField?.value === "STANDARD" && aspectRatioField?.value === "9:16";
     for (const panel of panels) panel.hidden = !visible;
+    const podcastSpotlightSelected = layoutField?.value === "PODCAST_SPOTLIGHT_9X16" && aspectRatioField?.value === "9:16";
+    if (cropStrategyPanel instanceof HTMLElement) cropStrategyPanel.hidden = podcastSpotlightSelected;
+    if (podcastSpotlightSelected && cropStrategyField instanceof HTMLSelectElement) {
+      if (cropStrategyField.value !== "SMART_SPEAKER") {
+        cropStrategyField.dataset.standardValue = cropStrategyField.value;
+      }
+      cropStrategyField.value = "SMART_SPEAKER";
+    } else if (cropStrategyField instanceof HTMLSelectElement && cropStrategyField.dataset.standardValue) {
+      cropStrategyField.value = cropStrategyField.dataset.standardValue;
+      delete cropStrategyField.dataset.standardValue;
+    }
   };
   layoutField?.addEventListener("change", syncStandardHeadlineControls);
   aspectRatioField?.addEventListener("change", syncStandardHeadlineControls);
@@ -1846,7 +1890,7 @@ function validateAutoClipPayload(payload) {
   if (!["9:16", "1:1", "4:5", "16:9", "CUSTOM"].includes(String(visual.aspect_ratio || ""))) {
     errors.push("visual.aspect_ratio is invalid");
   }
-  if (!["CENTER", "ACTIVE_SPEAKER", "FACE_TRACKING", "AUTO_REFRAME", "SPLIT_SCREEN", "SPEAKER_AND_SCREEN", "BLURRED_BACKGROUND", "MANUAL"].includes(String(visual.crop_strategy || ""))) {
+  if (!["CENTER", "SMART_SPEAKER", "ACTIVE_SPEAKER", "FACE_TRACKING", "AUTO_REFRAME", "SPLIT_SCREEN", "SPEAKER_AND_SCREEN", "BLURRED_BACKGROUND", "MANUAL"].includes(String(visual.crop_strategy || ""))) {
     errors.push("visual.crop_strategy is invalid");
   }
   if (
@@ -1885,6 +1929,12 @@ function validateAutoClipPayload(payload) {
     && !["TOP", "CENTER", "BOTTOM"].includes(String(subtitleSettings.position))
   ) {
     errors.push("subtitle.settings.position is invalid");
+  }
+  if (
+    subtitleSettings.text_case !== undefined
+    && !["UPPERCASE", "LOWERCASE", "ORIGINAL"].includes(String(subtitleSettings.text_case))
+  ) {
+    errors.push("subtitle.settings.text_case is invalid");
   }
 
   if (!["PLATFORM", "USER_OWNED"].includes(String(ai.credential_mode || ""))) {

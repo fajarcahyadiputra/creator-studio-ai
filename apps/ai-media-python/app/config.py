@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     FASTER_WHISPER_MODEL_SIZE: str = "small"
     FASTER_WHISPER_DEVICE: str = "cpu"
     FASTER_WHISPER_COMPUTE_TYPE: str = "int8"
+    FACE_DETECTION_YUNET_MODEL_PATH: str | None = "/models/face/face_detection_yunet_2023mar.onnx"
+    FACE_DETECTION_YUNET_SCORE_THRESHOLD: float = Field(default=0.72, ge=0.3, le=0.99)
     AUTO_CLIP_ANALYZER_MODE: str = "openai"
     AUTO_CLIP_ANALYZER_PROVIDER: str | None = "openai"
     AUTO_CLIP_ANALYZER_MODEL: str | None = "gpt-5.5"

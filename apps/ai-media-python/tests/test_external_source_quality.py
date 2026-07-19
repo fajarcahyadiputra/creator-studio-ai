@@ -1,4 +1,5 @@
 from app.activities.external_source_materialization import (
+    YOUTUBE_DOWNLOAD_STRATEGIES,
     _build_source_format_selector,
     _build_ytdlp_options,
     _normalize_target_video_height,
@@ -9,6 +10,7 @@ def test_high_quality_targets_have_bounded_480p_fallback() -> None:
     selector = _build_source_format_selector(1080)
 
     assert "[height<=1080][height>=480]" in selector
+    assert selector.split("/")[0].endswith("[vcodec^=avc1]+bestaudio[ext=m4a]")
     assert selector.split("/")[-1] == "best[height<=1080][height>=480]"
 
 
@@ -22,6 +24,7 @@ def test_download_options_never_include_unbounded_best_fallback() -> None:
 
     assert options["format"].split("/")[-1] == "best[height<=720][height>=480]"
     assert "extractor_args" not in options
+    assert options["cachedir"] is False
 
 
 def test_android_vr_fallback_is_explicit() -> None:
@@ -33,6 +36,14 @@ def test_android_vr_fallback_is_explicit() -> None:
 
     assert options["extractor_args"] == {"youtube": {"player_client": ["android_vr"]}}
     assert "[height<=720][height>=480]" in options["format"]
+
+
+def test_youtube_download_strategies_start_with_independent_creator_client() -> None:
+    assert YOUTUBE_DOWNLOAD_STRATEGIES == (
+        ("android-creator", "android_creator"),
+        ("android-vr", "android_vr"),
+        ("default", None),
+    )
 
 
 def test_target_video_height_is_validated() -> None:

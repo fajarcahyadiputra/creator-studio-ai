@@ -74,6 +74,26 @@ Notes:
 - The Python worker now uses more conservative `yt-dlp` download settings for long-form source imports.
 - TTS segmentation now falls back to `local_heuristic` if the OpenAI host cannot be resolved, so DNS issues should no longer hard-fail the entire TTS workflow.
 
+### YouTube import returns `HTTP Error 403: Forbidden`
+
+Opening the video in a desktop browser first does not authorize the Python worker. The browser and worker use
+different sessions, cookies, IP context, and YouTube player clients.
+
+The worker uses a current `yt-dlp` release, fresh extractor responses, bounded quality selection, and multiple
+YouTube client strategies. It prioritizes H.264 video plus M4A audio before less compatible adaptive formats.
+
+If a public video is rejected once, retry the job because YouTube signed media access can be temporary. If it is
+rejected repeatedly:
+
+- confirm the URL is public and does not require age verification, membership, or sign-in
+- remove playlist parameters when only one video should be imported
+- upload the source video file directly
+- for session-protected sources, configure worker-side YouTube authentication instead of asking the user to open
+  the video locally
+
+After changing the `yt-dlp` dependency, rebuild the `ai-media-python` image. Source watch mode reloads Python code
+but does not install updated packages.
+
 ## Auto-clipping fails during `ANALYZING_CLIP_CANDIDATES`
 
 Common symptoms:
@@ -97,6 +117,35 @@ Important:
 
 - changing `.env` alone is not enough for running containers; recreate or reload the relevant worker containers so new timeout values are actually applied
 - regenerated jobs snapshot the analyzer runtime at submission time, so older jobs do not retroactively pick up newer analyzer settings
+
+## Smart speaker crop misses faces or falls back to center
+
+The renderer prefers OpenCV YuNet for face boxes and falls back to the bundled Haar cascades when the optional
+YuNet model is absent or cannot be loaded. Put the model at:
+
+```text
+model_face/face_detection_yunet_2023mar.onnx
+```
+
+The `model_face` directory is ignored by Git and mounted read-only at `/models/face`. The expected runtime settings
+are `FACE_DETECTION_YUNET_MODEL_PATH=/models/face/face_detection_yunet_2023mar.onnx` and
+`FACE_DETECTION_YUNET_SCORE_THRESHOLD=0.72`.
+
+After adding or replacing the model, recreate the Python services without rebuilding dependencies:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --no-deps --force-recreate ai-media-python ai-media-python-api
+```
+
+Inspect clip metadata after rerendering:
+
+- `detection_backend=opencv_yunet` means the DNN detector produced the face evidence.
+- `detection_backend=opencv_haar` means YuNet had no usable result and the local fallback was used.
+- `yunet_model_available=false` means the model path is missing, too small, or not mounted.
+- `tracking_fallback_mode=center_cover_no_face_evidence` means neither detector found a reliable face; hand and
+  background motion are intentionally ignored.
+
+Existing clip artifacts are immutable. Use **Rerender** or regenerate the job to apply a newly installed detector.
 
 ## Upload part fails with signature mismatch
 

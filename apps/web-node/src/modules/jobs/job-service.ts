@@ -107,6 +107,7 @@ interface RegenerateAutoClipInput {
   aspect_ratio: "9:16" | "1:1" | "4:5" | "16:9" | "CUSTOM";
   crop_strategy:
     | "CENTER"
+    | "SMART_SPEAKER"
     | "ACTIVE_SPEAKER"
     | "FACE_TRACKING"
     | "AUTO_REFRAME"
@@ -128,6 +129,7 @@ interface RegenerateAutoClipInput {
   subtitle_style?: string;
   subtitle_font_family?: string;
   subtitle_position?: "TOP" | "CENTER" | "BOTTOM";
+  subtitle_text_case: "UPPERCASE" | "LOWERCASE" | "ORIGINAL";
   subtitle_max_lines?: number;
   subtitle_safe_margin_percent?: number;
   subtitle_profanity_censor: boolean;
@@ -1921,6 +1923,7 @@ function buildRegeneratedAutoClippingInput(
         style: normalizeSubtitleStyle(input.subtitle_style),
         font_family: input.subtitle_font_family,
         position: input.subtitle_position,
+        text_case: input.subtitle_text_case,
         max_lines: input.subtitle_max_lines,
         safe_margin_percent: input.subtitle_safe_margin_percent,
         word_highlight: subtitleStyleUsesWordHighlight(input.subtitle_style),
@@ -2193,6 +2196,7 @@ export async function prepareAutoClippingInput(userId: string, input: CreateAuto
     && layoutTemplate === "STANDARD"
     && visualSettings.headline_overlay_enabled !== false;
   const headlineOverlayPosition = visualSettings.headline_overlay_position === "TOP" ? "TOP" : "BOTTOM";
+  const cropStrategy = layoutTemplate === "PODCAST_SPOTLIGHT_9X16" ? "SMART_SPEAKER" : visual.crop_strategy;
   const branding = await resolveAutoClipBrandingContext(userId, visualSettings);
   const analyzerRuntime = await resolveAutoClipAnalyzerRuntimeSnapshot();
   const sourceQuality = await resolveAutoClipSourceQualitySnapshot();
@@ -2209,6 +2213,7 @@ export async function prepareAutoClippingInput(userId: string, input: CreateAuto
     },
     visual: {
       ...visual,
+      crop_strategy: cropStrategy,
       settings: compactRecord({
         ...visualSettings,
         layout_template: layoutTemplate,
@@ -2563,6 +2568,7 @@ export function buildRenderSettings(source: RenderSettingsSource): Record<string
 function normalizeAnalyzerModeLabel(mode: string | null) {
   if (!mode) return null;
   if (mode === "heuristic") return "Heuristic only (Python local)";
+  if (mode === "hybrid") return "Hybrid (OpenAI + Python heuristic)";
   if (mode === "heuristic_then_openai") return "Heuristic + OpenAI";
   if (mode === "openai_then_heuristic") return "OpenAI + heuristic";
   return mode;

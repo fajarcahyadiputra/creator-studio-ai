@@ -60,6 +60,7 @@ async function main() {
           style: "creator-bold",
           font_family: "Poppins",
           position: "BOTTOM",
+          text_case: "UPPERCASE",
           max_lines: 2,
           safe_margin_percent: 12,
           word_highlight: true,

@@ -5,6 +5,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import median
 from time import monotonic
 from typing import Any
 
@@ -16,7 +17,13 @@ from app.config import get_settings
 from app.activities.warning_events import emit_retry_warning
 from app.domain.contracts import ClipOutputResult, ClipRenderArtifactUpload, ClipRenderContext, TranscriptSegment
 from app.infrastructure.clip_output_client import ClipOutputClient
-from app.media.face_detection import FaceDetectionUnavailable, detect_faces_in_image, summarize_face_samples
+from app.media.face_detection import (
+    FaceDetectionUnavailable,
+    apply_active_speaker_tracking,
+    build_active_face_tracking_samples,
+    detect_faces_in_image,
+    summarize_face_samples,
+)
 from app.media.ffmpeg import build_clip_render_command
 from app.activities.media_validation import run_ffprobe_json
 
@@ -80,6 +87,7 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
     subtitle_burned_in = _resolve_subtitle_burned_in(context.render_settings)
     subtitle_max_lines = _resolve_subtitle_max_lines(context.render_settings)
     subtitle_word_highlight = _resolve_subtitle_word_highlight(context.render_settings)
+    subtitle_text_case = _resolve_subtitle_text_case(context.render_settings)
     subtitle_position = _resolve_subtitle_position(context.render_settings)
     subtitle_safe_margin_percent = _resolve_subtitle_safe_margin_percent(context.render_settings)
     width, height = _resolve_dimensions(aspect_ratio)
@@ -114,6 +122,7 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         max_lines=subtitle_max_lines,
         layout_template=layout_template,
     )
+    subtitle_cues = _apply_subtitle_text_case(subtitle_cues, subtitle_text_case)
     subtitle_path_for_upload: Path | None = None
     subtitle_path_for_burn_in: Path | None = None
     if subtitle_cues:
@@ -146,6 +155,7 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         clip_duration_seconds=clip_duration_seconds,
         working_directory=working_directory,
         timeout_seconds=min(max(settings.MEDIA_PROBE_TIMEOUT_SECONDS, 20), 90),
+        active_speaker_tracking=crop_strategy in {"ACTIVE_SPEAKER", "SMART_SPEAKER"},
     )
 
     layout_options = _build_layout_options(
@@ -350,25 +360,39 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
             "split_frame_fallback_mode": layout_options.get("split_frame_fallback_mode"),
             "layout_template": layout_template,
             "speaker_count": speaker_count,
+            "active_speaker_count": layout_options.get("active_speaker_count"),
+            "adaptive_panel_count": layout_options.get("adaptive_panel_count"),
+            "split_evidence_source": face_layout_summary.get("split_evidence_source"),
             "active_speaker_available": bool(
-                isinstance(layout_options.get("active_speaker_strategy"), dict)
-                and layout_options["active_speaker_strategy"].get("available")
+                int(layout_options.get("active_speaker_count") or 0) > 0
+                or (
+                    isinstance(layout_options.get("active_speaker_strategy"), dict)
+                    and layout_options["active_speaker_strategy"].get("available")
+                )
             ),
             "active_speaker_source": (
                 layout_options["active_speaker_strategy"].get("source")
                 if isinstance(layout_options.get("active_speaker_strategy"), dict)
-                else None
+                and layout_options["active_speaker_strategy"].get("available")
+                else face_layout_summary.get("split_evidence_source")
             ),
             "active_speaker_switch_lead_seconds": (
                 layout_options["active_speaker_strategy"].get("switch_lead_seconds")
                 if isinstance(layout_options.get("active_speaker_strategy"), dict)
                 else None
             ),
+            "active_speaker_tracking_backend": face_layout_summary.get(
+                "active_speaker_tracking_backend"
+            ),
+            "active_speaker_sample_interval_seconds": (
+                0.33 if crop_strategy in {"ACTIVE_SPEAKER", "SMART_SPEAKER"} else None
+            ),
         },
         "subtitle": {
             "format": subtitle_format if subtitle_path_for_upload else None,
             "language": subtitle_language if subtitle_path_for_upload else None,
             "burned_in": subtitle_burned_in,
+            "text_case": subtitle_text_case,
             "cue_count": len(subtitle_cues),
             "sidecars": {
                 "srt": subtitle_srt_path.name if subtitle_srt_path.exists() else None,
@@ -680,6 +704,16 @@ def _resolve_subtitle_word_highlight(render_settings: dict[str, Any]) -> bool:
     return value is True
 
 
+def _resolve_subtitle_text_case(render_settings: dict[str, Any]) -> str:
+    settings = _resolve_subtitle_settings(render_settings)
+    value = settings.get("text_case")
+    if isinstance(value, str):
+        normalized = value.strip().upper()
+        if normalized in {"UPPERCASE", "LOWERCASE", "ORIGINAL"}:
+            return normalized
+    return "UPPERCASE"
+
+
 def _resolve_subtitle_position(render_settings: dict[str, Any]) -> str:
     settings = _resolve_subtitle_settings(render_settings)
     value = settings.get("position")
@@ -731,39 +765,96 @@ async def _detect_face_layout_summary(
     clip_duration_seconds: float,
     working_directory: Path,
     timeout_seconds: float,
+    active_speaker_tracking: bool = False,
 ) -> dict[str, Any]:
     if clip_duration_seconds <= 0.5:
         return {"status": "skipped", "reason": "clip_too_short"}
 
-    sample_count = max(3, min(8, int(round(clip_duration_seconds / 6)) + 2))
+    # Local Faster Whisper does not provide diarization labels yet. Sample
+    # densely enough for visual close-up changes to remain a useful fallback.
+    # A tighter cadence makes speaker changes visible quickly while still
+    # keeping the detector workload bounded for long clips.
+    sample_interval_seconds = 0.33 if active_speaker_tracking else 1.25
+    sample_limit = 180 if active_speaker_tracking else 48
+    sample_count = max(4, min(sample_limit, int(clip_duration_seconds / sample_interval_seconds) + 2))
     sample_offsets = _build_face_sample_offsets(clip_duration_seconds=clip_duration_seconds, sample_count=sample_count)
     samples: list[list[dict[str, Any]]] = []
+    frame_paths: list[Path] = []
+    resolved_sample_offsets: list[float] = []
+    runtime_settings = get_settings()
+    yunet_model_path = runtime_settings.FACE_DETECTION_YUNET_MODEL_PATH
+    try:
+        yunet_model_available = bool(
+            yunet_model_path
+            and Path(yunet_model_path).is_file()
+            and Path(yunet_model_path).stat().st_size > 1024
+        )
+    except OSError:
+        yunet_model_available = False
 
     try:
-        for index, offset_seconds in enumerate(sample_offsets, start=1):
-            frame_path = working_directory / f"face-sample-{index}.jpg"
-            command = [
-                "ffmpeg",
-                "-hide_banner",
-                "-nostdin",
-                "-y",
-                "-ss",
-                f"{clip_start_seconds + offset_seconds:.3f}",
-                "-i",
-                source,
-                "-frames:v",
-                "1",
-                "-vf",
-                "scale=960:-2",
-                str(frame_path),
-            ]
-            await _run_command(command, timeout_seconds=min(timeout_seconds, 20))
-            if not frame_path.exists():
-                continue
+        for stale_frame in working_directory.glob("face-sample-*.jpg"):
+            stale_frame.unlink(missing_ok=True)
+        sample_span_seconds = max(sample_offsets[-1] - sample_offsets[0], 0.2)
+        frame_rate = max(0.1, (len(sample_offsets) - 1) / sample_span_seconds)
+        output_pattern = working_directory / "face-sample-%03d.jpg"
+        extraction_command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-nostdin",
+            "-y",
+            "-ss",
+            f"{clip_start_seconds + sample_offsets[0]:.3f}",
+            "-i",
+            source,
+            "-t",
+            f"{sample_span_seconds + 0.05:.3f}",
+            "-vf",
+            f"fps={frame_rate:.6f},scale=960:-2",
+            "-frames:v",
+            str(len(sample_offsets)),
+            "-q:v",
+            "4",
+            str(output_pattern),
+        ]
+        await _run_command_with_heartbeat(
+            extraction_command,
+            timeout_seconds=min(max(timeout_seconds, clip_duration_seconds * 2 + 20), 180),
+            heartbeat_interval_seconds=8,
+            heartbeat_details={
+                "stage": "FACE_TRACKING",
+                "operation": "extract_tracking_frames",
+                "sample_count": len(sample_offsets),
+            },
+        )
+
+        # FFmpeg's fps filter can legitimately emit one frame fewer because of
+        # timestamp rounding. Process the files that were actually finalized
+        # instead of assuming every requested sequence number exists.
+        frame_paths = sorted(working_directory.glob("face-sample-*.jpg"))[: len(sample_offsets)]
+        for index, frame_path in enumerate(frame_paths, start=1):
+            offset_seconds = sample_offsets[min(index - 1, len(sample_offsets) - 1)]
+            resolved_sample_offsets.append(offset_seconds)
+            _heartbeat_face_sampling(
+                sample_index=index,
+                sample_count=len(frame_paths),
+                offset_seconds=offset_seconds,
+            )
             # OpenCV cascade detection is CPU-bound and must not block the
             # Temporal worker event loop while other workflows heartbeat.
-            detected_faces = await asyncio.to_thread(detect_faces_in_image, frame_path)
+            detected_faces = await asyncio.to_thread(
+                detect_faces_in_image,
+                frame_path,
+                yunet_model_path=yunet_model_path,
+                yunet_score_threshold=runtime_settings.FACE_DETECTION_YUNET_SCORE_THRESHOLD,
+            )
             samples.append(detected_faces)
+            _heartbeat_face_sampling(
+                sample_index=index,
+                sample_count=len(frame_paths),
+                offset_seconds=offset_seconds,
+                detected_face_count=len(detected_faces),
+            )
     except FaceDetectionUnavailable as error:
         return {
             "status": "unavailable",
@@ -774,6 +865,7 @@ async def _detect_face_layout_summary(
             "average_face_count": 0.0,
             "multi_face_sample_count": 0,
             "single_face_sample_count": 0,
+            "valid_face_sample_count": 0,
             "left_right_split_samples": 0,
             "single_face_anchor": "center",
             "single_face_anchor_ratio": 0.5,
@@ -782,6 +874,7 @@ async def _detect_face_layout_summary(
             "left_anchor_ratio": 0.28,
             "right_anchor_ratio": 0.72,
             "technical_detail": str(error),
+            "tracking_fallback_mode": "center_cover_no_face_evidence",
         }
     except Exception as error:
         return {
@@ -789,16 +882,95 @@ async def _detect_face_layout_summary(
             "warning": f"Face detection skipped because frame sampling failed: {error}",
             "reason": "frame_sampling_failed",
             "detection_backend": "ffmpeg+opencv",
+            "valid_face_sample_count": 0,
             "single_face_anchor_ratio": 0.5,
             "split_layout_mode": "VERTICAL_STACK",
             "left_anchor_ratio": 0.28,
             "right_anchor_ratio": 0.72,
+            "tracking_fallback_mode": "center_cover_no_face_evidence",
         }
 
     summary = summarize_face_samples(samples)
-    summary["sample_offsets_seconds"] = [round(value, 3) for value in sample_offsets]
-    summary["detection_backend"] = "opencv_haar"
+    if active_speaker_tracking:
+        try:
+            active_tracking_samples = await asyncio.to_thread(
+                build_active_face_tracking_samples,
+                frame_paths,
+                samples,
+            )
+            has_face_anchor = any(
+                isinstance(sample.get("anchor_ratio"), (int, float))
+                for sample in active_tracking_samples
+                if isinstance(sample, dict)
+            )
+            summary["active_speaker_tracking_backend"] = (
+                "opencv_lower_face_motion"
+                if has_face_anchor
+                else "center_cover_no_face_evidence"
+            )
+            summary = apply_active_speaker_tracking(summary, active_tracking_samples)
+        except Exception as error:
+            summary["active_speaker_tracking_backend"] = "opencv_face_position_fallback"
+            summary["active_speaker_tracking_warning"] = (
+                f"Mouth-motion tracking was unavailable; face-position tracking was used instead: {error}"
+            )
+    summary["sample_offsets_seconds"] = [round(value, 3) for value in resolved_sample_offsets]
+    detection_sources = sorted(
+        {
+            str(face.get("detector"))
+            for sample in samples
+            for face in sample
+            if isinstance(face, dict) and face.get("detector")
+        }
+    )
+    summary["detection_sources"] = detection_sources
+    summary["detection_backend"] = (
+        "opencv_yunet+haar"
+        if "yunet" in detection_sources and len(detection_sources) > 1
+        else "opencv_yunet"
+        if "yunet" in detection_sources
+        else "opencv_haar"
+    )
+    summary["yunet_model_available"] = yunet_model_available
+    summary["yunet_score_threshold"] = runtime_settings.FACE_DETECTION_YUNET_SCORE_THRESHOLD
+    if int(summary.get("valid_face_sample_count") or 0) == 0:
+        summary["tracking_fallback_mode"] = "center_cover_no_face_evidence"
+        summary["warning"] = (
+            "No reliable face was detected in the sampled frames. The renderer used a stable centered "
+            "portrait crop and intentionally ignored hand, object, and background motion."
+        )
+    else:
+        inferred_count = sum(
+            1
+            for sample in summary.get("tracking_samples", [])
+            if isinstance(sample, dict) and sample.get("detection_source") == "upperbody_inferred_head"
+        )
+        summary["tracking_fallback_mode"] = (
+            "upperbody_inferred_head" if inferred_count else "bbox_temporal_tracking"
+        )
     return summary
+
+
+def _heartbeat_face_sampling(
+    *,
+    sample_index: int,
+    sample_count: int,
+    offset_seconds: float,
+    detected_face_count: int | None = None,
+) -> None:
+    details: dict[str, Any] = {
+        "stage": "FACE_TRACKING",
+        "sample_index": sample_index,
+        "sample_count": sample_count,
+        "offset_seconds": round(offset_seconds, 3),
+    }
+    if detected_face_count is not None:
+        details["detected_face_count"] = detected_face_count
+    try:
+        activity.heartbeat(details)
+    except RuntimeError:
+        # Keep this helper directly testable outside a Temporal activity.
+        pass
 
 
 def _build_face_sample_offsets(*, clip_duration_seconds: float, sample_count: int) -> list[float]:
@@ -806,8 +978,10 @@ def _build_face_sample_offsets(*, clip_duration_seconds: float, sample_count: in
         midpoint = min(max(clip_duration_seconds / 2, 0.1), max(clip_duration_seconds - 0.1, 0.1))
         return [midpoint]
 
-    start_offset = 0.35
-    end_offset = max(clip_duration_seconds - 0.35, start_offset + 0.2)
+    # Include the actual first frame so tracking metadata and crop expressions
+    # are valid from local clip time zero rather than appearing late.
+    start_offset = 0.0
+    end_offset = max(clip_duration_seconds - 0.05, start_offset + 0.2)
     if end_offset <= start_offset:
         return [round(max(clip_duration_seconds / 2, 0.1), 3)]
 
@@ -841,6 +1015,12 @@ def _build_layout_options(
     speaker_count = _resolve_speaker_count(render_settings=render_settings, transcript_segments=transcript_segments)
     raw_detected_face_count = face_layout_summary.get("max_face_count")
     detected_face_count = int(raw_detected_face_count) if isinstance(raw_detected_face_count, (int, float)) else 0
+    raw_active_speaker_count = face_layout_summary.get("max_active_speaker_count")
+    active_speaker_count = (
+        int(raw_active_speaker_count)
+        if isinstance(raw_active_speaker_count, (int, float))
+        else 0
+    )
     clip_start_seconds = float(candidate.start_ms) / 1000.0
     clip_duration_seconds = max(0.0, float(candidate.duration_ms) / 1000.0)
     active_speaker_strategy = _build_active_speaker_strategy(
@@ -848,25 +1028,28 @@ def _build_layout_options(
         clip_start_seconds=clip_start_seconds,
         clip_duration_seconds=clip_duration_seconds,
     )
+    _attach_speaker_anchor_map(active_speaker_strategy, face_layout_summary)
     face_detection_unavailable = face_layout_summary.get("status") == "unavailable"
-    explicit_split_strategy = crop_strategy in {"SPLIT_SCREEN", "SPEAKER_AND_SCREEN"}
+    explicit_split_strategy = crop_strategy in {"SPLIT_SCREEN", "SPEAKER_AND_SCREEN", "SMART_SPEAKER"}
     split_frame_supported = bool(face_layout_summary.get("supports_split_frame"))
     split_frame_requested = explicit_split_strategy or (
         crop_strategy == "AUTO_REFRAME" and split_on_multi_face
     )
+    required_active_speaker_count = 2
     should_split_frame = (
         split_frame_requested
-        and detected_face_count >= max(2, split_min_face_count)
+        and active_speaker_count >= required_active_speaker_count
         and split_frame_supported
     )
+    adaptive_panel_count = min(4, max(1, int(face_layout_summary.get("adaptive_panel_count") or 1)))
     if should_split_frame:
-        split_decision_reason = "two_faces_stable"
+        split_decision_reason = f"{adaptive_panel_count}_active_speakers_stable"
     elif face_detection_unavailable:
         split_decision_reason = "face_detection_unavailable"
-    elif detected_face_count < 2:
-        split_decision_reason = "single_face_only"
+    elif active_speaker_count < 2:
+        split_decision_reason = "single_active_speaker"
     else:
-        split_decision_reason = "two_faces_not_stable"
+        split_decision_reason = "active_speakers_not_stable"
     channel_name = _resolve_string(branding_data.get("channel_name")) or "Creator Studio"
     channel_tagline = _resolve_string(branding_data.get("channel_tagline"))
     base_options = {
@@ -874,7 +1057,9 @@ def _build_layout_options(
         "framing_detection_mode": framing_detection_mode,
         "speaker_count": speaker_count,
         "detected_face_count": detected_face_count,
+        "active_speaker_count": active_speaker_count,
         "split_frame_enabled": should_split_frame,
+        "adaptive_panel_count": adaptive_panel_count if should_split_frame else 1,
         "split_decision_reason": split_decision_reason,
         "split_on_multi_face": split_on_multi_face,
         "split_min_face_count": split_min_face_count,
@@ -916,6 +1101,10 @@ def _build_layout_options(
                     "standard_headline_enabled": bool(headline_files),
                     "standard_headline_position": headline_position,
                     "standard_headline_files": headline_files,
+                    "standard_headline_duration_seconds": round(
+                        min(3.8, max(2.5, clip_duration_seconds * 0.10)),
+                        2,
+                    ),
                 }
             )
         return base_options
@@ -1004,8 +1193,9 @@ def _build_active_speaker_strategy(
             continue
         if label not in speaker_order:
             speaker_order.append(label)
-        relative_start = max(0.0, float(segment.start_seconds) - clip_start_seconds)
-        relative_end = min(clip_duration_seconds, float(segment.end_seconds) - clip_start_seconds)
+        segment_start, segment_end = _resolve_spoken_segment_bounds(segment)
+        relative_start = max(0.0, segment_start - clip_start_seconds)
+        relative_end = min(clip_duration_seconds, segment_end - clip_start_seconds)
         if relative_end <= relative_start:
             continue
         if (
@@ -1023,17 +1213,28 @@ def _build_active_speaker_strategy(
             }
         )
 
-    # Anticipate a speaker change slightly so the face is already framed when
-    # the first syllable starts, without creating overlapping crop windows.
-    switch_lead_seconds = 0.12
+    speaker_windows = _collapse_micro_speaker_turns(speaker_windows)
+    speaker_windows = _merge_adjacent_speaker_windows(speaker_windows)
+
+    # Start moving shortly before the first syllable and finish just before it.
+    # A short smooth transition feels responsive without producing a hard jump.
+    switch_lead_seconds = 0.20
+    transition_seconds = 0.16
+    if speaker_windows:
+        speaker_windows[0]["start_seconds"] = 0.0
     for index in range(1, len(speaker_windows)):
         previous = speaker_windows[index - 1]
         current = speaker_windows[index]
         if previous["speaker_label"] == current["speaker_label"]:
             continue
-        switch_at = max(float(previous["start_seconds"]), float(current["start_seconds"]) - switch_lead_seconds)
-        previous["end_seconds"] = min(float(previous["end_seconds"]), switch_at)
+        speech_start = float(current["start_seconds"])
+        switch_at = max(float(previous["start_seconds"]), speech_start - switch_lead_seconds)
+        previous["end_seconds"] = switch_at
         current["start_seconds"] = switch_at
+        current["speech_start_seconds"] = speech_start
+
+    if speaker_windows:
+        speaker_windows[-1]["end_seconds"] = clip_duration_seconds
 
     speaker_windows = [
         window
@@ -1046,9 +1247,121 @@ def _build_active_speaker_strategy(
         "available": len(active_speakers) >= 2 and bool(speaker_windows),
         "source": "transcript_diarization" if len(active_speakers) >= 2 else "face_tracking_fallback",
         "switch_lead_seconds": switch_lead_seconds,
+        "transition_seconds": transition_seconds,
         "speaker_order": active_speakers,
         "windows": speaker_windows,
     }
+
+
+def _resolve_spoken_segment_bounds(segment: TranscriptSegment) -> tuple[float, float]:
+    valid_words = [
+        word
+        for word in segment.words
+        if word.end_seconds > word.start_seconds
+        and word.end_seconds > segment.start_seconds - 0.5
+        and word.start_seconds < segment.end_seconds + 0.5
+    ]
+    if not valid_words:
+        return float(segment.start_seconds), float(segment.end_seconds)
+    return float(valid_words[0].start_seconds), float(valid_words[-1].end_seconds)
+
+
+def _collapse_micro_speaker_turns(windows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(windows) < 3:
+        return windows
+    collapsed = [dict(window) for window in windows]
+    for index in range(1, len(collapsed) - 1):
+        previous = collapsed[index - 1]
+        current = collapsed[index]
+        following = collapsed[index + 1]
+        duration = float(current["end_seconds"]) - float(current["start_seconds"])
+        if (
+            duration < 0.28
+            and previous["speaker_label"] == following["speaker_label"]
+            and current["speaker_label"] != previous["speaker_label"]
+        ):
+            current["speaker_label"] = previous["speaker_label"]
+    return collapsed
+
+
+def _merge_adjacent_speaker_windows(windows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for source_window in windows:
+        window = dict(source_window)
+        if (
+            merged
+            and merged[-1]["speaker_label"] == window["speaker_label"]
+            and float(window["start_seconds"]) - float(merged[-1]["end_seconds"]) <= 0.45
+        ):
+            merged[-1]["end_seconds"] = max(
+                float(merged[-1]["end_seconds"]),
+                float(window["end_seconds"]),
+            )
+            continue
+        merged.append(window)
+    return merged
+
+
+def _attach_speaker_anchor_map(
+    strategy: dict[str, Any],
+    face_layout_summary: dict[str, Any],
+) -> None:
+    speaker_order = strategy.get("speaker_order")
+    windows = strategy.get("windows")
+    offsets = face_layout_summary.get("sample_offsets_seconds")
+    pairs = face_layout_summary.get("sample_anchor_pairs")
+    if not isinstance(speaker_order, list) or len(speaker_order) < 2 or not isinstance(windows, list):
+        return
+
+    left_anchor = float(face_layout_summary.get("left_anchor_ratio") or 0.28)
+    right_anchor = float(face_layout_summary.get("right_anchor_ratio") or 0.72)
+    fallback_map = {
+        str(speaker_order[0]): left_anchor,
+        str(speaker_order[1]): right_anchor,
+    }
+    evidence: dict[str, list[float]] = {str(label): [] for label in speaker_order[:2]}
+    if isinstance(offsets, list) and isinstance(pairs, list):
+        for index, offset in enumerate(offsets):
+            if index >= len(pairs) or not isinstance(offset, (int, float)) or not isinstance(pairs[index], dict):
+                continue
+            sample = pairs[index]
+            if sample.get("face_count") != 1:
+                continue
+            anchor = sample.get("primary_anchor_ratio")
+            if not isinstance(anchor, (int, float)):
+                continue
+            active_window = next(
+                (
+                    window
+                    for window in windows
+                    if float(window["start_seconds"]) <= float(offset) <= float(window["end_seconds"])
+                ),
+                None,
+            )
+            if active_window is None:
+                continue
+            label = str(active_window["speaker_label"])
+            if label in evidence:
+                evidence[label].append(float(anchor))
+
+    resolved = {
+        label: round(float(median(values)), 4)
+        for label, values in evidence.items()
+        if values
+    }
+    if len(resolved) == 1:
+        known_label, known_anchor = next(iter(resolved.items()))
+        other_label = next(label for label in fallback_map if label != known_label)
+        resolved[other_label] = right_anchor if known_anchor < 0.5 else left_anchor
+
+    resolved_values = list(resolved.values())
+    if len(resolved) < 2 or abs(resolved_values[0] - resolved_values[1]) < 0.15:
+        strategy["speaker_anchor_ratios"] = fallback_map
+        strategy["speaker_anchor_source"] = "left_right_fallback"
+        return
+
+    strategy["speaker_anchor_ratios"] = resolved
+    strategy["speaker_anchor_source"] = "single_face_visual_evidence"
 
 
 def _resolve_dynamic_font_size(text: str, short_size: int, medium_size: int, long_size: int) -> int:
@@ -2319,6 +2632,30 @@ def _normalize_subtitle_tokens(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+(?:'[a-z0-9]+)?", normalized)
 
 
+def _apply_subtitle_text_case(cues: list[SubtitleCue], text_case: str) -> list[SubtitleCue]:
+    normalized_case = str(text_case or "UPPERCASE").strip().upper()
+    if normalized_case == "ORIGINAL":
+        return cues
+
+    transform = str.lower if normalized_case == "LOWERCASE" else str.upper
+    return [
+        SubtitleCue(
+            start_seconds=cue.start_seconds,
+            end_seconds=cue.end_seconds,
+            text=transform(cue.text),
+            words=tuple(
+                SubtitleCueWord(
+                    text=transform(word.text),
+                    duration_centiseconds=word.duration_centiseconds,
+                    line_break_before=word.line_break_before,
+                )
+                for word in cue.words
+            ),
+        )
+        for cue in cues
+    ]
+
+
 def _render_srt(cues: list[SubtitleCue]) -> str:
     lines: list[str] = []
     for index, cue in enumerate(cues, start=1):
@@ -2344,20 +2681,39 @@ def _render_ass(
     normalized_position = position.strip().upper()
     alignment = 8 if normalized_position == "TOP" else 5 if normalized_position == "CENTER" else 2
     margin_v = 0 if alignment == 5 else max(120, int(round(1920 * safe_margin_percent / 100)))
-    style_line = (
+    style_lines = [(
         "Style: Default,Arial,56,&H00FFFFFF,&H0000FFFF,&H00111111,&H66000000,"
         f"1,0,0,0,100,100,0,0,1,3,0,{alignment},64,64,{margin_v},1"
-    )
+    )]
+    word_font_size = 62
     if layout_template == "PODCAST_SPOTLIGHT_9X16":
-        style_line = (
-            "Style: Default,Arial,42,&H00FFFFFF,&H006FF7C9,&H00131823,&H00000000,"
+        alignment = 2
+        margin_v = 410
+        word_font_size = 48
+        style_lines = [(
+            "Style: Default,Arial,48,&H00FFFFFF,&H006FF7C9,&H00131823,&H00000000,"
             "1,0,0,0,100,100,0,0,1,2.6,0,2,170,170,410,1"
-        )
+        )]
+        if word_highlight:
+            style_lines.append(
+                (
+                    f"Style: Highlight,Arial,{word_font_size},&H00FFFFFF,&H00FFFFFF,&H00111111,&H00000000,"
+                    "1,0,0,0,100,100,0,0,1,4,1,5,0,0,0,1"
+                )
+            )
     elif word_highlight:
-        style_line = (
-            "Style: Default,Arial,56,&H00FFFFFF,&H00C8F7A7,&H00111111,&H66000000,"
-            f"1,0,0,0,100,100,0,0,1,3,0,{alignment},64,64,{margin_v},1"
-        )
+        # Reference palette: blue #4B8FF7 and mint #7DE7C4. ASS stores
+        # colours as AABBGGRR, so the byte order below is intentionally BGR.
+        style_lines = [
+            (
+                f"Style: Default,Arial,{word_font_size},&H00FFFFFF,&H00FFFFFF,&H00111111,&H88000000,"
+                f"1,0,0,0,100,100,0,0,1,4,1,{alignment},64,64,{margin_v},1"
+            ),
+            (
+                f"Style: Highlight,Arial,{word_font_size},&H00FFFFFF,&H00FFFFFF,&H00111111,&H00000000,"
+                "1,0,0,0,100,100,0,0,1,4,1,5,0,0,0,1"
+            ),
+        ]
 
     header = [
         "[Script Info]",
@@ -2367,15 +2723,26 @@ def _render_ass(
         "",
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        style_line,
+        *style_lines,
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
-    events = [
-        f"Dialogue: 0,{_format_ass_timestamp(cue.start_seconds)},{_format_ass_timestamp(cue.end_seconds)},Default,,0,0,0,,{_render_ass_cue_text(cue, word_highlight=word_highlight)}"
-        for cue in cues
-    ]
+    events: list[str] = []
+    for cue in cues:
+        if word_highlight and cue.words:
+            events.extend(
+                _render_ass_word_highlight_events(
+                    cue,
+                    alignment=alignment,
+                    margin_v=margin_v,
+                    font_size=word_font_size,
+                )
+            )
+            continue
+        events.append(
+            f"Dialogue: 0,{_format_ass_timestamp(cue.start_seconds)},{_format_ass_timestamp(cue.end_seconds)},Default,,0,0,0,,{_render_ass_cue_text(cue, word_highlight=word_highlight)}"
+        )
     return "\n".join([*header, *events]) + "\n"
 
 
@@ -2421,6 +2788,129 @@ def _render_ass_cue_text(cue: SubtitleCue, *, word_highlight: bool) -> str:
         parts.append(" ")
 
     return "".join(parts).strip()
+
+
+def _render_ass_word_highlight_events(
+    cue: SubtitleCue,
+    *,
+    alignment: int,
+    margin_v: int,
+    font_size: int,
+) -> list[str]:
+    lines: list[list[SubtitleCueWord]] = [[]]
+    for word in cue.words:
+        if word.line_break_before and lines[-1]:
+            lines.append([])
+        lines[-1].append(word)
+    lines = [line for line in lines if line]
+    if not lines:
+        return []
+
+    line_height = max(58.0, font_size * 1.34)
+    block_height = line_height * len(lines)
+    if alignment == 8:
+        block_center_y = margin_v + (block_height / 2)
+    elif alignment == 5:
+        block_center_y = 960.0
+    else:
+        block_center_y = 1920.0 - margin_v - (block_height / 2)
+    first_line_y = block_center_y - ((len(lines) - 1) * line_height / 2)
+
+    positions: list[tuple[SubtitleCueWord, int, int, float]] = []
+    for line_index, line in enumerate(lines):
+        widths = [_estimate_ass_word_width(word.text, font_size) for word in line]
+        spacing = max(12.0, font_size * 0.32)
+        line_width = sum(widths) + (spacing * max(0, len(line) - 1))
+        cursor_x = 540.0 - (line_width / 2)
+        line_y = int(round(first_line_y + (line_index * line_height)))
+        for word, word_width in zip(line, widths, strict=True):
+            positions.append((word, int(round(cursor_x + (word_width / 2))), line_y, word_width))
+            cursor_x += word_width + spacing
+
+    events: list[str] = []
+    cue_start = _format_ass_timestamp(cue.start_seconds)
+    cue_end = _format_ass_timestamp(cue.end_seconds)
+    elapsed_seconds = 0.0
+    for word, x_position, y_position, word_width in positions:
+        positioned_text = rf"{{\an5\pos({x_position},{y_position})}}{_escape_ass_text(word.text)}"
+        events.append(f"Dialogue: 0,{cue_start},{cue_end},Default,,0,0,0,,{positioned_text}")
+
+        highlight_start = min(cue.end_seconds, cue.start_seconds + elapsed_seconds)
+        elapsed_seconds += max(1, word.duration_centiseconds) / 100.0
+        highlight_end = min(cue.end_seconds, cue.start_seconds + elapsed_seconds)
+        if highlight_end <= highlight_start:
+            continue
+        events.extend(
+            _render_ass_highlight_backplate_events(
+                start_seconds=highlight_start,
+                end_seconds=highlight_end,
+                x_position=x_position,
+                y_position=y_position,
+                word_width=word_width,
+                font_size=font_size,
+            )
+        )
+        events.append(
+            "Dialogue: 2,"
+            f"{_format_ass_timestamp(highlight_start)},{_format_ass_timestamp(highlight_end)},"
+            f"Highlight,,0,0,0,,{positioned_text}"
+        )
+    return events
+
+
+def _render_ass_highlight_backplate_events(
+    *,
+    start_seconds: float,
+    end_seconds: float,
+    x_position: int,
+    y_position: int,
+    word_width: float,
+    font_size: int,
+) -> list[str]:
+    padding_x = max(10, int(round(font_size * 0.18)))
+    plate_width = max(24, int(round(word_width)) + (padding_x * 2))
+    plate_height = max(36, int(round(font_size * 1.18)))
+    left = int(round(x_position - (plate_width / 2)))
+    top = int(round(y_position - (plate_height / 2)))
+    palette = (
+        "&H00F78F4B&",
+        "&H00F2A150&",
+        "&H00EDB355&",
+        "&H00E5C45B&",
+        "&H00DCD162&",
+        "&H00D4DC69&",
+        "&H00CCE272&",
+        "&H00C4E77D&",
+    )
+    start_timestamp = _format_ass_timestamp(start_seconds)
+    end_timestamp = _format_ass_timestamp(end_seconds)
+    events: list[str] = []
+    for index, color in enumerate(palette):
+        slice_left = int(round(index * plate_width / len(palette)))
+        slice_right = int(round((index + 1) * plate_width / len(palette)))
+        drawing = (
+            rf"{{\an7\pos({left},{top})\p1\bord0\shad0\1c{color}}}"
+            f"m {slice_left} 0 l {slice_right} 0 l {slice_right} {plate_height} "
+            f"l {slice_left} {plate_height}"
+        )
+        events.append(
+            f"Dialogue: 1,{start_timestamp},{end_timestamp},Default,,0,0,0,,{drawing}"
+        )
+    return events
+
+
+def _estimate_ass_word_width(text: str, font_size: int) -> float:
+    width_units = 0.0
+    for character in text:
+        if character in "ilI.,'`!|:;":
+            width_units += 0.30
+        elif character in "mwMW@#%&":
+            width_units += 0.86
+        elif character.isspace():
+            width_units += 0.32
+        else:
+            width_units += 0.58
+    return max(font_size * 0.55, width_units * font_size)
 
 
 def _format_srt_timestamp(seconds: float) -> str:

@@ -161,6 +161,46 @@ def deduplicate_and_rank(candidates: list[CandidateAnalysis], desired_count: int
     return selected
 
 
+def supplement_ranked_candidates(
+    primary: list[CandidateAnalysis],
+    supplemental: list[CandidateAnalysis],
+    desired_count: int,
+) -> list[CandidateAnalysis]:
+    """Preserve primary analyzer picks and fill only missing, non-duplicate slots."""
+    selected = list(primary[:desired_count])
+    ranked_supplemental = sorted(
+        supplemental,
+        key=lambda item: (
+            float(item.scores["final_viral_score"]),
+            1 if item.can_standalone else 0,
+            _retention_priority(item.retention_level),
+            -len(item.safety_notes),
+            -item.duration_seconds,
+        ),
+        reverse=True,
+    )
+    for candidate in ranked_supplemental:
+        if len(selected) >= desired_count:
+            break
+        if any(
+            _overlap_ratio(candidate, existing) > 0.6 or _text_similarity(candidate, existing) >= 0.82
+            for existing in selected
+        ):
+            continue
+        existing_ids = {item.candidate_id for item in selected}
+        if candidate.candidate_id in existing_ids:
+            base_id = f"heuristic-{candidate.candidate_id}"[:100]
+            resolved_id = base_id
+            suffix = 2
+            while resolved_id in existing_ids:
+                suffix_text = f"-{suffix}"
+                resolved_id = f"{base_id[:100 - len(suffix_text)]}{suffix_text}"
+                suffix += 1
+            candidate = candidate.model_copy(update={"candidate_id": resolved_id})
+        selected.append(candidate)
+    return selected
+
+
 def build_output_summary(candidates: list[CandidateAnalysis], *, source_summary: str | None = None) -> dict[str, object]:
     resolved_source_summary = source_summary or _build_source_summary(candidates)
     return {

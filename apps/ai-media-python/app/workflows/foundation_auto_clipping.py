@@ -74,6 +74,27 @@ def _summarize_activity_failure(error: Exception) -> str:
     return fallback or type(error).__name__
 
 
+def _external_source_user_message(failure_summary: str) -> str:
+    normalized = failure_summary.lower()
+    if "http error 403" in normalized or "403: forbidden" in normalized:
+        return (
+            "YouTube menolak permintaan download dari server. Video tidak perlu dibuka di browser terlebih dahulu. "
+            "Coba ulangi job karena akses media bertanda tangan dapat bersifat sementara. Jika tetap ditolak, upload "
+            "file videonya secara langsung. Video privat, terbatas usia, khusus member, atau yang membutuhkan login "
+            "memerlukan autentikasi YouTube yang dikonfigurasi administrator."
+        )
+    if "sign in" in normalized or "cookies" in normalized:
+        return (
+            "YouTube meminta sesi login untuk video ini. Membukanya di browser tidak membagikan sesi tersebut ke "
+            "worker. Upload file video secara langsung atau minta administrator mengonfigurasi autentikasi YouTube "
+            "untuk proses import."
+        )
+    return (
+        "The source URL could not be imported into the workspace media library. "
+        f"Technical summary: {failure_summary}"
+    )
+
+
 @workflow.defn(name="FoundationAutoClippingWorkflow")
 class FoundationAutoClippingWorkflow:
     @workflow.run
@@ -204,10 +225,7 @@ class FoundationAutoClippingWorkflow:
                             job_id=job_id,
                             stage="PROBING_MEDIA",
                             message=f"External source import failed: {failure_summary}",
-                            user_message=(
-                                "The source URL could not be imported into the workspace media library. "
-                                f"Technical summary: {failure_summary}"
-                            ),
+                            user_message=_external_source_user_message(failure_summary),
                             metadata={
                                 "phase": "AUTO_CLIPPING_MVP",
                                 "missing": "source.media_asset_id",

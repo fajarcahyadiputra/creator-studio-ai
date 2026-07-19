@@ -412,13 +412,12 @@
                             <% }) %>
                           </select>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-3" data-regenerate-crop-strategy>
                           <label class="form-label">Crop strategy</label>
                           <select class="form-select" name="crop_strategy">
-                            <option value="AUTO_REFRAME" <%= outputSummary.requestSnapshot.visual.cropStrategy === 'AUTO_REFRAME' ? 'selected' : '' %>>Auto reframe</option>
+                            <option value="SMART_SPEAKER" <%= ['SMART_SPEAKER','ACTIVE_SPEAKER','SPLIT_SCREEN'].includes(outputSummary.requestSnapshot.visual.cropStrategy) ? 'selected' : '' %>>Smart speaker - adaptif 1-4 wajah</option>
+                            <option value="AUTO_REFRAME" <%= outputSummary.requestSnapshot.visual.cropStrategy === 'AUTO_REFRAME' ? 'selected' : '' %>>Auto reframe umum</option>
                             <option value="FACE_TRACKING" <%= outputSummary.requestSnapshot.visual.cropStrategy === 'FACE_TRACKING' ? 'selected' : '' %>>Face tracking</option>
-                            <option value="ACTIVE_SPEAKER" <%= outputSummary.requestSnapshot.visual.cropStrategy === 'ACTIVE_SPEAKER' ? 'selected' : '' %>>Active speaker</option>
-                            <option value="SPLIT_SCREEN" <%= outputSummary.requestSnapshot.visual.cropStrategy === 'SPLIT_SCREEN' ? 'selected' : '' %>>Split screen</option>
                             <option value="CENTER" <%= outputSummary.requestSnapshot.visual.cropStrategy === 'CENTER' ? 'selected' : '' %>>Center crop</option>
                             <option value="SPEAKER_AND_SCREEN" <%= outputSummary.requestSnapshot.visual.cropStrategy === 'SPEAKER_AND_SCREEN' ? 'selected' : '' %>>Speaker and screen</option>
                           </select>
@@ -435,7 +434,7 @@
                           <div>
                             <input type="hidden" name="headline_overlay_enabled" value="false">
                             <input class="form-check-input" type="checkbox" name="headline_overlay_enabled" id="headline_overlay_enabled_regenerate" <%= outputSummary.requestSnapshot.visual.headlineOverlayEnabled !== false ? 'checked' : '' %>>
-                            <label class="form-check-label" for="headline_overlay_enabled_regenerate">Tampilkan headline</label>
+                            <label class="form-check-label" for="headline_overlay_enabled_regenerate">Tampilkan headline pembuka</label>
                           </div>
                         </div>
                         <div class="col-md-3" data-regenerate-standard-headline>
@@ -453,12 +452,7 @@
                             <% }) %>
                           </select>
                         </div>
-                        <div class="col-md-3 form-check d-flex align-items-end">
-                          <div>
-                            <input class="form-check-input" type="checkbox" name="split_on_multi_face" id="split_on_multi_face_regenerate" <%= outputSummary.requestSnapshot.visual.splitOnMultiFace !== false ? 'checked' : '' %>>
-                            <label class="form-check-label" for="split_on_multi_face_regenerate">Auto split on multi-face</label>
-                          </div>
-                        </div>
+                        <input type="hidden" name="split_on_multi_face" value="on">
                         <div class="col-md-3">
                           <label class="form-label">Subtitle max lines</label>
                           <input class="form-control" name="subtitle_max_lines" type="number" min="1" max="4" step="1" value="<%= outputSummary.requestSnapshot.subtitle.maxLines ?? '' %>">
@@ -474,7 +468,7 @@
                         <div class="col-md-3">
                           <label class="form-label">Subtitle style</label>
                           <select class="form-select" name="subtitle_style">
-                            <option value="PODCAST_HIGHLIGHT" <%= outputSummary.requestSnapshot.subtitle.style === 'PODCAST_HIGHLIGHT' || !outputSummary.requestSnapshot.subtitle.style ? 'selected' : '' %>>Podcast Highlight - default highlight per kata</option>
+                            <option value="PODCAST_HIGHLIGHT" <%= outputSummary.requestSnapshot.subtitle.style === 'PODCAST_HIGHLIGHT' || !outputSummary.requestSnapshot.subtitle.style ? 'selected' : '' %>>Highlight per kata - biru/mint (default)</option>
                             <option value="DEFAULT" <%= outputSummary.requestSnapshot.subtitle.style === 'DEFAULT' ? 'selected' : '' %>>Default clean</option>
                             <option value="BOLD_KINETIC" <%= outputSummary.requestSnapshot.subtitle.style === 'BOLD_KINETIC' ? 'selected' : '' %>>Bold kinetic</option>
                             <option value="CLEAN_MINIMAL" <%= outputSummary.requestSnapshot.subtitle.style === 'CLEAN_MINIMAL' ? 'selected' : '' %>>Clean minimal</option>
@@ -482,6 +476,14 @@
                             <option value="CINEMATIC_QUOTE" <%= outputSummary.requestSnapshot.subtitle.style === 'CINEMATIC_QUOTE' ? 'selected' : '' %>>Cinematic quote</option>
                           </select>
                           <div class="form-text">Highlight per kata otomatis ikut style subtitle.</div>
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label">Format huruf subtitle</label>
+                          <select class="form-select" name="subtitle_text_case">
+                            <% [['UPPERCASE','HURUF BESAR (default)'],['LOWERCASE','huruf kecil'],['ORIGINAL','Sesuai transcript asli']].forEach(([value, label]) => { %>
+                              <option value="<%= value %>" <%= (outputSummary.requestSnapshot.subtitle.textCase ?? 'UPPERCASE') === value ? 'selected' : '' %>><%= label %></option>
+                            <% }) %>
+                          </select>
                         </div>
                         <div class="col-md-3 form-check d-flex align-items-end">
                           <div>
@@ -650,10 +652,7 @@
                             <% }) %>
                           </select>
                         </div>
-                        <div class="col-md-4">
-                          <label class="form-label">Split min face count</label>
-                          <input class="form-control" name="split_min_face_count" type="number" min="1" max="6" step="1" value="<%= outputSummary.requestSnapshot.visual.splitMinFaceCount ?? 2 %>">
-                        </div>
+                        <input type="hidden" name="split_min_face_count" value="2">
                         <div class="col-md-4">
                           <label class="form-label">Subtitle language</label>
                           <input class="form-control" name="subtitle_language" value="<%= outputSummary.requestSnapshot.subtitle.language ?? 'id' %>" required>
@@ -958,12 +957,19 @@
           <article class="analyzer-card"><span>Model</span><strong><%= outputSummary.analyzer?.modelLabel ?? outputSummary.analyzer?.model ?? '-' %></strong></article>
           <article class="analyzer-card"><span>Prompt version</span><strong><%= outputSummary.analyzer?.promptVersion ?? '-' %></strong></article>
           <article class="analyzer-card"><span>Latency</span><strong><%= outputSummary.analyzer?.latencyMs ? `${outputSummary.analyzer.latencyMs} ms` : '-' %></strong></article>
+          <article class="analyzer-card"><span>Candidate sources</span><strong><%= outputSummary.analyzer?.openaiCandidateCount ?? 0 %> OpenAI</strong><p><%= outputSummary.analyzer?.heuristicCandidateCount ?? 0 %> tambahan Python heuristic</p></article>
           <article class="analyzer-card"><span>Attempted AI path</span><strong><%= outputSummary.analyzer?.attemptedProviderLabel ?? '-' %></strong><p><%= outputSummary.analyzer?.attemptedModelLabel ?? 'Tidak ada percobaan provider eksternal.' %></p></article>
         </div>
         <% if (outputSummary.analyzer?.fallbackReason) { %>
           <div class="candidate-caption-box mt-3">
             <strong>Fallback note</strong>
             <p><%= outputSummary.analyzer.fallbackReason %></p>
+          </div>
+        <% } %>
+        <% if (!outputSummary.analyzer?.fallbackReason && outputSummary.analyzer?.fallbackTrigger === 'insufficient_candidates') { %>
+          <div class="candidate-caption-box mt-3">
+            <strong>Hasil hybrid digunakan</strong>
+            <p>OpenAI memberi kandidat valid lebih sedikit dari target. Kandidat OpenAI dipertahankan dan slot yang kurang dilengkapi oleh Python heuristic.</p>
           </div>
         <% } %>
       </section>
@@ -1041,6 +1047,7 @@
                 <strong><%= snapshotSubtitle.language ?? '-' %></strong>
                 <p>
                   <%= displayAutoClipLabel(subtitleStyleLabels, snapshotSubtitle.style ?? 'PODCAST_HIGHLIGHT') %>
+                  &middot; <%= snapshotSubtitle.textCase === 'LOWERCASE' ? 'huruf kecil' : snapshotSubtitle.textCase === 'ORIGINAL' ? 'sesuai transcript' : 'HURUF BESAR' %>
                   <% if (subtitleExportFormats.length) { %>
                     · <%= subtitleExportFormats.join(', ') %>
                   <% } %>
@@ -1173,9 +1180,9 @@
                     <% if (output.validationStatus) { %><span>Validation <%= output.validationStatus %></span><% } %>
                     <% if (output.cropStrategy) { %><span><%= displayAutoClipLabel(cropStrategyLabels, output.cropStrategy) %></span><% } %>
                     <% if (output.framingDetectionMode) { %><span><%= displayAutoClipLabel(framingModeLabels, output.framingDetectionMode) %></span><% } %>
-                    <% if (output.splitFrameEnabled === true) { %><span>Split frame on</span><% } %>
-                    <% if (output.splitFrameEnabled === false) { %><span>Split frame off</span><% } %>
-                    <% if (typeof output.detectedFaceCount === 'number') { %><span>Faces <%= output.detectedFaceCount %></span><% } %>
+                    <% if (output.splitFrameEnabled === true) { %><span>Split pembicara aktif</span><% } %>
+                    <% if (output.splitFrameEnabled === false) { %><span>Single speaker frame</span><% } %>
+                    <% if (typeof output.activeSpeakerCount === 'number') { %><span>Pembicara aktif <%= output.activeSpeakerCount %></span><% } %>
                   </div>
                   <div class="clip-output-action-groups">
                     <div class="clip-output-action-group">
@@ -1279,29 +1286,25 @@
                       <% } else { %>
                         Mode split belum tercatat
                       <% } %>
-                      <% if (typeof output.splitMinFaceCount === 'number') { %>
-                        | Min face <%= output.splitMinFaceCount %>
-                      <% } %>
+                      | Split hanya aktif saat minimal 2 pembicara aktif terkonfirmasi
                     </p>
                   </article>
                   <article class="clip-output-review-card">
-                    <span>Face layout</span>
+                    <span>Active speaker layout</span>
                     <strong>
-                      <% if (typeof output.detectedFaceCount === 'number') { %>
-                        <%= output.detectedFaceCount %> face
+                      <% if (typeof output.activeSpeakerCount === 'number') { %>
+                        <%= output.activeSpeakerCount %> pembicara aktif
                       <% } else { %>
                         Unknown
                       <% } %>
                     </strong>
                     <p>
-                      <% if (typeof output.averageFaceCount === 'number') { %>
-                        Avg <%= output.averageFaceCount.toFixed(1) %>
-                      <% } %>
+                      <% if (output.activeSpeakerSource) { %>Source <%= output.activeSpeakerSource %><% } %>
                       <% if (output.singleFaceAnchor) { %>
-                        <%= typeof output.averageFaceCount === 'number' ? ' | ' : '' %>Anchor <%= output.singleFaceAnchor %>
+                        <%= output.activeSpeakerSource ? ' | ' : '' %>Anchor <%= output.singleFaceAnchor %>
                       <% } %>
                       <% if (output.splitFrameSupported === true) { %>
-                        <%= (typeof output.averageFaceCount === 'number' || output.singleFaceAnchor) ? ' | ' : '' %>Split supported
+                        <%= (output.activeSpeakerSource || output.singleFaceAnchor) ? ' | ' : '' %>Multi-speaker confirmed
                       <% } %>
                     </p>
                   </article>

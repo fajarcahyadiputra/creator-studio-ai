@@ -11,6 +11,17 @@ function booleanField(defaultValue = false) {
   }, z.boolean().default(defaultValue));
 }
 
+const standalonePriorityField = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim();
+  const aliases: Record<string, "REQUIRED" | "PREFERRED" | "FLEXIBLE"> = {
+    "Harus mandiri": "REQUIRED",
+    "Diutamakan mandiri": "PREFERRED",
+    Fleksibel: "FLEXIBLE"
+  };
+  return aliases[normalized] ?? normalized.toUpperCase();
+}, z.enum(["REQUIRED", "PREFERRED", "FLEXIBLE"]).default("PREFERRED"));
+
 function optionalText(maxLength: number) {
   return z
     .string()
@@ -129,7 +140,7 @@ export const autoClipJobSchema = z.object({
     packaging_brief: z.string().trim().max(12000).optional(),
     hook_style: z.string().trim().max(80).optional(),
     cta_preference: z.string().trim().max(120).optional(),
-    standalone_priority: z.enum(["REQUIRED", "PREFERRED", "FLEXIBLE"]).default("PREFERRED"),
+    standalone_priority: standalonePriorityField,
     require_spoken_audio: z.boolean().default(true),
     profanity_handling: z.enum(["KEEP", "MUTE", "BLEEP", "SUBTITLE_CENSOR"]).default("KEEP"),
     remove_long_silence: z.boolean().default(true),
@@ -141,7 +152,7 @@ export const autoClipJobSchema = z.object({
   }),
   visual: z.object({
     aspect_ratio: z.enum(["9:16", "1:1", "4:5", "16:9", "CUSTOM"]),
-    crop_strategy: z.enum(["CENTER", "ACTIVE_SPEAKER", "FACE_TRACKING", "AUTO_REFRAME", "SPLIT_SCREEN", "SPEAKER_AND_SCREEN", "BLURRED_BACKGROUND", "MANUAL"]),
+    crop_strategy: z.enum(["CENTER", "SMART_SPEAKER", "ACTIVE_SPEAKER", "FACE_TRACKING", "AUTO_REFRAME", "SPLIT_SCREEN", "SPEAKER_AND_SCREEN", "BLURRED_BACKGROUND", "MANUAL"]),
     settings: z.record(z.string(), z.unknown()).default({})
   }),
   subtitle: z.object({
@@ -154,11 +165,12 @@ export const autoClipJobSchema = z.object({
       style: z.string().trim().max(80).optional(),
       font_family: z.string().trim().max(120).optional(),
       position: z.enum(["TOP", "CENTER", "BOTTOM"]).optional(),
+      text_case: z.enum(["UPPERCASE", "LOWERCASE", "ORIGINAL"]).default("UPPERCASE"),
       max_lines: z.number().int().min(1).max(4).optional(),
       safe_margin_percent: z.number().min(0).max(30).optional(),
       word_highlight: z.boolean().optional(),
       profanity_censor: z.boolean().optional()
-    }).catchall(z.unknown()).default({})
+    }).catchall(z.unknown()).default({ text_case: "UPPERCASE" })
   }),
   ai: z.object({
     credential_mode: z.enum(["PLATFORM", "USER_OWNED"]),
@@ -243,13 +255,13 @@ export const regenerateAutoClipJobSchema = z
     packaging_brief: optionalText(12000),
     hook_style: optionalText(80),
     cta_preference: optionalText(120),
-    standalone_priority: z.enum(["REQUIRED", "PREFERRED", "FLEXIBLE"]).default("PREFERRED"),
+    standalone_priority: standalonePriorityField,
     require_spoken_audio: booleanField(true),
     profanity_handling: z.enum(["KEEP", "MUTE", "BLEEP", "SUBTITLE_CENSOR"]).default("KEEP"),
     remove_long_silence: booleanField(true),
     remove_filler_words: booleanField(false),
     aspect_ratio: z.enum(["9:16", "1:1", "4:5", "16:9", "CUSTOM"]),
-    crop_strategy: z.enum(["CENTER", "ACTIVE_SPEAKER", "FACE_TRACKING", "AUTO_REFRAME", "SPLIT_SCREEN", "SPEAKER_AND_SCREEN", "BLURRED_BACKGROUND", "MANUAL"]),
+    crop_strategy: z.enum(["CENTER", "SMART_SPEAKER", "ACTIVE_SPEAKER", "FACE_TRACKING", "AUTO_REFRAME", "SPLIT_SCREEN", "SPEAKER_AND_SCREEN", "BLURRED_BACKGROUND", "MANUAL"]),
     layout_template: z.enum(["STANDARD", "PODCAST_SPOTLIGHT_9X16"]).default("STANDARD"),
     headline_overlay_enabled: booleanField(true),
     headline_overlay_position: z.enum(["TOP", "BOTTOM"]).default("BOTTOM"),
@@ -264,6 +276,7 @@ export const regenerateAutoClipJobSchema = z
     subtitle_style: optionalText(80),
     subtitle_font_family: optionalText(120),
     subtitle_position: z.enum(["TOP", "CENTER", "BOTTOM"]).optional(),
+    subtitle_text_case: z.enum(["UPPERCASE", "LOWERCASE", "ORIGINAL"]).default("UPPERCASE"),
     subtitle_max_lines: optionalInteger(1, 4),
     subtitle_safe_margin_percent: optionalNumber(0, 30),
     subtitle_profanity_censor: booleanField(false)

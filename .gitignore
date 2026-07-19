@@ -20,3 +20,5 @@ storage/
 tmp/
 .tmp/
 model_tts
+model_face
+graphify-out

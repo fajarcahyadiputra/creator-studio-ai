@@ -211,6 +211,7 @@ services:
     env_file: .env
     volumes:
       - ./model_tts:/models/tts:ro
+      - ./model_face:/models/face:ro
     depends_on:
       temporal:
         condition: service_healthy
@@ -239,6 +240,7 @@ services:
     env_file: .env
     volumes:
       - ./model_tts:/models/tts:ro
+      - ./model_face:/models/face:ro
     command:
       ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:

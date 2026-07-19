@@ -15,6 +15,7 @@ from app.domain.auto_clip_pipeline import (
     deduplicate_and_rank,
     normalize_candidates,
     PipelineConfig,
+    supplement_ranked_candidates,
 )
 from app.domain.contracts import AnalysisInputs, CandidateAnalysis
 from app.domain.phase2_prompting import (
@@ -62,8 +63,9 @@ async def analyze_phase2_candidates_with_fallback(
     fallback_trigger: str | None = None
 
     if configured_mode == "openai_then_heuristic":
+        openai_summary: dict[str, Any] | None = None
         try:
-            summary, usage, provider_request_id = await _run_openai_analysis(
+            openai_summary, usage, provider_request_id = await _run_openai_analysis(
                 provider=provider,
                 provider_code=provider_code,
                 model_identifier=model_identifier,
@@ -73,10 +75,10 @@ async def analyze_phase2_candidates_with_fallback(
                 analysis_inputs=analysis_inputs,
                 config=config,
             )
-            accepted, rejection_reason = _should_accept_summary(summary, config)
+            accepted, rejection_reason = _should_accept_summary(openai_summary, config)
             if accepted:
                 return _finalize_summary(
-                    summary=summary,
+                    summary=openai_summary,
                     analysis_mode="openai",
                     configured_mode=configured_mode,
                     prompt_version=AUTO_CLIP_ANALYZER_PROMPT_VERSION,
@@ -91,6 +93,7 @@ async def analyze_phase2_candidates_with_fallback(
                     analysis_inputs=analysis_inputs,
                     fallback_reason=None,
                     fallback_trigger=None,
+                    candidate_source_counts={"openai": int(openai_summary["candidate_count"]), "heuristic": 0},
                 )
             fallback_trigger = rejection_reason
         except Exception as error:
@@ -109,7 +112,36 @@ async def analyze_phase2_candidates_with_fallback(
             )
             fallback_trigger = fallback_trigger or "openai_failed"
 
-        summary = _run_heuristic_analysis(analysis_inputs, config)
+        heuristic_summary = _run_heuristic_analysis(analysis_inputs, config)
+        if openai_summary is not None and int(openai_summary.get("candidate_count", 0)) > 0:
+            summary, supplemental_count = _supplement_openai_summary(
+                openai_summary=openai_summary,
+                heuristic_summary=heuristic_summary,
+                config=config,
+            )
+            return _finalize_summary(
+                summary=summary,
+                analysis_mode="hybrid" if supplemental_count > 0 else "openai",
+                configured_mode=configured_mode,
+                prompt_version=AUTO_CLIP_ANALYZER_PROMPT_VERSION,
+                provider=provider_code,
+                model=model_identifier,
+                attempted_provider=provider_code,
+                attempted_model=model_identifier,
+                request_id=request_id,
+                provider_request_id=provider_request_id,
+                usage=usage,
+                latency_ms=round((perf_counter() - started) * 1000, 2),
+                analysis_inputs=analysis_inputs,
+                fallback_reason=None,
+                fallback_trigger=fallback_trigger,
+                candidate_source_counts={
+                    "openai": int(openai_summary["candidate_count"]),
+                    "heuristic": supplemental_count,
+                },
+            )
+
+        summary = heuristic_summary
         return _finalize_summary(
             summary=summary,
             analysis_mode="heuristic",
@@ -126,6 +158,7 @@ async def analyze_phase2_candidates_with_fallback(
             analysis_inputs=analysis_inputs,
             fallback_reason=fallback_reason,
             fallback_trigger=fallback_trigger,
+            candidate_source_counts={"openai": 0, "heuristic": int(summary["candidate_count"])},
         )
 
     summary = _run_heuristic_analysis(analysis_inputs, config)
@@ -159,6 +192,7 @@ async def analyze_phase2_candidates_with_fallback(
                 analysis_inputs=analysis_inputs,
                 fallback_reason=None,
                 fallback_trigger=fallback_trigger,
+                candidate_source_counts={"openai": int(summary["candidate_count"]), "heuristic": 0},
             )
         except Exception as error:
             fallback_reason = type(error).__name__
@@ -189,6 +223,7 @@ async def analyze_phase2_candidates_with_fallback(
         analysis_inputs=analysis_inputs,
         fallback_reason=fallback_reason,
         fallback_trigger=fallback_trigger,
+        candidate_source_counts={"openai": 0, "heuristic": int(summary["candidate_count"])},
     )
 
 
@@ -247,6 +282,7 @@ def _finalize_summary(
     analysis_inputs: AnalysisInputs,
     fallback_reason: str | None,
     fallback_trigger: str | None,
+    candidate_source_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     analyzer_metadata = {
         "analysis_mode": analysis_mode,
@@ -266,6 +302,7 @@ def _finalize_summary(
         "input_silence_count": len(analysis_inputs.silences),
         "fallback_reason": fallback_reason,
         "fallback_trigger": fallback_trigger,
+        "candidate_source_counts": candidate_source_counts or {},
     }
     summary["analysis_version"] = "2.4"
     summary["analyzer"] = analyzer_metadata
@@ -285,6 +322,7 @@ def _finalize_summary(
             "token_usage": usage,
             "fallback_reason": fallback_reason,
             "fallback_trigger": fallback_trigger,
+            "candidate_source_counts": candidate_source_counts or {},
         },
     )
     return summary
@@ -413,6 +451,23 @@ def _coerce_float(value: Any) -> float | None:
 def _run_heuristic_analysis(analysis_inputs: AnalysisInputs, config: PipelineConfig) -> dict[str, Any]:
     candidates = build_candidate_analyses(analysis_inputs, config)
     return build_output_summary(candidates)
+
+
+def _supplement_openai_summary(
+    *,
+    openai_summary: dict[str, Any],
+    heuristic_summary: dict[str, Any],
+    config: PipelineConfig,
+) -> tuple[dict[str, Any], int]:
+    openai_candidates = [CandidateAnalysis.model_validate(item) for item in openai_summary.get("candidates", [])]
+    heuristic_candidates = [CandidateAnalysis.model_validate(item) for item in heuristic_summary.get("candidates", [])]
+    merged = supplement_ranked_candidates(
+        openai_candidates,
+        heuristic_candidates,
+        config.candidate_pool_count,
+    )
+    supplemental_count = max(0, len(merged) - len(openai_candidates))
+    return build_output_summary(merged, source_summary=str(openai_summary.get("source_summary") or "")), supplemental_count
 
 
 def _should_accept_summary(summary: dict[str, Any], config: PipelineConfig) -> tuple[bool, str | None]:

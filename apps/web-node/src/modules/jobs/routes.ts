@@ -25,6 +25,7 @@ function resolveRequestOrigin(request: { protocol: string; get(name: string): st
 function normalizeAnalyzerModeLabel(mode: string | null) {
   if (!mode) return null;
   if (mode === "heuristic") return "Heuristic only (Python local)";
+  if (mode === "hybrid") return "Hybrid (OpenAI + Python heuristic)";
   if (mode === "heuristic_then_openai") return "Heuristic + OpenAI";
   if (mode === "openai_then_heuristic") return "OpenAI + heuristic";
   return mode;
