@@ -305,6 +305,7 @@ class ClipRenderSourceMedia(BaseModel):
     duration_ms: str | None = Field(default=None, pattern=r"^\d+$")
     width: int | None = Field(default=None, ge=1)
     height: int | None = Field(default=None, ge=1)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ClipRenderSubtitleWindow(BaseModel):

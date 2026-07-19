@@ -222,6 +222,10 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
                 "minimum_video_height": 480 if target_video_height >= 720 else target_video_height,
                 "extractor": info.get("extractor"),
                 "webpage_url": info.get("webpage_url") or source_url,
+                "source_title": info.get("title"),
+                "source_channel_name": info.get("channel") or info.get("uploader") or info.get("creator"),
+                "source_channel_id": info.get("channel_id") or info.get("uploader_id"),
+                "source_uploader": info.get("uploader"),
             },
         )
 

@@ -7,6 +7,7 @@ from app.application.phase2_candidate_analyzer import (
     load_clip_analyzer_schema,
 )
 from app.domain.auto_clip_pipeline import (
+    _apply_natural_tail_padding,
     build_candidate_analyses,
     build_output_summary,
     build_pipeline_config,
@@ -14,8 +15,35 @@ from app.domain.auto_clip_pipeline import (
     normalize_candidates,
 )
 from app.domain.auto_clip_stages import compute_overall_progress
-from app.domain.contracts import AnalysisInputs, CandidateAnalysis
+from app.domain.contracts import AnalysisInputs, CandidateAnalysis, TranscriptSegment
 from app.providers.base import ProviderRequestContext, StructuredOutputProvider
+
+
+def test_natural_tail_padding_uses_silence_without_leaking_next_topic() -> None:
+    segments = [
+        TranscriptSegment(
+            segment_id="payoff",
+            start_seconds=0.0,
+            end_seconds=8.0,
+            text="Makanya keputusan besar sebaiknya menunggu emosi turun.",
+        ),
+        TranscriptSegment(
+            segment_id="new-topic",
+            start_seconds=8.35,
+            end_seconds=12.0,
+            text="Sekarang kita pindah ke topik berikutnya.",
+        ),
+    ]
+
+    padded_end = _apply_natural_tail_padding(
+        start_seconds=0.0,
+        end_seconds=8.0,
+        ending_text=segments[0].text,
+        transcript_segments=segments,
+        maximum_duration_seconds=30.0,
+    )
+
+    assert padded_end == 8.35
 
 
 def analysis_inputs() -> AnalysisInputs:

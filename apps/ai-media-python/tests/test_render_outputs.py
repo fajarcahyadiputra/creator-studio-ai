@@ -9,12 +9,17 @@ from app.activities.render_outputs import (
     _attach_speaker_anchor_map,
     _apply_subtitle_text_case,
     _build_active_speaker_strategy,
+    _build_layout_options,
+    _build_speech_activity_evidence,
     _build_subtitle_cues,
     _detect_face_layout_summary,
     _estimate_ass_word_width,
     _render_ass,
     _resolve_ass_word_spacing,
     _run_command_with_heartbeat,
+    _select_full_display_title,
+    _suppress_subtitle_cues_before,
+    _wrap_full_overlay_text,
     execute_clip_output_render,
 )
 from app.domain.contracts import TranscriptSegment, TranscriptWord
@@ -190,6 +195,87 @@ def test_active_speaker_strategy_declares_face_tracking_fallback_without_diariza
     assert strategy["available"] is False
     assert strategy["source"] == "face_tracking_fallback"
     assert strategy["windows"] == []
+
+
+def test_speech_activity_evidence_does_not_split_visible_faces_without_diarization() -> None:
+    evidence = _build_speech_activity_evidence(
+        [
+            TranscriptSegment(
+                segment_id="segment-1",
+                start_seconds=10.0,
+                end_seconds=13.0,
+                text="Satu suara tanpa label pembicara",
+            )
+        ],
+        clip_start_seconds=10.0,
+        clip_duration_seconds=3.0,
+    )
+
+    assert evidence["source"] == "transcript_word_vad"
+    assert evidence["speaker_count"] == 0
+    assert evidence["overlap_windows"] == []
+
+
+def test_speech_activity_evidence_requires_700ms_diarized_overlap_for_split() -> None:
+    evidence = _build_speech_activity_evidence(
+        [
+            TranscriptSegment(
+                segment_id="speaker-a",
+                start_seconds=20.0,
+                end_seconds=22.0,
+                text="Pembicara A",
+                speaker_label="A",
+            ),
+            TranscriptSegment(
+                segment_id="speaker-b",
+                start_seconds=21.1,
+                end_seconds=23.0,
+                text="Pembicara B menyela",
+                speaker_label="B",
+            ),
+        ],
+        clip_start_seconds=20.0,
+        clip_duration_seconds=3.0,
+    )
+
+    assert evidence["speaker_count"] == 2
+    assert evidence["overlap_windows"] == [
+        {
+            "start_seconds": 1.1,
+            "end_seconds": 2.0,
+            "speaker_count": 2,
+            "speaker_labels": ["A", "B"],
+        }
+    ]
+
+
+def test_speech_activity_evidence_marks_fast_sustained_turn_taking() -> None:
+    evidence = _build_speech_activity_evidence(
+        [
+            TranscriptSegment(
+                segment_id="speaker-a",
+                start_seconds=10.0,
+                end_seconds=11.0,
+                text="Pembicara A menyelesaikan satu gagasan.",
+                speaker_label="A",
+            ),
+            TranscriptSegment(
+                segment_id="speaker-b",
+                start_seconds=11.2,
+                end_seconds=12.4,
+                text="Pembicara B langsung merespons.",
+                speaker_label="B",
+            ),
+        ],
+        clip_start_seconds=10.0,
+        clip_duration_seconds=3.0,
+    )
+
+    assert evidence["overlap_windows"] == []
+    assert len(evidence["conversation_windows"]) == 1
+    assert evidence["conversation_windows"][0]["start_seconds"] == 0.0
+    assert evidence["conversation_windows"][0]["end_seconds"] == pytest.approx(2.4)
+    assert evidence["conversation_windows"][0]["speaker_labels"] == ["A", "B"]
 
 
 @pytest.mark.asyncio
@@ -571,6 +657,159 @@ def test_apply_subtitle_text_case_preserves_word_timing_and_line_breaks() -> Non
     assert uppercase[0].words[1].line_break_before is True
     assert uppercase[0].words[1].duration_centiseconds == 40
     assert lowercase[0].text == "perbatasan jawa"
+
+
+def test_standard_headline_uses_complete_candidate_title_without_truncation() -> None:
+    candidate = type(
+        "Candidate",
+        (),
+        {
+            "title": "Ginjal Ternyata Memiliki Enam Tugas Penting yang Jarang Diketahui Banyak Orang",
+            "hook_text": "Ginjal punya enam tugas",
+            "summary": "Ringkasan kandidat",
+        },
+    )()
+
+    headline = _select_full_display_title(candidate, {"thumbnail_text": "Judul thumbnail"})
+
+    assert headline == "GINJAL TERNYATA MEMILIKI ENAM TUGAS PENTING YANG JARANG DIKETAHUI BANYAK ORANG"
+
+
+def test_standard_headline_wrap_preserves_every_word_without_ellipsis() -> None:
+    headline = "GINJAL TERNYATA MEMILIKI ENAM TUGAS PENTING YANG JARANG DIKETAHUI BANYAK ORANG"
+
+    wrapped = _wrap_full_overlay_text(headline, max_chars=22, max_lines=4)
+
+    assert len(wrapped.splitlines()) <= 4
+    assert wrapped.replace("\n", " ") == headline
+    assert "..." not in wrapped
+
+
+def test_standard_headline_suppresses_only_opening_burned_in_subtitle() -> None:
+    cues = [
+        SubtitleCue(
+            start_seconds=0.0,
+            end_seconds=4.0,
+            text="HEADLINE TIDAK BOLEH BERTABRAKAN DENGAN SUBTITLE",
+            words=(
+                SubtitleCueWord(text="HEADLINE", duration_centiseconds=100),
+                SubtitleCueWord(text="TIDAK", duration_centiseconds=100),
+                SubtitleCueWord(text="BOLEH", duration_centiseconds=100),
+                SubtitleCueWord(text="BERTABRAKAN", duration_centiseconds=50),
+                SubtitleCueWord(text="DENGAN", duration_centiseconds=25),
+                SubtitleCueWord(text="SUBTITLE", duration_centiseconds=25),
+            ),
+        ),
+        SubtitleCue(start_seconds=4.2, end_seconds=6.0, text="SUBTITLE BERIKUTNYA"),
+    ]
+
+    adjusted = _suppress_subtitle_cues_before(cues, 3.0)
+
+    assert adjusted[0].start_seconds == 3.0
+    assert adjusted[0].text == "BERTABRAKAN DENGAN SUBTITLE"
+    assert adjusted[1] == cues[1]
+
+
+def test_opening_headline_defaults_on_only_for_standard_portrait_layout(tmp_path) -> None:
+    candidate = type(
+        "Candidate",
+        (),
+        {
+            "start_ms": 0,
+            "duration_ms": 30_000,
+            "title": "Judul lengkap tetap tampil tanpa ada kata yang dibuang dari headline",
+            "hook_text": "Hook",
+            "summary": "Summary",
+        },
+    )()
+    common = {
+        "layout_template": None,
+        "render_settings": {"visual": {"settings": {}}},
+        "candidate": candidate,
+        "metadata": {},
+        "transcript_segments": [],
+        "face_layout_summary": {},
+        "working_directory": tmp_path,
+        "channel_name_path": tmp_path / "channel.txt",
+        "channel_tagline_path": tmp_path / "tagline.txt",
+        "headline_path": tmp_path / "headline.txt",
+        "quote_path": tmp_path / "quote.txt",
+        "source_label_path": tmp_path / "source.txt",
+    }
+
+    portrait = _build_layout_options(aspect_ratio="9:16", **common)
+    landscape = _build_layout_options(aspect_ratio="16:9", **common)
+
+    assert portrait["standard_headline_enabled"] is True
+    headline_text = " ".join(Path(path).read_text(encoding="utf-8") for path in portrait["standard_headline_files"])
+    assert headline_text == candidate.title.upper()
+    assert "standard_headline_enabled" not in landscape
+
+
+def test_podcast_spotlight_uses_source_channel_metadata_and_honors_source_toggle(tmp_path) -> None:
+    candidate = type(
+        "Candidate",
+        (),
+        {
+            "start_ms": 0,
+            "duration_ms": 30_000,
+            "title": "Algoritma bikin stres meledak",
+            "hook_text": "Hook",
+            "summary": "Summary",
+        },
+    )()
+    paths = {
+        "channel_name_path": tmp_path / "channel.txt",
+        "channel_tagline_path": tmp_path / "tagline.txt",
+        "headline_path": tmp_path / "headline.txt",
+        "quote_path": tmp_path / "quote.txt",
+        "source_label_path": tmp_path / "source.txt",
+    }
+    common = {
+        "aspect_ratio": "9:16",
+        "layout_template": "PODCAST_SPOTLIGHT_9X16",
+        "candidate": candidate,
+        "metadata": {},
+        "source_media_metadata": {"source_channel_name": "Podcast Sumber Asli"},
+        "transcript_segments": [],
+        "face_layout_summary": {},
+        "working_directory": tmp_path,
+        **paths,
+    }
+
+    visible = _build_layout_options(
+        render_settings={
+            "visual": {
+                "settings": {
+                    "podcast_source_enabled": True,
+                    "podcast_spotlight_style": "VIDEO_FIRST",
+                    "branding": {"channel_name": "Brand User", "channel_tagline": "Tagline"},
+                }
+            }
+        },
+        **common,
+    )
+
+    assert visible["show_source_label"] is True
+    assert visible["podcast_spotlight_style"] == "VIDEO_FIRST"
+    assert paths["source_label_path"].read_text(encoding="utf-8") == "Source: Podcast Sumber Asli"
+
+    paths["source_label_path"].unlink()
+    hidden = _build_layout_options(
+        render_settings={
+            "visual": {
+                "settings": {
+                    "podcast_source_enabled": False,
+                    "branding": {"channel_name": "Brand User"},
+                }
+            }
+        },
+        **common,
+    )
+
+    assert hidden["show_source_label"] is False
+    assert "source_label_file" not in hidden
+    assert not paths["source_label_path"].exists()
 
 
 def test_render_ass_honors_top_and_safe_bottom_positions() -> None:

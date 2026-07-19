@@ -14,11 +14,40 @@ from app.media.ffmpeg import (
     summarize_ffprobe_payload,
 )
 from app.media.face_detection import (
+    _annotate_conversation_layout_samples,
+    _apply_active_tracking_quality_gate,
+    _content_density_score,
     _stabilize_active_face_samples,
     apply_active_speaker_tracking,
     detect_faces_in_image,
     summarize_face_samples,
 )
+
+
+def test_content_density_detects_text_like_horizontal_bands() -> None:
+    blank = np.zeros((360, 640), dtype=np.uint8)
+    text_like = blank.copy()
+    for y in range(60, 300, 40):
+        text_like[y : y + 5, 80:560] = 255
+
+    assert _content_density_score(blank) == 0.0
+    assert _content_density_score(text_like) >= 0.08
+
+
+def test_content_aware_layout_preserves_full_horizontal_frame() -> None:
+    graph = build_clip_filter_graph(
+        source_width=1920,
+        source_height=1080,
+        target_width=1080,
+        target_height=1920,
+        fps=30,
+        crop_strategy="SMART_SPEAKER",
+        layout_options={"content_aware_layout": True},
+    )
+
+    assert "force_original_aspect_ratio=decrease" in graph
+    assert "pad=1080:1920" in graph
+    assert "crop=" not in graph
 
 
 def test_yunet_is_primary_when_it_detects_a_face(monkeypatch, tmp_path: Path) -> None:
@@ -150,7 +179,7 @@ def test_clip_filter_graph_uses_center_crop_for_portrait_targets() -> None:
         subtitle_path=None,
     )
 
-    assert graph == "crop=608:1080:656:0,scale=1080:1920,fps=30"
+    assert graph == "setpts=PTS-STARTPTS,crop=608:1080:656:0,scale=1080:1920,fps=30"
 
 
 def test_active_speaker_crop_moves_early_with_a_short_smooth_transition() -> None:
@@ -213,7 +242,7 @@ def test_active_speaker_crop_keeps_ffmpeg_expression_flat_for_many_switches() ->
     assert len(crop_filter) < 3_500
 
 
-def test_active_face_tracking_switches_immediately_on_strong_mouth_motion() -> None:
+def test_active_face_tracking_enforces_minimum_hold_before_strong_switch() -> None:
     samples = _stabilize_active_face_samples(
         [
             {
@@ -222,6 +251,7 @@ def test_active_face_tracking_switches_immediately_on_strong_mouth_motion() -> N
                 "face_count": 2,
                 "motion_score": 3.0,
                 "motion_confidence": 0.4,
+                "offset_seconds": 0.0,
             },
             {
                 "sample_index": 1,
@@ -229,13 +259,103 @@ def test_active_face_tracking_switches_immediately_on_strong_mouth_motion() -> N
                 "face_count": 2,
                 "motion_score": 5.0,
                 "motion_confidence": 0.5,
+                "offset_seconds": 0.6,
+            },
+            {
+                "sample_index": 2,
+                "anchor_ratio": 0.76,
+                "face_count": 2,
+                "motion_score": 5.0,
+                "motion_confidence": 0.5,
+                "offset_seconds": 1.3,
             },
         ]
     )
 
     assert samples[0]["anchor_ratio"] == 0.24
-    assert samples[1]["anchor_ratio"] == 0.76
-    assert samples[1]["selection_source"] == "strong_mouth_motion"
+    assert samples[1]["anchor_ratio"] == 0.24
+    assert samples[1]["selection_source"] == "hold"
+    assert samples[2]["anchor_ratio"] == 0.76
+    assert samples[2]["selection_source"] == "strong_mouth_motion"
+
+
+def test_active_face_tracking_does_not_lock_to_a_listener_during_opening_silence() -> None:
+    samples = _stabilize_active_face_samples(
+        [
+            {
+                "offset_seconds": 0.0,
+                "anchor_ratio": 0.2,
+                "face_count": 1,
+                "motion_score": 8.0,
+                "motion_confidence": 1.0,
+                "speech_active": False,
+            },
+            {
+                "offset_seconds": 0.4,
+                "anchor_ratio": 0.8,
+                "face_count": 1,
+                "motion_score": 8.0,
+                "motion_confidence": 1.0,
+                "speech_active": True,
+            },
+        ]
+    )
+
+    assert samples[0]["anchor_ratio"] == 0.8
+    assert samples[0]["selection_source"] == "leading_face_backfill"
+    assert samples[1]["anchor_ratio"] == 0.8
+
+
+def test_active_face_tracking_waits_for_mouth_evidence_when_multiple_faces_are_visible() -> None:
+    samples = _stabilize_active_face_samples(
+        [
+            {
+                "offset_seconds": 0.0,
+                "anchor_ratio": 0.2,
+                "face_count": 2,
+                "motion_score": 0.0,
+                "motion_confidence": 0.0,
+                "speech_active": True,
+            },
+            {
+                "offset_seconds": 0.33,
+                "anchor_ratio": 0.8,
+                "face_count": 2,
+                "motion_score": 3.0,
+                "motion_confidence": 0.4,
+                "speech_active": True,
+            },
+        ]
+    )
+
+    assert samples[0]["anchor_ratio"] == 0.8
+    assert samples[0]["selection_source"] == "leading_face_backfill"
+    assert samples[1]["anchor_ratio"] == 0.8
+
+
+def test_active_tracking_quality_gate_replaces_edge_clipped_framing() -> None:
+    samples = _apply_active_tracking_quality_gate(
+        [
+            {
+                "offset_seconds": 0.0,
+                "anchor_ratio": 0.08,
+                "face_left_ratio": 0.0,
+                "face_right_ratio": 0.16,
+                "active_speaker_count": 1,
+            },
+            {
+                "offset_seconds": 0.33,
+                "anchor_ratio": 0.55,
+                "face_left_ratio": 0.45,
+                "face_right_ratio": 0.65,
+                "active_speaker_count": 1,
+            },
+        ]
+    )
+
+    assert samples[-1]["tracking_quality"]["passed"] is False
+    assert samples[-1]["tracking_quality"]["fallback_applied"] is True
+    assert all(sample["anchor_ratio"] == 0.55 for sample in samples)
 
 
 def test_active_face_tracking_backfills_opening_only_from_first_face() -> None:
@@ -282,20 +402,23 @@ def test_active_face_tracking_requires_confirmation_for_ambiguous_switch() -> No
                 "face_count": 2,
                 "motion_score": 3.0,
                 "motion_confidence": 0.4,
+                "offset_seconds": 0.0,
             },
             {
                 "sample_index": 1,
                 "anchor_ratio": 0.75,
                 "face_count": 2,
                 "motion_score": 1.5,
-                "motion_confidence": 0.1,
+                "motion_confidence": 0.2,
+                "offset_seconds": 1.3,
             },
             {
                 "sample_index": 2,
                 "anchor_ratio": 0.74,
                 "face_count": 2,
                 "motion_score": 1.6,
-                "motion_confidence": 0.1,
+                "motion_confidence": 0.2,
+                "offset_seconds": 2.0,
             },
         ]
     )
@@ -303,6 +426,32 @@ def test_active_face_tracking_requires_confirmation_for_ambiguous_switch() -> No
     assert samples[1]["anchor_ratio"] == 0.25
     assert samples[2]["anchor_ratio"] == 0.74
     assert samples[2]["selection_source"] == "confirmed_mouth_motion"
+
+
+def test_active_face_tracking_holds_previous_face_when_voice_confidence_is_low() -> None:
+    samples = _stabilize_active_face_samples(
+        [
+            {
+                "sample_index": 0,
+                "offset_seconds": 0.0,
+                "anchor_ratio": 0.22,
+                "face_count": 2,
+                "motion_score": 3.0,
+                "motion_confidence": 0.4,
+            },
+            {
+                "sample_index": 1,
+                "offset_seconds": 2.0,
+                "anchor_ratio": 0.78,
+                "face_count": 2,
+                "motion_score": 1.2,
+                "motion_confidence": 0.05,
+            },
+        ]
+    )
+
+    assert samples[1]["anchor_ratio"] == 0.22
+    assert samples[1]["selection_source"] == "hold"
 
 
 def test_ambiguous_active_face_switch_keeps_matching_face_bounds() -> None:
@@ -431,6 +580,31 @@ def test_standard_portrait_layout_can_render_a_safe_bottom_headline_overlay() ->
     assert "enable='between(t\\,0\\,3.500)'" in graph
     assert "drawtext=text='" not in graph
     assert graph.index("drawtext=textfile='/tmp/headline-1.txt'") < graph.index("subtitles='/tmp/subtitle.ass'")
+
+
+def test_standard_portrait_layout_renders_all_four_full_title_lines() -> None:
+    graph = build_clip_filter_graph(
+        source_width=1920,
+        source_height=1080,
+        target_width=1080,
+        target_height=1920,
+        fps=30,
+        layout_options={
+            "standard_headline_enabled": True,
+            "standard_headline_position": "TOP",
+            "standard_headline_files": [
+                Path("/tmp/headline-1.txt"),
+                Path("/tmp/headline-2.txt"),
+                Path("/tmp/headline-3.txt"),
+                Path("/tmp/headline-4.txt"),
+            ],
+            "standard_headline_duration_seconds": 4.8,
+        },
+    )
+
+    assert "drawtext=textfile='/tmp/headline-4.txt'" in graph
+    assert "fontsize=44" in graph
+    assert "enable='between(t\\,0\\,4.800)'" in graph
 
 
 def test_clip_render_command_rejects_invalid_duration() -> None:
@@ -718,6 +892,7 @@ def test_active_speaker_tracking_splits_only_stable_simultaneous_speakers() -> N
     summary = summarize_face_samples([[], [], []])
     active_sample = {
         "anchor_ratio": 0.24,
+        "voice_overlap_count": 2,
         "active_subject_anchor_ratios": [0.24, 0.76],
         "active_subject_bounds_ratios": [
             {"left": 0.17, "right": 0.31},
@@ -733,3 +908,88 @@ def test_active_speaker_tracking_splits_only_stable_simultaneous_speakers() -> N
         sample["active_speaker_count"] == 2
         for sample in projected["sample_anchor_pairs"]
     )
+
+
+def test_active_speaker_tracking_rejects_multiple_moving_faces_without_voice_overlap() -> None:
+    summary = summarize_face_samples([[], [], []])
+    moving_faces = {
+        "anchor_ratio": 0.24,
+        "voice_overlap_count": 0,
+        "active_subject_anchor_ratios": [0.24, 0.76],
+        "active_subject_bounds_ratios": [
+            {"left": 0.17, "right": 0.31},
+            {"left": 0.69, "right": 0.83},
+        ],
+    }
+
+    projected = apply_active_speaker_tracking(summary, [moving_faces, moving_faces, moving_faces])
+
+    assert projected["max_active_speaker_count"] == 1
+    assert projected["supports_split_frame"] is False
+    assert projected["split_evidence_source"] == "transcript_vad_face_association"
+
+
+def test_fast_confirmed_speaker_change_enables_two_person_layout_temporarily() -> None:
+    samples = [
+        {
+            "offset_seconds": 0.0,
+            "anchor_ratio": 0.25,
+            "selection_source": "initial_face",
+            "visible_subject_anchor_ratios": [0.25, 0.75],
+            "visible_subject_bounds_ratios": [
+                {"left": 0.18, "right": 0.32},
+                {"left": 0.68, "right": 0.82},
+            ],
+            "visible_subject_motion_scores": [3.0, 0.2],
+        },
+        {
+            "offset_seconds": 1.0,
+            "anchor_ratio": 0.75,
+            "selection_source": "confirmed_mouth_motion",
+            "visible_subject_anchor_ratios": [0.25, 0.75],
+            "visible_subject_bounds_ratios": [
+                {"left": 0.18, "right": 0.32},
+                {"left": 0.68, "right": 0.82},
+            ],
+            "visible_subject_motion_scores": [0.2, 3.0],
+        },
+        {
+            "offset_seconds": 2.0,
+            "anchor_ratio": 0.75,
+            "selection_source": "same_active_face",
+            "visible_subject_anchor_ratios": [0.25, 0.75],
+            "visible_subject_bounds_ratios": [
+                {"left": 0.18, "right": 0.32},
+                {"left": 0.68, "right": 0.82},
+            ],
+            "visible_subject_motion_scores": [0.1, 2.5],
+        },
+    ]
+
+    annotated = _annotate_conversation_layout_samples(samples, conversation_windows=[])
+    projected = apply_active_speaker_tracking(summarize_face_samples([[], [], []]), annotated)
+
+    assert projected["supports_split_frame"] is True
+    assert projected["adaptive_panel_count"] == 2
+    assert annotated[1]["conversation_layout"] is True
+    assert annotated[1]["active_subject_anchor_ratios"] == [0.25, 0.75]
+
+
+def test_strong_reaction_layout_is_capped_at_twelve_hundred_milliseconds() -> None:
+    samples = [
+        {
+            "offset_seconds": offset,
+            "anchor_ratio": 0.25,
+            "selection_source": "same_active_face",
+            "visible_subject_anchor_ratios": [0.25, 0.75],
+            "visible_subject_bounds_ratios": [],
+            "visible_subject_motion_scores": [2.0, 4.5 if offset == 1.0 else 0.1],
+        }
+        for offset in (1.0, 1.5, 2.0, 2.5)
+    ]
+
+    annotated = _annotate_conversation_layout_samples(samples, conversation_windows=[])
+
+    assert annotated[0]["reaction_layout"] is True
+    assert annotated[2]["reaction_layout"] is True
+    assert annotated[3].get("reaction_layout") is not True

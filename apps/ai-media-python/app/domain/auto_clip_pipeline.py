@@ -109,6 +109,13 @@ def normalize_candidates(
                 transcript_segments=transcript_segments,
                 maximum_duration_seconds=maximum_duration_seconds,
             )
+            end_seconds = _apply_natural_tail_padding(
+                start_seconds=start_seconds,
+                end_seconds=end_seconds,
+                ending_text=ending_text,
+                transcript_segments=transcript_segments,
+                maximum_duration_seconds=maximum_duration_seconds,
+            )
         if end_seconds <= start_seconds:
             end_seconds = candidate.end_seconds
             start_seconds = candidate.start_seconds
@@ -739,7 +746,61 @@ def _ending_needs_extension(text: str) -> bool:
         return True
     if _starts_with_continuation_connector(lowered):
         return True
+    if stripped.endswith("?") and not _is_audience_cta_question(lowered):
+        return True
     return False
+
+
+def _is_audience_cta_question(text: str) -> bool:
+    return any(
+        phrase in text
+        for phrase in (
+            "menurut kamu",
+            "menurut kalian",
+            "kamu setuju",
+            "kalian setuju",
+            "pernah ngalamin",
+            "pernah mengalami",
+            "pilih yang mana",
+        )
+    )
+
+
+def _apply_natural_tail_padding(
+    *,
+    start_seconds: float,
+    end_seconds: float,
+    ending_text: str,
+    transcript_segments: list[TranscriptSegment],
+    maximum_duration_seconds: float | None,
+) -> float:
+    """Keep a short breath after a complete payoff without leaking a new topic."""
+    if not _is_natural_ending_segment(ending_text) or _ending_needs_extension(ending_text):
+        return round(end_seconds, 2)
+
+    duration_ceiling = (
+        start_seconds + maximum_duration_seconds
+        if maximum_duration_seconds and maximum_duration_seconds > 0
+        else float("inf")
+    )
+    next_segment = next(
+        (
+            segment
+            for segment in transcript_segments
+            if segment.start_seconds >= end_seconds + 0.08
+        ),
+        None,
+    )
+    if next_segment is None:
+        return round(min(end_seconds + 0.45, duration_ceiling), 2)
+
+    available_silence = next_segment.start_seconds - end_seconds
+    if available_silence < 0.12:
+        return round(end_seconds, 2)
+    return round(
+        min(end_seconds + 0.55, next_segment.start_seconds, duration_ceiling),
+        2,
+    )
 
 
 def _starts_with_continuation_connector(text: str) -> bool:

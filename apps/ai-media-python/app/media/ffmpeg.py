@@ -208,7 +208,9 @@ def build_clip_render_command(
 def _should_use_standard_split_screen(*, crop_strategy: str, layout_options: dict[str, Any]) -> bool:
     # A split strategy is a user preference. The analyzer must still confirm
     # multiple stable active speakers before FFmpeg creates extra panels.
-    return bool(layout_options.get("split_frame_enabled"))
+    return bool(layout_options.get("split_frame_enabled")) and not bool(
+        layout_options.get("content_aware_layout")
+    )
 
 
 def _build_standard_split_screen_render_command(
@@ -642,15 +644,17 @@ def _build_standard_headline_filter_chain(
     raw_files = layout_options.get("standard_headline_files")
     if not isinstance(raw_files, list):
         return []
-    headline_files = [value for value in raw_files if isinstance(value, (str, Path)) and str(value).strip()][:3]
+    headline_files = [value for value in raw_files if isinstance(value, (str, Path)) and str(value).strip()][:4]
     if not headline_files:
         return []
 
     position = str(layout_options.get("standard_headline_position") or "BOTTOM").strip().upper()
     scale = target_width / 1080
     left = max(42, int(round(target_width * 0.09)))
-    font_size = max(34, int(round(58 * scale)))
-    line_height = max(54, int(round(74 * scale)))
+    line_count = len(headline_files)
+    base_font_size = 58 if line_count <= 2 else 50 if line_count == 3 else 44
+    font_size = max(30, int(round(base_font_size * scale)))
+    line_height = max(48, int(round((base_font_size + 16) * scale)))
     base_y = int(round(target_height * (0.14 if position == "TOP" else 0.58)))
     quote_width = max(54, int(round(78 * scale)))
     quote_height = max(38, int(round(50 * scale)))
@@ -699,10 +703,12 @@ def _build_podcast_spotlight_filter_graph(
     include_logo_input: bool,
     crop_strategy: str,
 ) -> str:
-    panel_width = 924
-    panel_height = 520
-    panel_x = 78
-    panel_y = 646
+    spotlight_style = str(layout_options.get("podcast_spotlight_style") or "EDITORIAL_GOLD").strip().upper()
+    video_first = spotlight_style == "VIDEO_FIRST"
+    panel_width = 972 if video_first else 924
+    panel_height = 620 if video_first else 520
+    panel_x = 54 if video_first else 78
+    panel_y = 584 if video_first else 646
     normalized_strategy = str(crop_strategy or layout_options.get("crop_strategy") or "AUTO_REFRAME").strip().upper()
     split_frame_enabled = bool(layout_options.get("split_frame_enabled"))
     graph_parts: list[str] = []
@@ -813,15 +819,21 @@ def _build_podcast_spotlight_filter_graph(
             f"[panel_shadow]drawbox=x={panel_x - 2}:y={panel_y - 2}:w={panel_width + 4}:h={panel_height + 4}:color=0xf6c343@0.82:t=2[panel0]",
             f"[panel0]drawbox=x={panel_x}:y={panel_y}:w={panel_width}:h={panel_height}:color=0x101724@0.98:t=fill[panel1]",
             f"[panel1][clip]overlay={panel_x}:{panel_y}[canvas0]",
-            "[canvas0]drawbox=x=344:y=1750:w=392:h=56:color=0x0b1020@0.98:t=fill[sourcebar0]",
-            "[sourcebar0]drawbox=x=344:y=1750:w=392:h=56:color=0xf6c343@0.42:t=1[sourcebar1]",
         ]
     )
-
-    current_label = "sourcebar1"
+    if bool(layout_options.get("show_source_label", True)):
+        graph_parts.extend(
+            [
+                "[canvas0]drawbox=x=344:y=1750:w=392:h=56:color=0x0b1020@0.98:t=fill[sourcebar0]",
+                "[sourcebar0]drawbox=x=344:y=1750:w=392:h=56:color=0xf6c343@0.42:t=1[sourcebar1]",
+            ]
+        )
+        current_label = "sourcebar1"
+    else:
+        current_label = "canvas0"
     if include_logo_input:
         graph_parts.append("[1:v]scale=86:86,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2),(W/2)*(H/2)),255,0)'[logo]")
-        graph_parts.append("[sourcebar1][logo]overlay=126:98[canvas1]")
+        graph_parts.append(f"[{current_label}][logo]overlay=126:98[canvas1]")
         current_label = "canvas1"
 
     graph_parts.append(f"[{current_label}]drawbox=x=242:y=108:w=2:h=72:color=0xf6c343@0.82:t=fill[brandline]")
@@ -996,6 +1008,14 @@ def _build_strategy_crop_filter(
     normalized_strategy = str(crop_strategy or "AUTO_REFRAME").strip().upper()
     speaker_count = layout_options.get("speaker_count")
     has_multiple_speakers = isinstance(speaker_count, int) and speaker_count >= 2
+
+    if layout_options.get("content_aware_layout") is True:
+        return _build_safe_full_frame_fit_filter(
+            source_width=source_width,
+            source_height=source_height,
+            target_width=target_width,
+            target_height=target_height,
+        )
 
     if normalized_strategy in {"ACTIVE_SPEAKER", "SMART_SPEAKER"} or (
         normalized_strategy == "AUTO_REFRAME" and has_multiple_speakers

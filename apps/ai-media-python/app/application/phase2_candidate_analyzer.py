@@ -61,11 +61,12 @@ async def analyze_phase2_candidates_with_fallback(
     provider_request_id: str | None = None
     fallback_reason: str | None = None
     fallback_trigger: str | None = None
+    provider_candidate_audit: dict[str, Any] | None = None
 
     if configured_mode == "openai_then_heuristic":
         openai_summary: dict[str, Any] | None = None
         try:
-            openai_summary, usage, provider_request_id = await _run_openai_analysis(
+            openai_summary, usage, provider_request_id, provider_candidate_audit = await _run_openai_analysis(
                 provider=provider,
                 provider_code=provider_code,
                 model_identifier=model_identifier,
@@ -94,6 +95,7 @@ async def analyze_phase2_candidates_with_fallback(
                     fallback_reason=None,
                     fallback_trigger=None,
                     candidate_source_counts={"openai": int(openai_summary["candidate_count"]), "heuristic": 0},
+                    provider_candidate_audit=provider_candidate_audit,
                 )
             fallback_trigger = rejection_reason
         except Exception as error:
@@ -139,6 +141,7 @@ async def analyze_phase2_candidates_with_fallback(
                     "openai": int(openai_summary["candidate_count"]),
                     "heuristic": supplemental_count,
                 },
+                provider_candidate_audit=provider_candidate_audit,
             )
 
         summary = heuristic_summary
@@ -166,7 +169,7 @@ async def analyze_phase2_candidates_with_fallback(
     if configured_mode == "heuristic_then_openai" and not accepted:
         fallback_trigger = rejection_reason
         try:
-            summary, usage, provider_request_id = await _run_openai_analysis(
+            summary, usage, provider_request_id, provider_candidate_audit = await _run_openai_analysis(
                 provider=provider,
                 provider_code=provider_code,
                 model_identifier=model_identifier,
@@ -193,6 +196,7 @@ async def analyze_phase2_candidates_with_fallback(
                 fallback_reason=None,
                 fallback_trigger=fallback_trigger,
                 candidate_source_counts={"openai": int(summary["candidate_count"]), "heuristic": 0},
+                provider_candidate_audit=provider_candidate_audit,
             )
         except Exception as error:
             fallback_reason = type(error).__name__
@@ -248,6 +252,20 @@ def _limit_and_score_candidates(
     analysis_inputs: AnalysisInputs,
     config: PipelineConfig,
 ) -> list[CandidateAnalysis]:
+    candidates, _ = _limit_and_score_candidates_with_audit(candidates, analysis_inputs, config)
+    return candidates
+
+
+def _limit_and_score_candidates_with_audit(
+    candidates: list[CandidateAnalysis],
+    analysis_inputs: AnalysisInputs,
+    config: PipelineConfig,
+) -> tuple[list[CandidateAnalysis], dict[str, Any]]:
+    score_rejections = sum(
+        1 for candidate in candidates if candidate.scores.get("final_viral_score", 0) < config.minimum_viral_score
+    )
+    short_rejections = sum(1 for candidate in candidates if candidate.duration_seconds < config.minimum_duration_seconds)
+    long_rejections = sum(1 for candidate in candidates if candidate.duration_seconds > config.maximum_duration_seconds)
     filtered = [
         candidate
         for candidate in candidates
@@ -262,7 +280,23 @@ def _limit_and_score_candidates(
         analysis_inputs.transcript.segments,
         float(config.maximum_duration_seconds),
     )
-    return deduplicate_and_rank(normalized, config.candidate_pool_count)
+    ranked = deduplicate_and_rank(normalized, config.candidate_pool_count)
+    audit = {
+        "raw_candidate_count": len(candidates),
+        "accepted_before_normalization": len(filtered),
+        "normalized_candidate_count": len(normalized),
+        "accepted_after_deduplication": len(ranked),
+        "removed_by_deduplication": max(0, len(normalized) - len(ranked)),
+        "rejected_below_minimum_score": score_rejections,
+        "rejected_below_minimum_duration": short_rejections,
+        "rejected_above_maximum_duration": long_rejections,
+        "minimum_viral_score": config.minimum_viral_score,
+        "minimum_duration_seconds": config.minimum_duration_seconds,
+        "maximum_duration_seconds": config.maximum_duration_seconds,
+        "requested_candidate_pool_count": config.candidate_pool_count,
+        "required_final_clip_count": config.desired_clip_count,
+    }
+    return ranked, audit
 
 
 def _finalize_summary(
@@ -283,6 +317,7 @@ def _finalize_summary(
     fallback_reason: str | None,
     fallback_trigger: str | None,
     candidate_source_counts: dict[str, int] | None = None,
+    provider_candidate_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     analyzer_metadata = {
         "analysis_mode": analysis_mode,
@@ -303,6 +338,7 @@ def _finalize_summary(
         "fallback_reason": fallback_reason,
         "fallback_trigger": fallback_trigger,
         "candidate_source_counts": candidate_source_counts or {},
+        "provider_candidate_audit": provider_candidate_audit or {},
     }
     summary["analysis_version"] = "2.4"
     summary["analyzer"] = analyzer_metadata
@@ -323,6 +359,7 @@ def _finalize_summary(
             "fallback_reason": fallback_reason,
             "fallback_trigger": fallback_trigger,
             "candidate_source_counts": candidate_source_counts or {},
+            "provider_candidate_audit": provider_candidate_audit or {},
         },
     )
     return summary
@@ -369,7 +406,7 @@ async def _run_openai_analysis(
     prompt_payload: dict[str, Any],
     analysis_inputs: AnalysisInputs,
     config: PipelineConfig,
-) -> tuple[dict[str, Any], dict[str, Any] | None, str | None]:
+) -> tuple[dict[str, Any], dict[str, Any] | None, str | None, dict[str, Any]]:
     selected_provider = provider or _resolve_provider(provider_code)
     provider_result = await selected_provider.generate_structured(
         context=ProviderRequestContext(
@@ -385,7 +422,8 @@ async def _run_openai_analysis(
     )
     normalized_output = _normalize_provider_batch_output(provider_result["output"])
     batch = CandidateBatchOutput.model_validate(normalized_output)
-    candidates = _limit_and_score_candidates(batch.candidates, analysis_inputs, config)
+    candidates, candidate_audit = _limit_and_score_candidates_with_audit(batch.candidates, analysis_inputs, config)
+    candidate_audit["provider_declared_candidate_count"] = batch.candidate_count
     summary = build_output_summary(candidates, source_summary=batch.source_summary)
     usage = provider_result.get("usage") if isinstance(provider_result.get("usage"), dict) else None
     provider_request_id = (
@@ -393,7 +431,7 @@ async def _run_openai_analysis(
         if provider_result.get("provider_request_id") is not None
         else None
     )
-    return summary, usage, provider_request_id
+    return summary, usage, provider_request_id, candidate_audit
 
 
 def _normalize_provider_batch_output(output: Any) -> Any:

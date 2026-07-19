@@ -430,6 +430,21 @@
                             <% }) %>
                           </select>
                         </div>
+                        <div class="col-md-3" data-regenerate-podcast-spotlight>
+                          <input type="hidden" name="podcast_source_enabled" value="false">
+                          <div class="form-check pt-4">
+                            <input class="form-check-input" type="checkbox" name="podcast_source_enabled" value="true" id="podcast_source_enabled_regenerate" <%= outputSummary.requestSnapshot.visual.podcastSourceEnabled !== false ? 'checked' : '' %>>
+                            <label class="form-check-label" for="podcast_source_enabled_regenerate">Tampilkan source channel</label>
+                          </div>
+                          <div class="form-text">Nama source diambil dari channel YouTube, bukan nama branding user.</div>
+                        </div>
+                        <div class="col-md-3" data-regenerate-podcast-spotlight>
+                          <label class="form-label">Podcast Spotlight style</label>
+                          <select class="form-select" name="podcast_spotlight_style">
+                            <option value="EDITORIAL_GOLD" <%= outputSummary.requestSnapshot.visual.podcastSpotlightStyle !== 'VIDEO_FIRST' ? 'selected' : '' %>>Editorial Gold</option>
+                            <option value="VIDEO_FIRST" <%= outputSummary.requestSnapshot.visual.podcastSpotlightStyle === 'VIDEO_FIRST' ? 'selected' : '' %>>Video First</option>
+                          </select>
+                        </div>
                         <div class="col-md-3 form-check d-flex align-items-end" data-regenerate-standard-headline>
                           <div>
                             <input type="hidden" name="headline_overlay_enabled" value="false">
@@ -960,6 +975,28 @@
           <article class="analyzer-card"><span>Candidate sources</span><strong><%= outputSummary.analyzer?.openaiCandidateCount ?? 0 %> OpenAI</strong><p><%= outputSummary.analyzer?.heuristicCandidateCount ?? 0 %> tambahan Python heuristic</p></article>
           <article class="analyzer-card"><span>Attempted AI path</span><strong><%= outputSummary.analyzer?.attemptedProviderLabel ?? '-' %></strong><p><%= outputSummary.analyzer?.attemptedModelLabel ?? 'Tidak ada percobaan provider eksternal.' %></p></article>
         </div>
+        <% const providerAudit = outputSummary.analyzer?.providerCandidateAudit; %>
+        <% if (providerAudit?.rawCandidateCount !== null && providerAudit?.rawCandidateCount !== undefined) { %>
+          <div class="candidate-caption-box mt-3">
+            <strong>Audit kandidat OpenAI</strong>
+            <p>
+              OpenAI mengirim <%= providerAudit.rawCandidateCount %> kandidat mentah dan
+              <%= providerAudit.acceptedAfterDeduplication ?? 0 %> lolos sampai hasil akhir.
+              <% if ((providerAudit.rejectedBelowMinimumDuration ?? 0) > 0) { %>
+                <%= providerAudit.rejectedBelowMinimumDuration %> kandidat lebih pendek dari <%= providerAudit.minimumDurationSeconds %> detik.
+              <% } %>
+              <% if ((providerAudit.rejectedAboveMaximumDuration ?? 0) > 0) { %>
+                <%= providerAudit.rejectedAboveMaximumDuration %> kandidat melebihi <%= providerAudit.maximumDurationSeconds %> detik.
+              <% } %>
+              <% if ((providerAudit.rejectedBelowMinimumScore ?? 0) > 0) { %>
+                <%= providerAudit.rejectedBelowMinimumScore %> kandidat memiliki skor di bawah <%= providerAudit.minimumViralScore %>.
+              <% } %>
+              <% if ((providerAudit.removedByDeduplication ?? 0) > 0) { %>
+                <%= providerAudit.removedByDeduplication %> kandidat dihapus karena terlalu mirip atau bertumpuk.
+              <% } %>
+            </p>
+          </div>
+        <% } %>
         <% if (outputSummary.analyzer?.fallbackReason) { %>
           <div class="candidate-caption-box mt-3">
             <strong>Fallback note</strong>

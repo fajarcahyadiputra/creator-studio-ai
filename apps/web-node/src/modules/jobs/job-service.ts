@@ -116,6 +116,8 @@ interface RegenerateAutoClipInput {
     | "BLURRED_BACKGROUND"
     | "MANUAL";
   layout_template: "STANDARD" | "PODCAST_SPOTLIGHT_9X16";
+  podcast_source_enabled: boolean;
+  podcast_spotlight_style: "EDITORIAL_GOLD" | "VIDEO_FIRST";
   headline_overlay_enabled: boolean;
   headline_overlay_position: "TOP" | "BOTTOM";
   framing_detection_mode: "COMBINED" | "TRANSCRIPT_ONLY" | "FACE_DETECTION_ONLY";
@@ -1904,6 +1906,8 @@ function buildRegeneratedAutoClippingInput(
       settings: compactRecord({
         ...currentVisualSettings,
         layout_template: input.layout_template,
+        podcast_source_enabled: input.podcast_source_enabled,
+        podcast_spotlight_style: input.podcast_spotlight_style,
         headline_overlay_enabled: input.headline_overlay_enabled,
         headline_overlay_position: input.headline_overlay_position,
         framing_detection_mode: input.framing_detection_mode,
@@ -2196,6 +2200,9 @@ export async function prepareAutoClippingInput(userId: string, input: CreateAuto
     && layoutTemplate === "STANDARD"
     && visualSettings.headline_overlay_enabled !== false;
   const headlineOverlayPosition = visualSettings.headline_overlay_position === "TOP" ? "TOP" : "BOTTOM";
+  const podcastSourceEnabled = visualSettings.podcast_source_enabled !== false;
+  const podcastSpotlightStyle =
+    visualSettings.podcast_spotlight_style === "VIDEO_FIRST" ? "VIDEO_FIRST" : "EDITORIAL_GOLD";
   const cropStrategy = layoutTemplate === "PODCAST_SPOTLIGHT_9X16" ? "SMART_SPEAKER" : visual.crop_strategy;
   const branding = await resolveAutoClipBrandingContext(userId, visualSettings);
   const analyzerRuntime = await resolveAutoClipAnalyzerRuntimeSnapshot();
@@ -2217,6 +2224,8 @@ export async function prepareAutoClippingInput(userId: string, input: CreateAuto
       settings: compactRecord({
         ...visualSettings,
         layout_template: layoutTemplate,
+        podcast_source_enabled: podcastSourceEnabled,
+        podcast_spotlight_style: podcastSpotlightStyle,
         headline_overlay_enabled: headlineOverlayEnabled,
         headline_overlay_position: headlineOverlayPosition,
         branding

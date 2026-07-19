@@ -597,6 +597,10 @@ if (autoClipForm) {
     if (standardHeadlinePanel instanceof HTMLElement) {
       standardHeadlinePanel.hidden = aspectRatio !== "9:16" || layoutField?.value !== "STANDARD";
     }
+    const podcastSpotlightPanel = autoClipForm.querySelector("[data-podcast-spotlight-panel]");
+    if (podcastSpotlightPanel instanceof HTMLElement) {
+      podcastSpotlightPanel.hidden = !podcastSpotlightSelected;
+    }
     syncSubmitSummary();
   };
 
@@ -851,6 +855,8 @@ if (autoClipForm) {
     setFieldValue("standalone_priority", config.standalone_priority);
     setFieldValue("aspect_ratio", config.aspect_ratio);
     setFieldValue("layout_template", config.layout_template || config.layoutTemplate);
+    setCheckboxValue("podcast_source_enabled", config.podcast_source_enabled ?? config.podcastSourceEnabled);
+    setFieldValue("podcast_spotlight_style", config.podcast_spotlight_style || config.podcastSpotlightStyle);
     setCheckboxValue("headline_overlay_enabled", config.headline_overlay_enabled ?? config.headlineOverlayEnabled);
     setFieldValue("headline_overlay_position", config.headline_overlay_position || config.headlineOverlayPosition);
     setFieldValue("preferred_topics", joinTextList(config.preferred_topics));
@@ -1000,6 +1006,8 @@ if (autoClipForm) {
         settings: {
           mode: data.get("advanced_mode") === "on" ? "ADVANCED" : "QUICK",
           layout_template: String(data.get("layout_template") || "STANDARD").trim() || "STANDARD",
+          podcast_source_enabled: data.get("podcast_source_enabled") === "on",
+          podcast_spotlight_style: String(data.get("podcast_spotlight_style") || "EDITORIAL_GOLD").trim(),
           headline_overlay_enabled: data.get("headline_overlay_enabled") === "on",
           headline_overlay_position: String(data.get("headline_overlay_position") || "BOTTOM").trim(),
           brand_kit_id: String(data.get("brand_kit_id") || "").trim() || undefined,
@@ -1363,12 +1371,14 @@ for (const form of document.querySelectorAll('form[action^="/api/v1/auto-clippin
   const layoutField = form.querySelector('[name="layout_template"]');
   const aspectRatioField = form.querySelector('[name="aspect_ratio"]');
   const panels = form.querySelectorAll("[data-regenerate-standard-headline]");
+  const podcastPanels = form.querySelectorAll("[data-regenerate-podcast-spotlight]");
   const cropStrategyPanel = form.querySelector("[data-regenerate-crop-strategy]");
   const cropStrategyField = form.querySelector('[name="crop_strategy"]');
   const syncStandardHeadlineControls = () => {
     const visible = layoutField?.value === "STANDARD" && aspectRatioField?.value === "9:16";
     for (const panel of panels) panel.hidden = !visible;
     const podcastSpotlightSelected = layoutField?.value === "PODCAST_SPOTLIGHT_9X16" && aspectRatioField?.value === "9:16";
+    for (const panel of podcastPanels) panel.hidden = !podcastSpotlightSelected;
     if (cropStrategyPanel instanceof HTMLElement) cropStrategyPanel.hidden = podcastSpotlightSelected;
     if (podcastSpotlightSelected && cropStrategyField instanceof HTMLSelectElement) {
       if (cropStrategyField.value !== "SMART_SPEAKER") {
@@ -1898,6 +1908,12 @@ function validateAutoClipPayload(payload) {
     && String(visualSettings.layout_template || "STANDARD") !== "STANDARD"
   ) {
     errors.push("visual.settings.layout_template hanya tersedia untuk aspect ratio 9:16");
+  }
+  if (
+    visualSettings.podcast_spotlight_style !== undefined
+    && !["EDITORIAL_GOLD", "VIDEO_FIRST"].includes(String(visualSettings.podcast_spotlight_style))
+  ) {
+    errors.push("visual.settings.podcast_spotlight_style is invalid");
   }
   if (
     visualSettings.framing_detection_mode !== undefined

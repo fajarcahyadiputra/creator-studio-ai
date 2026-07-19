@@ -107,6 +107,7 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
     metadata_path = working_directory / "metadata.json"
     subtitle_srt_path = working_directory / "subtitle.srt"
     subtitle_ass_path = working_directory / "subtitle.ass"
+    subtitle_burn_in_ass_path = working_directory / "subtitle-burn-in.ass"
     subtitle_vtt_path = working_directory / "subtitle.vtt"
     subtitle_json_path = working_directory / "subtitle.json"
     channel_name_path = working_directory / "channel-name.txt"
@@ -149,6 +150,11 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         if subtitle_burned_in or layout_template == "PODCAST_SPOTLIGHT_9X16":
             subtitle_path_for_burn_in = subtitle_ass_path
 
+    speech_activity_evidence = _build_speech_activity_evidence(
+        context.transcript.segments if context.transcript else [],
+        clip_start_seconds=clip_start_seconds,
+        clip_duration_seconds=clip_duration_seconds,
+    )
     face_layout_summary = await _detect_face_layout_summary(
         source=str(context.source_media.download_url),
         clip_start_seconds=clip_start_seconds,
@@ -156,13 +162,16 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         working_directory=working_directory,
         timeout_seconds=min(max(settings.MEDIA_PROBE_TIMEOUT_SECONDS, 20), 90),
         active_speaker_tracking=crop_strategy in {"ACTIVE_SPEAKER", "SMART_SPEAKER"},
+        speech_activity_evidence=speech_activity_evidence,
     )
 
     layout_options = _build_layout_options(
+        aspect_ratio=aspect_ratio,
         layout_template=layout_template,
         render_settings=context.render_settings,
         candidate=context.candidate,
         metadata=candidate_metadata,
+        source_media_metadata=context.source_media.metadata,
         transcript_segments=context.transcript.segments if context.transcript else [],
         face_layout_summary=face_layout_summary,
         working_directory=working_directory,
@@ -172,6 +181,28 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         quote_path=quote_path,
         source_label_path=source_label_path,
     )
+    if (
+        subtitle_path_for_burn_in is not None
+        and aspect_ratio == "9:16"
+        and layout_options.get("standard_headline_enabled")
+        and layout_template != "PODCAST_SPOTLIGHT_9X16"
+    ):
+        headline_duration = float(layout_options.get("standard_headline_duration_seconds") or 0.0)
+        burn_in_cues = _suppress_subtitle_cues_before(subtitle_cues, headline_duration)
+        if burn_in_cues:
+            subtitle_burn_in_ass_path.write_text(
+                _render_ass(
+                    burn_in_cues,
+                    layout_template=layout_template,
+                    word_highlight=subtitle_word_highlight,
+                    position=subtitle_position,
+                    safe_margin_percent=subtitle_safe_margin_percent,
+                ),
+                encoding="utf-8",
+            )
+            subtitle_path_for_burn_in = subtitle_burn_in_ass_path
+        else:
+            subtitle_path_for_burn_in = None
     logo_fetch_warning: str | None = None
     try:
         logo_fetch_warning = await _materialize_optional_logo(
@@ -281,6 +312,14 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         validation["warnings"].append(logo_fetch_warning)
     if isinstance(face_layout_summary.get("warning"), str):
         validation["warnings"].append(face_layout_summary["warning"])
+    tracking_quality = face_layout_summary.get("tracking_quality_gate")
+    if isinstance(tracking_quality, dict):
+        validation["checks"]["speaker_tracking_quality"] = tracking_quality.get("passed") is True
+        validation["observed"]["speaker_tracking"] = tracking_quality
+        if tracking_quality.get("passed") is not True:
+            validation["warnings"].append(
+                "Smart-speaker tracking quality gate used the last reliable speaker framing."
+            )
 
     artifact_uploads = {upload.artifact: upload for upload in context.artifact_uploads}
     uploaded_artifacts: list[dict[str, Any]] = []
@@ -728,7 +767,7 @@ def _resolve_subtitle_safe_margin_percent(render_settings: dict[str, Any]) -> fl
     try:
         resolved = float(value)
     except (TypeError, ValueError):
-        return 12.0
+        return 16.0
     return max(0.0, min(resolved, 30.0))
 
 
@@ -766,6 +805,7 @@ async def _detect_face_layout_summary(
     working_directory: Path,
     timeout_seconds: float,
     active_speaker_tracking: bool = False,
+    speech_activity_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if clip_duration_seconds <= 0.5:
         return {"status": "skipped", "reason": "clip_too_short"}
@@ -893,10 +933,15 @@ async def _detect_face_layout_summary(
     summary = summarize_face_samples(samples)
     if active_speaker_tracking:
         try:
+            evidence = speech_activity_evidence or {}
             active_tracking_samples = await asyncio.to_thread(
                 build_active_face_tracking_samples,
                 frame_paths,
                 samples,
+                sample_offsets_seconds=resolved_sample_offsets,
+                speech_windows=evidence.get("speech_windows", []),
+                overlap_windows=evidence.get("overlap_windows", []),
+                conversation_windows=evidence.get("conversation_windows", []),
             )
             has_face_anchor = any(
                 isinstance(sample.get("anchor_ratio"), (int, float))
@@ -904,11 +949,32 @@ async def _detect_face_layout_summary(
                 if isinstance(sample, dict)
             )
             summary["active_speaker_tracking_backend"] = (
-                "opencv_lower_face_motion"
+                "transcript_vad+opencv_lower_face_motion"
                 if has_face_anchor
                 else "center_cover_no_face_evidence"
             )
             summary = apply_active_speaker_tracking(summary, active_tracking_samples)
+            summary["speech_activity_source"] = evidence.get("source", "none")
+            summary["diarized_speaker_count"] = evidence.get("speaker_count", 0)
+            summary["voice_overlap_window_count"] = len(evidence.get("overlap_windows", []))
+            summary["conversation_window_count"] = len(evidence.get("conversation_windows", []))
+            content_candidate_count = sum(
+                1
+                for sample in active_tracking_samples
+                if isinstance(sample, dict) and sample.get("content_frame_candidate") is True
+            )
+            content_sample_threshold = max(2, round(len(active_tracking_samples) * 0.30))
+            summary["content_frame_candidate_count"] = content_candidate_count
+            summary["content_aware_layout"] = content_candidate_count >= content_sample_threshold
+            quality = next(
+                (
+                    sample.get("tracking_quality")
+                    for sample in reversed(active_tracking_samples)
+                    if isinstance(sample, dict) and isinstance(sample.get("tracking_quality"), dict)
+                ),
+                {},
+            )
+            summary["tracking_quality_gate"] = quality
         except Exception as error:
             summary["active_speaker_tracking_backend"] = "opencv_face_position_fallback"
             summary["active_speaker_tracking_warning"] = (
@@ -991,6 +1057,7 @@ def _build_face_sample_offsets(*, clip_duration_seconds: float, sample_count: in
 
 def _build_layout_options(
     *,
+    aspect_ratio: str,
     layout_template: str | None,
     render_settings: dict[str, Any],
     candidate: Any,
@@ -1003,9 +1070,11 @@ def _build_layout_options(
     headline_path: Path,
     quote_path: Path,
     source_label_path: Path,
+    source_media_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     visual = render_settings.get("visual")
     visual_settings = visual.get("settings") if isinstance(visual, dict) else None
+    visual_data = visual_settings if isinstance(visual_settings, dict) else {}
     branding = visual_settings.get("branding") if isinstance(visual_settings, dict) else None
     branding_data = branding if isinstance(branding, dict) else {}
     crop_strategy = _resolve_crop_strategy(render_settings)
@@ -1035,15 +1104,19 @@ def _build_layout_options(
     split_frame_requested = explicit_split_strategy or (
         crop_strategy == "AUTO_REFRAME" and split_on_multi_face
     )
+    content_aware_layout = bool(face_layout_summary.get("content_aware_layout"))
     required_active_speaker_count = 2
     should_split_frame = (
         split_frame_requested
+        and not content_aware_layout
         and active_speaker_count >= required_active_speaker_count
         and split_frame_supported
     )
     adaptive_panel_count = min(4, max(1, int(face_layout_summary.get("adaptive_panel_count") or 1)))
     if should_split_frame:
         split_decision_reason = f"{adaptive_panel_count}_active_speakers_stable"
+    elif content_aware_layout:
+        split_decision_reason = "content_frame_preserved"
     elif face_detection_unavailable:
         split_decision_reason = "face_detection_unavailable"
     elif active_speaker_count < 2:
@@ -1059,6 +1132,7 @@ def _build_layout_options(
         "detected_face_count": detected_face_count,
         "active_speaker_count": active_speaker_count,
         "split_frame_enabled": should_split_frame,
+        "content_aware_layout": content_aware_layout,
         "adaptive_panel_count": adaptive_panel_count if should_split_frame else 1,
         "split_decision_reason": split_decision_reason,
         "split_on_multi_face": split_on_multi_face,
@@ -1081,15 +1155,20 @@ def _build_layout_options(
     }
 
     if layout_template != "PODCAST_SPOTLIGHT_9X16":
-        headline_enabled = visual_settings.get("headline_overlay_enabled") is True
+        if aspect_ratio != "9:16":
+            return base_options
+        # Standard portrait clips show the opening headline by default. Older
+        # job snapshots may not contain this setting, so only an explicit false
+        # disables it.
+        headline_enabled = visual_data.get("headline_overlay_enabled") is not False
         headline_position = (
-            "TOP" if str(visual_settings.get("headline_overlay_position") or "").strip().upper() == "TOP" else "BOTTOM"
+            "TOP" if str(visual_data.get("headline_overlay_position") or "").strip().upper() == "TOP" else "BOTTOM"
         )
         if headline_enabled:
-            headline = _select_display_headline(candidate=candidate, metadata=metadata)
-            wrapped_headline = _wrap_overlay_text(headline, max_chars=22, max_lines=3)
+            headline = _select_full_display_title(candidate=candidate, metadata=metadata)
+            wrapped_headline = _wrap_full_overlay_text(headline, max_chars=22, max_lines=4)
             headline_files: list[str] = []
-            for index, line in enumerate(wrapped_headline.splitlines()[:3], start=1):
+            for index, line in enumerate(wrapped_headline.splitlines(), start=1):
                 normalized_line = line.strip()
                 if not normalized_line:
                     continue
@@ -1102,14 +1181,36 @@ def _build_layout_options(
                     "standard_headline_position": headline_position,
                     "standard_headline_files": headline_files,
                     "standard_headline_duration_seconds": round(
-                        min(3.8, max(2.5, clip_duration_seconds * 0.10)),
+                        min(
+                            5.0,
+                            max(
+                                2.8,
+                                clip_duration_seconds * 0.10,
+                                2.2
+                                + (0.32 * len(headline_files))
+                                + (0.055 * len(headline.split())),
+                            ),
+                        ),
                         2,
                     ),
                 }
             )
         return base_options
 
-    source_label = f"Source: {channel_name}"
+    source_metadata = source_media_metadata if isinstance(source_media_metadata, dict) else {}
+    source_channel_name = (
+        _resolve_string(source_metadata.get("source_channel_name"))
+        or _resolve_string(source_metadata.get("channel"))
+        or _resolve_string(source_metadata.get("uploader"))
+        or channel_name
+    )
+    show_source_label = visual_data.get("podcast_source_enabled") is not False
+    spotlight_style = (
+        "VIDEO_FIRST"
+        if str(visual_data.get("podcast_spotlight_style") or "").strip().upper() == "VIDEO_FIRST"
+        else "EDITORIAL_GOLD"
+    )
+    source_label = f"Source: {source_channel_name}" if show_source_label else ""
     headline = _select_display_headline(candidate=candidate, metadata=metadata)
     headline_primary, headline_emphasis = _split_podcast_spotlight_headline_layers(headline)
     has_emphasis = bool(headline_emphasis.strip())
@@ -1134,6 +1235,8 @@ def _build_layout_options(
         "channel_name_size": 28,
         "channel_tagline_size": 20,
         "source_label_size": 22,
+        "show_source_label": show_source_label,
+        "podcast_spotlight_style": spotlight_style,
         "logo_source": _resolve_string(branding_data.get("logo_internal_url"))
         or _resolve_string(branding_data.get("logo_url")),
     }
@@ -1175,6 +1278,139 @@ def _resolve_multi_subject_count(
     if framing_detection_mode == "FACE_DETECTION_ONLY":
         return detected_face_count
     return max(speaker_count, detected_face_count)
+
+
+def _build_speech_activity_evidence(
+    transcript_segments: list[TranscriptSegment],
+    *,
+    clip_start_seconds: float,
+    clip_duration_seconds: float,
+) -> dict[str, Any]:
+    """Build transcript VAD and trustworthy multi-speaker windows.
+
+    Word/segment timing gates visual mouth motion. Simultaneous speech and
+    sustained fast turn-taking are kept separate so the renderer can use a
+    two-person layout without treating every visible listener as a speaker.
+    """
+    clip_end_seconds = clip_start_seconds + clip_duration_seconds
+    speech_windows: list[dict[str, Any]] = []
+    labelled_windows: list[dict[str, Any]] = []
+    labels: set[str] = set()
+    for segment in transcript_segments:
+        if segment.end_seconds <= clip_start_seconds or segment.start_seconds >= clip_end_seconds:
+            continue
+        spoken_start, spoken_end = _resolve_spoken_segment_bounds(segment)
+        start = max(0.0, spoken_start - clip_start_seconds)
+        end = min(clip_duration_seconds, spoken_end - clip_start_seconds)
+        if end <= start:
+            continue
+        speech_windows.append({"start_seconds": start, "end_seconds": end})
+        label = segment.speaker_label.strip() if isinstance(segment.speaker_label, str) else ""
+        if label:
+            labels.add(label)
+            labelled_windows.append(
+                {"speaker_label": label, "start_seconds": start, "end_seconds": end}
+            )
+
+    speech_windows = _merge_activity_windows(speech_windows, maximum_gap_seconds=0.22)
+    overlap_windows: list[dict[str, Any]] = []
+    boundaries = sorted(
+        {
+            float(window[key])
+            for window in labelled_windows
+            for key in ("start_seconds", "end_seconds")
+        }
+    )
+    for start, end in zip(boundaries, boundaries[1:], strict=False):
+        midpoint = (start + end) / 2
+        active_labels = sorted(
+            {
+                str(window["speaker_label"])
+                for window in labelled_windows
+                if float(window["start_seconds"]) <= midpoint < float(window["end_seconds"])
+            }
+        )
+        if len(active_labels) >= 2:
+            overlap_windows.append(
+                {
+                    "start_seconds": start,
+                    "end_seconds": end,
+                    "speaker_count": min(4, len(active_labels)),
+                    "speaker_labels": active_labels[:4],
+                }
+            )
+
+    overlap_windows = [
+        window
+        for window in _merge_overlap_windows(overlap_windows)
+        if float(window["end_seconds"]) - float(window["start_seconds"]) >= 0.7
+    ]
+    merged_labelled_windows = _merge_adjacent_speaker_windows(labelled_windows)
+    conversation_windows: list[dict[str, Any]] = []
+    for current, following in zip(
+        merged_labelled_windows,
+        merged_labelled_windows[1:],
+        strict=False,
+    ):
+        if current.get("speaker_label") == following.get("speaker_label"):
+            continue
+        current_duration = float(current["end_seconds"]) - float(current["start_seconds"])
+        following_duration = float(following["end_seconds"]) - float(following["start_seconds"])
+        turn_gap = float(following["start_seconds"]) - float(current["end_seconds"])
+        if current_duration < 0.7 or following_duration < 0.7 or turn_gap > 1.0:
+            continue
+        conversation_windows.append(
+            {
+                "start_seconds": max(0.0, float(current["start_seconds"])),
+                "end_seconds": min(clip_duration_seconds, float(following["end_seconds"])),
+                "speaker_count": 2,
+                "speaker_labels": [
+                    str(current["speaker_label"]),
+                    str(following["speaker_label"]),
+                ],
+            }
+        )
+    conversation_windows = _merge_activity_windows(
+        conversation_windows,
+        maximum_gap_seconds=1.0,
+    )
+    return {
+        "source": "transcript_word_vad" if speech_windows else "none",
+        "speech_windows": speech_windows,
+        "overlap_windows": overlap_windows,
+        "conversation_windows": conversation_windows,
+        "speaker_count": len(labels),
+    }
+
+
+def _merge_activity_windows(
+    windows: list[dict[str, Any]],
+    *,
+    maximum_gap_seconds: float,
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for source in sorted(windows, key=lambda item: float(item["start_seconds"])):
+        window = dict(source)
+        if merged and float(window["start_seconds"]) - float(merged[-1]["end_seconds"]) <= maximum_gap_seconds:
+            merged[-1]["end_seconds"] = max(float(merged[-1]["end_seconds"]), float(window["end_seconds"]))
+        else:
+            merged.append(window)
+    return merged
+
+
+def _merge_overlap_windows(windows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for source in windows:
+        window = dict(source)
+        if (
+            merged
+            and merged[-1].get("speaker_labels") == window.get("speaker_labels")
+            and float(window["start_seconds"]) - float(merged[-1]["end_seconds"]) <= 0.08
+        ):
+            merged[-1]["end_seconds"] = float(window["end_seconds"])
+        else:
+            merged.append(window)
+    return merged
 
 
 def _build_active_speaker_strategy(
@@ -1408,6 +1644,20 @@ def _select_display_headline(candidate: Any, metadata: dict[str, Any]) -> str:
 
     selected = max(normalized_options, key=_score_headline_candidate)
     return _normalize_headline_text(selected)
+
+
+def _select_full_display_title(candidate: Any, metadata: dict[str, Any]) -> str:
+    """Return the complete title for the standard opening headline."""
+    raw_candidates = [
+        _resolve_string(getattr(candidate, "title", None)),
+        _resolve_string(metadata.get("thumbnail_text")),
+        _resolve_string(getattr(candidate, "hook_text", None)),
+        _resolve_string(getattr(candidate, "summary", None)),
+    ]
+    for option in raw_candidates:
+        if option:
+            return _normalize_headline_text(option)
+    return "HIGHLIGHT CLIP"
 
 
 def _normalize_headline_candidate(text: str) -> str:
@@ -1904,6 +2154,96 @@ def _wrap_overlay_text(text: str, *, max_chars: int, max_lines: int = 4) -> str:
     if len(lines) > max_lines and limited:
         limited[-1] = limited[-1].rstrip(" .,") + "..."
     return "\n".join(limited)
+
+
+def _wrap_full_overlay_text(text: str, *, max_chars: int, max_lines: int = 4) -> str:
+    """Wrap an overlay without dropping words or adding an ellipsis."""
+    words = [word for word in str(text).split() if word]
+    if not words:
+        return ""
+
+    effective_max_chars = max(1, max_chars)
+    while True:
+        lines: list[str] = []
+        current: list[str] = []
+        current_length = 0
+        for word in words:
+            projected = current_length + len(word) + (1 if current else 0)
+            if current and projected > effective_max_chars:
+                lines.append(" ".join(current))
+                current = [word]
+                current_length = len(word)
+            else:
+                current.append(word)
+                current_length = projected
+        if current:
+            lines.append(" ".join(current))
+        if len(lines) <= max_lines:
+            return "\n".join(lines)
+        effective_max_chars += 1
+
+
+def _suppress_subtitle_cues_before(
+    cues: list[SubtitleCue],
+    minimum_start_seconds: float,
+) -> list[SubtitleCue]:
+    """Keep the standard opening headline free from burned-in subtitles."""
+    threshold = max(0.0, float(minimum_start_seconds))
+    if threshold <= 0.0:
+        return cues
+
+    adjusted: list[SubtitleCue] = []
+    for cue in cues:
+        if cue.end_seconds <= threshold:
+            continue
+        if cue.start_seconds >= threshold:
+            adjusted.append(cue)
+            continue
+
+        remaining_words: list[SubtitleCueWord] = []
+        cursor = cue.start_seconds
+        for word in cue.words:
+            duration_seconds = max(0.01, word.duration_centiseconds / 100.0)
+            word_end = cursor + duration_seconds
+            if word_end > threshold:
+                visible_duration = word_end - max(cursor, threshold)
+                remaining_words.append(
+                    SubtitleCueWord(
+                        text=word.text,
+                        duration_centiseconds=max(1, round(visible_duration * 100)),
+                        line_break_before=(word.line_break_before and bool(remaining_words)),
+                    )
+                )
+            cursor = word_end
+
+        if remaining_words:
+            lines: list[list[str]] = [[]]
+            for word in remaining_words:
+                if word.line_break_before and lines[-1]:
+                    lines.append([])
+                lines[-1].append(word.text)
+            visible_text = "\n".join(" ".join(line) for line in lines if line)
+            adjusted.append(
+                SubtitleCue(
+                    start_seconds=threshold,
+                    end_seconds=cue.end_seconds,
+                    text=visible_text,
+                    words=tuple(remaining_words),
+                )
+            )
+            continue
+
+        # Cues without word timing still remain complete, but begin only after
+        # the opening headline has disappeared.
+        adjusted.append(
+            SubtitleCue(
+                start_seconds=threshold,
+                end_seconds=cue.end_seconds,
+                text=cue.text,
+                words=cue.words,
+            )
+        )
+    return adjusted
 
 
 def _resolve_string(value: Any) -> str | None:

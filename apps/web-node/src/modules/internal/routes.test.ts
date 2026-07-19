@@ -160,7 +160,10 @@ describe("internal clip output routes", () => {
           mimeType: "video/mp4",
           durationMs: 65000n,
           width: 1920,
-          height: 1080
+          height: 1080,
+          metadata: {
+            source_channel_name: "Channel Podcast Asli"
+          }
         }
       }
     });
@@ -198,7 +201,10 @@ describe("internal clip output routes", () => {
         mime_type: "video/mp4",
         duration_ms: "65000",
         width: 1920,
-        height: 1080
+        height: 1080,
+        metadata: {
+          source_channel_name: "Channel Podcast Asli"
+        }
       },
       transcript: {
         language: "id",

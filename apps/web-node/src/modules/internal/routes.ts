@@ -472,7 +472,8 @@ export function internalRouter(projection: JobProjectionService): Router {
             mime_type: sourceMedia.mimeType,
             duration_ms: sourceMedia.durationMs?.toString() ?? null,
             width: sourceMedia.width,
-            height: sourceMedia.height
+            height: sourceMedia.height,
+            metadata: sourceMedia.metadata
           },
           transcript: transcriptWindow,
           output_targets: {

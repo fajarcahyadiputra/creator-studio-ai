@@ -567,6 +567,11 @@ def _select_evenly_spaced_anchors(anchors: list[float], count: int) -> list[floa
 def build_active_face_tracking_samples(
     frame_paths: list[str | Path],
     samples: list[list[dict[str, Any]]],
+    *,
+    sample_offsets_seconds: list[float] | None = None,
+    speech_windows: list[dict[str, Any]] | None = None,
+    overlap_windows: list[dict[str, Any]] | None = None,
+    conversation_windows: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Select the visually active face using lower-face motion.
 
@@ -576,11 +581,33 @@ def build_active_face_tracking_samples(
     """
     previous_grayscale: Any | None = None
     raw_samples: list[dict[str, Any]] = []
+    resolved_offsets = sample_offsets_seconds or []
+    resolved_speech_windows = speech_windows or []
+    resolved_overlap_windows = overlap_windows or []
+    resolved_conversation_windows = conversation_windows or []
+    scoring_anchor: float | None = None
+    scoring_anchor_since = 0.0
 
     for sample_index, frame_path in enumerate(frame_paths):
+        offset_seconds = (
+            float(resolved_offsets[sample_index])
+            if sample_index < len(resolved_offsets)
+            else sample_index * 0.33
+        )
+        speech_active = (
+            _window_is_active(resolved_speech_windows, offset_seconds)
+            if resolved_speech_windows
+            else True
+        )
+        overlapping_speakers = _active_overlap_speaker_count(
+            resolved_overlap_windows,
+            offset_seconds,
+        )
+        conversation_active = _window_is_active(resolved_conversation_windows, offset_seconds)
         faces = _qualify_face_candidates(samples[sample_index]) if sample_index < len(samples) else []
         image = cv2.imread(str(frame_path)) if Path(frame_path).exists() else None
         grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image is not None else None
+        content_density_score = _content_density_score(grayscale) if grayscale is not None else 0.0
         candidates: list[dict[str, float]] = []
 
         if grayscale is not None:
@@ -607,11 +634,56 @@ def build_active_face_tracking_samples(
                             current_grayscale=grayscale,
                             face=face,
                         ),
+                        "visibility_score": _face_visibility_score(
+                            face=face,
+                            image_width=grayscale.shape[1],
+                            image_height=grayscale.shape[0],
+                        ),
                     }
                 )
 
-        candidates.sort(key=lambda item: item["motion_score"], reverse=True)
+        for candidate in candidates:
+            same_scoring_subject = (
+                scoring_anchor is not None
+                and abs(candidate["anchor_ratio"] - scoring_anchor) <= 0.14
+            )
+            speaking_duration = (
+                max(0.0, offset_seconds - scoring_anchor_since)
+                if same_scoring_subject
+                else 0.0
+            )
+            rapid_switch_penalty = (
+                1.2
+                if scoring_anchor is not None
+                and not same_scoring_subject
+                and offset_seconds - scoring_anchor_since < 0.9
+                else 0.0
+            )
+            candidate["voice_activity_score"] = 2.0 if speech_active else 0.0
+            candidate["lip_movement_score"] = min(4.0, candidate["motion_score"] * 0.7)
+            candidate["speaking_duration_score"] = min(1.0, speaking_duration / 1.0)
+            candidate["conversation_context_score"] = 0.4 if conversation_active else 0.0
+            candidate["rapid_switch_penalty"] = rapid_switch_penalty
+            candidate["speaker_score"] = (
+                candidate["voice_activity_score"]
+                + candidate["lip_movement_score"]
+                + candidate["visibility_score"]
+                + candidate["speaking_duration_score"]
+                + candidate["conversation_context_score"]
+                - candidate["rapid_switch_penalty"]
+            )
+        candidates.sort(key=lambda item: item["speaker_score"], reverse=True)
         strongest = candidates[0] if candidates else None
+        if strongest is not None:
+            strongest_anchor = float(strongest["anchor_ratio"])
+            if scoring_anchor is None:
+                scoring_anchor = strongest_anchor
+                scoring_anchor_since = offset_seconds
+            elif abs(strongest_anchor - scoring_anchor) > 0.14:
+                runner_up_speaker_score = candidates[1]["speaker_score"] if len(candidates) > 1 else 0.0
+                if strongest["speaker_score"] - runner_up_speaker_score >= 0.4:
+                    scoring_anchor = strongest_anchor
+                    scoring_anchor_since = offset_seconds
         runner_up_score = candidates[1]["motion_score"] if len(candidates) > 1 else 0.0
         strongest_score = strongest["motion_score"] if strongest else 0.0
         confidence = (
@@ -620,13 +692,12 @@ def build_active_face_tracking_samples(
             else 0.0
         )
         active_subjects: list[dict[str, float]] = []
-        if strongest is not None:
-            # A visible face is enough for a single-speaker crop, but never
-            # enough to create extra panels. Additional panels require
-            # independent, meaningful lower-face motion.
+        if strongest is not None and (speech_active or not resolved_speech_windows):
+            # Mouth motion associates an active voice with a visible face. It
+            # must never invent additional voices from reactions or gestures.
             active_subjects.append(strongest)
-            if strongest_score >= 1.5:
-                for candidate in candidates[1:4]:
+            if overlapping_speakers >= 2 and strongest_score >= 1.5:
+                for candidate in candidates[1 : min(4, overlapping_speakers)]:
                     if candidate["motion_score"] < 1.5:
                         continue
                     if candidate["motion_score"] < strongest_score * 0.55:
@@ -641,12 +712,28 @@ def build_active_face_tracking_samples(
         raw_samples.append(
             {
                 "sample_index": sample_index,
+                "offset_seconds": round(offset_seconds, 3),
                 "anchor_ratio": strongest["anchor_ratio"] if strongest else None,
                 "face_left_ratio": strongest["face_left_ratio"] if strongest else None,
                 "face_right_ratio": strongest["face_right_ratio"] if strongest else None,
                 "face_count": len(faces),
                 "motion_score": round(strongest_score, 3),
                 "motion_confidence": round(confidence, 3),
+                "speaker_score": round(float(strongest.get("speaker_score") or 0.0), 3) if strongest else 0.0,
+                "speaker_score_components": (
+                    {
+                        "voice_activity": round(float(strongest["voice_activity_score"]), 3),
+                        "lip_movement": round(float(strongest["lip_movement_score"]), 3),
+                        "face_visibility": round(float(strongest["visibility_score"]), 3),
+                        "speaking_duration": round(float(strongest["speaking_duration_score"]), 3),
+                        "conversation_context": round(float(strongest["conversation_context_score"]), 3),
+                        "rapid_switch_penalty": round(float(strongest["rapid_switch_penalty"]), 3),
+                    }
+                    if strongest
+                    else {}
+                ),
+                "speech_active": speech_active,
+                "voice_overlap_count": overlapping_speakers,
                 "active_speaker_count": len(active_subjects),
                 "active_subject_anchor_ratios": [
                     round(subject["anchor_ratio"], 4) for subject in active_subjects
@@ -658,12 +745,184 @@ def build_active_face_tracking_samples(
                     }
                     for subject in active_subjects
                 ],
+                "visible_subject_anchor_ratios": [
+                    round(subject["anchor_ratio"], 4)
+                    for subject in sorted(candidates, key=lambda item: item["anchor_ratio"])
+                ],
+                "visible_subject_bounds_ratios": [
+                    {
+                        "left": round(subject["face_left_ratio"], 4),
+                        "right": round(subject["face_right_ratio"], 4),
+                    }
+                    for subject in sorted(candidates, key=lambda item: item["anchor_ratio"])
+                ],
+                "visible_subject_motion_scores": [
+                    round(subject["motion_score"], 3)
+                    for subject in sorted(candidates, key=lambda item: item["anchor_ratio"])
+                ],
+                "content_density_score": round(content_density_score, 4),
+                "content_frame_candidate": len(faces) == 0 and content_density_score >= 0.08,
             }
         )
         if grayscale is not None:
             previous_grayscale = grayscale
 
-    return _stabilize_active_face_samples(raw_samples)
+    stabilized = _stabilize_active_face_samples(raw_samples)
+    stabilized = _annotate_conversation_layout_samples(
+        stabilized,
+        conversation_windows=resolved_conversation_windows,
+    )
+    return _apply_active_tracking_quality_gate(stabilized)
+
+
+def _face_visibility_score(
+    *,
+    face: dict[str, Any],
+    image_width: int,
+    image_height: int,
+) -> float:
+    width = max(0.0, float(face.get("width") or 0.0))
+    height = max(0.0, float(face.get("height") or 0.0))
+    area_ratio = (width * height) / max(float(image_width * image_height), 1.0)
+    left = float(face.get("x") or 0.0) / max(float(image_width), 1.0)
+    right = (float(face.get("x") or 0.0) + width) / max(float(image_width), 1.0)
+    edge_penalty = 1.0 if left <= 0.01 or right >= 0.99 else 0.0
+    detector_confidence = min(1.0, max(0.0, float(face.get("confidence") or 0.5)))
+    return max(0.0, min(2.0, (area_ratio * 8.0) + detector_confidence - edge_penalty))
+
+
+def _content_density_score(grayscale: Any) -> float:
+    """Estimate whether a face-free frame contains text or shared content.
+
+    Dense horizontal edge bands are common in slides, screen shares, and
+    document footage. This signal is deliberately ignored whenever a reliable
+    face is present so normal studio backgrounds cannot steal the crop.
+    """
+    if grayscale is None or getattr(grayscale, "size", 0) == 0:
+        return 0.0
+    edges = cv2.Canny(grayscale, 70, 160)
+    edge_ratio = float(cv2.countNonZero(edges)) / max(float(edges.size), 1.0)
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 2))
+    horizontal_bands = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, horizontal_kernel)
+    band_ratio = float(cv2.countNonZero(horizontal_bands)) / max(float(horizontal_bands.size), 1.0)
+    return min(1.0, (edge_ratio * 2.4) + (band_ratio * 1.2))
+
+
+def _annotate_conversation_layout_samples(
+    samples: list[dict[str, Any]],
+    *,
+    conversation_windows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Mark short, trustworthy multi-speaker layout windows.
+
+    A second visible face never enables split screen by itself. Split becomes
+    eligible only after diarization reports a fast exchange or visual mouth
+    tracking confirms a stable speaker change. A strong listener reaction may
+    briefly use the two-person layout, but is capped at 1.2 seconds.
+    """
+    if not samples:
+        return samples
+
+    visual_windows: list[tuple[float, float]] = []
+    previous_anchor: float | None = None
+    previous_switch_seconds = 0.0
+    for sample in samples:
+        anchor = sample.get("anchor_ratio")
+        offset = float(sample.get("offset_seconds") or 0.0)
+        source = str(sample.get("selection_source") or "")
+        if not isinstance(anchor, (int, float)):
+            continue
+        normalized_anchor = float(anchor)
+        if previous_anchor is None:
+            previous_anchor = normalized_anchor
+            previous_switch_seconds = offset
+            continue
+        if abs(normalized_anchor - previous_anchor) < 0.18:
+            continue
+        previous_turn_duration = offset - previous_switch_seconds
+        if source in {"strong_mouth_motion", "confirmed_mouth_motion"} and previous_turn_duration >= 0.7:
+            visual_windows.append((max(0.0, offset - 0.9), offset + 1.5))
+            previous_switch_seconds = offset
+            previous_anchor = normalized_anchor
+
+    reaction_until = -1.0
+    for sample in samples:
+        offset = float(sample.get("offset_seconds") or 0.0)
+        visible_anchors = sample.get("visible_subject_anchor_ratios")
+        visible_bounds = sample.get("visible_subject_bounds_ratios")
+        motion_scores = sample.get("visible_subject_motion_scores")
+        current_anchor = sample.get("anchor_ratio")
+        if not isinstance(visible_anchors, list) or len(visible_anchors) < 2:
+            continue
+
+        explicit_conversation = _window_is_active(conversation_windows, offset)
+        visual_conversation = any(start <= offset <= end for start, end in visual_windows)
+        reaction_active = offset <= reaction_until
+        if (
+            not explicit_conversation
+            and not visual_conversation
+            and isinstance(motion_scores, list)
+            and isinstance(current_anchor, (int, float))
+        ):
+            alternate_motion = max(
+                (
+                    float(score)
+                    for anchor, score in zip(visible_anchors, motion_scores, strict=False)
+                    if isinstance(anchor, (int, float))
+                    and isinstance(score, (int, float))
+                    and abs(float(anchor) - float(current_anchor)) >= 0.18
+                ),
+                default=0.0,
+            )
+            if alternate_motion >= 4.0:
+                reaction_until = offset + 1.2
+                reaction_active = True
+
+        if not (explicit_conversation or visual_conversation or reaction_active):
+            continue
+
+        selected_anchors = _select_evenly_spaced_anchors(
+            [float(value) for value in visible_anchors if isinstance(value, (int, float))],
+            min(2, len(visible_anchors)),
+        )
+        if len(selected_anchors) < 2:
+            continue
+        sample["active_subject_anchor_ratios"] = [round(value, 4) for value in selected_anchors]
+        sample["active_subject_bounds_ratios"] = (
+            visible_bounds[: len(selected_anchors)] if isinstance(visible_bounds, list) else []
+        )
+        sample["active_speaker_count"] = len(selected_anchors)
+        sample["conversation_layout"] = explicit_conversation or visual_conversation
+        sample["reaction_layout"] = reaction_active and not (explicit_conversation or visual_conversation)
+
+    return samples
+
+
+def _window_is_active(windows: list[dict[str, Any]], offset_seconds: float) -> bool:
+    return any(
+        isinstance(window, dict)
+        and isinstance(window.get("start_seconds"), (int, float))
+        and isinstance(window.get("end_seconds"), (int, float))
+        and float(window["start_seconds"]) <= offset_seconds <= float(window["end_seconds"])
+        for window in windows
+    )
+
+
+def _active_overlap_speaker_count(windows: list[dict[str, Any]], offset_seconds: float) -> int:
+    for window in windows:
+        if not isinstance(window, dict):
+            continue
+        start = window.get("start_seconds")
+        end = window.get("end_seconds")
+        count = window.get("speaker_count")
+        if (
+            isinstance(start, (int, float))
+            and isinstance(end, (int, float))
+            and isinstance(count, int)
+            and float(start) <= offset_seconds <= float(end)
+        ):
+            return min(4, max(0, count))
+    return 0
 
 
 def apply_active_speaker_tracking(
@@ -689,10 +948,18 @@ def apply_active_speaker_tracking(
             for anchor in anchors[:4]
             if isinstance(anchor, (int, float))
         ]
+        voice_overlap_count = int(sample.get("voice_overlap_count") or 0)
+        multi_speaker_layout = bool(sample.get("conversation_layout") or sample.get("reaction_layout"))
+        if voice_overlap_count < 2 and not multi_speaker_layout and len(normalized_anchors) > 1:
+            normalized_anchors = normalized_anchors[:1]
         normalized_bounds = bounds[: len(normalized_anchors)] if isinstance(bounds, list) else []
         active_pairs.append(
             {
                 "sample_index": index,
+                "offset_seconds": sample.get("offset_seconds"),
+                "voice_overlap_count": voice_overlap_count,
+                "conversation_layout": bool(sample.get("conversation_layout")),
+                "reaction_layout": bool(sample.get("reaction_layout")),
                 "face_count": len(normalized_anchors),
                 "raw_face_count": len(normalized_anchors),
                 "active_speaker_count": len(normalized_anchors),
@@ -709,10 +976,21 @@ def apply_active_speaker_tracking(
         confirmed_count = int(pair.get("face_count") or 0)
         pair["active_speaker_count"] = confirmed_count
 
+    tracking_quality = next(
+        (
+            sample.get("tracking_quality")
+            for sample in reversed(tracking_samples)
+            if isinstance(sample.get("tracking_quality"), dict)
+        ),
+        {},
+    )
+    quality_allows_split = tracking_quality.get("passed") is not False
     stable_counts = {
         count: sum(1 for pair in active_pairs if int(pair.get("active_speaker_count") or 0) >= count)
         for count in range(2, 5)
     }
+    if not quality_allows_split:
+        stable_counts = {count: 0 for count in range(2, 5)}
     adaptive_panel_count = 1
     for count in range(2, 5):
         if stable_counts[count] >= 2:
@@ -737,7 +1015,7 @@ def apply_active_speaker_tracking(
         {
             "active_face_tracking_samples": tracking_samples,
             "sample_anchor_pairs": active_pairs,
-            "supports_split_frame": stable_split_samples >= 2,
+            "supports_split_frame": quality_allows_split and stable_split_samples >= 2,
             "adaptive_panel_count": adaptive_panel_count,
             "stable_panel_counts": stable_counts,
             "subject_anchor_ratios": [
@@ -762,7 +1040,15 @@ def apply_active_speaker_tracking(
                 if any(int(pair.get("active_speaker_count") or 0) == 1 for pair in active_pairs)
                 else "no_active_speaker_evidence"
             ),
-            "split_evidence_source": "active_speaker_motion",
+            "split_evidence_source": (
+                "diarized_voice_overlap"
+                if any(int(pair.get("voice_overlap_count") or 0) >= 2 for pair in active_pairs)
+                else "speaker_turn_taking"
+                if any(pair.get("conversation_layout") is True for pair in active_pairs)
+                else "strong_reaction"
+                if any(pair.get("reaction_layout") is True for pair in active_pairs)
+                else "transcript_vad_face_association"
+            ),
         }
     )
     return projected
@@ -824,7 +1110,8 @@ def _stabilize_active_face_samples(raw_samples: list[dict[str, Any]]) -> list[di
     current_left_ratio: float | None = None
     current_right_ratio: float | None = None
     pending_anchor: float | None = None
-    pending_count = 0
+    pending_since: float | None = None
+    last_switch_seconds = -10.0
     stabilized: list[dict[str, Any]] = []
 
     for sample in raw_samples:
@@ -832,45 +1119,68 @@ def _stabilize_active_face_samples(raw_samples: list[dict[str, Any]]) -> list[di
         face_count = int(sample.get("face_count") or 0)
         score = float(sample.get("motion_score") or 0.0)
         confidence = float(sample.get("motion_confidence") or 0.0)
+        offset_seconds = float(sample.get("offset_seconds") or (len(stabilized) * 0.33))
+        speech_active = sample.get("speech_active") is not False
         source = "hold"
         accepted_candidate = False
 
         if isinstance(candidate, (int, float)):
             candidate = min(1.0, max(0.0, float(candidate)))
             if current_anchor is None:
+                initial_face_is_reliable = face_count == 1 or (
+                    score >= 1.2 and confidence >= 0.08
+                )
+                if not speech_active or not initial_face_is_reliable:
+                    stabilized.append(
+                        {
+                            **sample,
+                            "anchor_ratio": None,
+                            "face_left_ratio": None,
+                            "face_right_ratio": None,
+                            "active_subject_anchor_ratios": [],
+                            "active_subject_bounds_ratios": [],
+                            "active_speaker_count": 0,
+                            "selection_source": (
+                                "vad_silence"
+                                if not speech_active
+                                else "waiting_for_voice_face_association"
+                            ),
+                        }
+                    )
+                    continue
                 current_anchor = candidate
+                last_switch_seconds = offset_seconds
                 source = "initial_face"
                 accepted_candidate = True
-            elif face_count == 1:
-                current_anchor = candidate
-                pending_anchor = None
-                pending_count = 0
-                source = "single_visible_face"
-                accepted_candidate = True
             elif abs(candidate - current_anchor) <= 0.12:
-                current_anchor = candidate
+                # Follow small head movement without treating it as a switch.
+                current_anchor = (current_anchor * 0.72) + (candidate * 0.28)
                 pending_anchor = None
-                pending_count = 0
+                pending_since = None
                 source = "same_active_face"
                 accepted_candidate = True
-            else:
-                strong_switch = score >= 2.2 and confidence >= 0.16
-                if strong_switch:
+            elif speech_active:
+                hold_elapsed = offset_seconds - last_switch_seconds
+                strong_switch = score >= 2.6 and confidence >= 0.28
+                if strong_switch and hold_elapsed >= 0.9:
                     current_anchor = candidate
+                    last_switch_seconds = offset_seconds
                     pending_anchor = None
-                    pending_count = 0
+                    pending_since = None
                     source = "strong_mouth_motion"
                     accepted_candidate = True
                 else:
                     if pending_anchor is not None and abs(candidate - pending_anchor) <= 0.12:
-                        pending_count += 1
+                        pending_since = pending_since if pending_since is not None else offset_seconds
                     else:
                         pending_anchor = candidate
-                        pending_count = 1
-                    if pending_count >= 2:
+                        pending_since = offset_seconds
+                    pending_elapsed = offset_seconds - float(pending_since)
+                    if confidence >= 0.14 and hold_elapsed >= 0.9 and pending_elapsed >= 0.70:
                         current_anchor = candidate
+                        last_switch_seconds = offset_seconds
                         pending_anchor = None
-                        pending_count = 0
+                        pending_since = None
                         source = "confirmed_mouth_motion"
                         accepted_candidate = True
 
@@ -915,3 +1225,87 @@ def _stabilize_active_face_samples(raw_samples: list[dict[str, Any]]) -> list[di
             sample["selection_source"] = "leading_face_backfill"
 
     return stabilized
+
+
+def _apply_active_tracking_quality_gate(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Annotate and suppress unsafe tracking states before FFmpeg rendering."""
+    previous_anchor: float | None = None
+    switch_count = 0
+    edge_clipped_count = 0
+    empty_count = 0
+    for sample in samples:
+        anchor = sample.get("anchor_ratio")
+        left = sample.get("face_left_ratio")
+        right = sample.get("face_right_ratio")
+        if not isinstance(anchor, (int, float)):
+            empty_count += 1
+            continue
+        if previous_anchor is not None and abs(float(anchor) - previous_anchor) >= 0.18:
+            switch_count += 1
+        previous_anchor = float(anchor)
+        if (
+            isinstance(left, (int, float))
+            and isinstance(right, (int, float))
+            and (float(left) <= 0.015 or float(right) >= 0.985)
+        ):
+            edge_clipped_count += 1
+
+    duration_seconds = max(
+        (float(sample.get("offset_seconds") or 0.0) for sample in samples),
+        default=0.0,
+    )
+    maximum_switches = max(2, int(duration_seconds / 4.0) + 1)
+    quality_passed = switch_count <= maximum_switches and edge_clipped_count == 0 and empty_count < len(samples)
+    fallback_applied = False
+    unsafe_tracking = (
+        switch_count > maximum_switches
+        or edge_clipped_count > 0
+        or empty_count == len(samples)
+    )
+    if samples and unsafe_tracking:
+        # Reject noisy, edge-clipped, or empty tracking rather than rendering
+        # camera jumps or a partially visible subject. Prefer anchors whose
+        # detected face bounds are safely inside the frame, then fall back to
+        # all detected anchors or the center of the source.
+        safe_anchors = [
+            float(sample["anchor_ratio"])
+            for sample in samples
+            if isinstance(sample.get("anchor_ratio"), (int, float))
+            and isinstance(sample.get("face_left_ratio"), (int, float))
+            and isinstance(sample.get("face_right_ratio"), (int, float))
+            and float(sample["face_left_ratio"]) > 0.015
+            and float(sample["face_right_ratio"]) < 0.985
+        ]
+        anchors = safe_anchors or [
+            float(sample["anchor_ratio"])
+            for sample in samples
+            if isinstance(sample.get("anchor_ratio"), (int, float))
+        ]
+        if anchors:
+            buckets: dict[int, list[float]] = {}
+            for anchor in anchors:
+                buckets.setdefault(int(round(anchor / 0.12)), []).append(anchor)
+            stable_bucket = max(buckets.values(), key=len)
+            stable_anchor = sum(stable_bucket) / len(stable_bucket)
+        else:
+            stable_anchor = 0.5
+        for sample in samples:
+            sample["anchor_ratio"] = round(stable_anchor, 4)
+            sample["face_left_ratio"] = None
+            sample["face_right_ratio"] = None
+            sample["active_subject_anchor_ratios"] = [round(stable_anchor, 4)]
+            sample["active_subject_bounds_ratios"] = []
+            sample["active_speaker_count"] = min(1, int(sample.get("active_speaker_count") or 0))
+            sample["selection_source"] = "quality_gate_stable_anchor"
+        fallback_applied = True
+    for sample in samples:
+        sample["tracking_quality"] = {
+            "passed": quality_passed,
+            "switch_count": switch_count,
+            "maximum_switches": maximum_switches,
+            "edge_clipped_sample_count": edge_clipped_count,
+            "empty_sample_count": empty_count,
+            "zoom_change_count": 0,
+            "fallback_applied": fallback_applied,
+        }
+    return samples

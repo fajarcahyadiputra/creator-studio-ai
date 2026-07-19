@@ -2,7 +2,7 @@ from typing import Any
 
 from app.domain.contracts import AnalysisInputs
 
-AUTO_CLIP_ANALYZER_PROMPT_VERSION = "phase2-candidate-analyzer-v8"
+AUTO_CLIP_ANALYZER_PROMPT_VERSION = "phase2-candidate-analyzer-v9"
 
 
 def build_candidate_analyzer_system_prompt() -> str:
@@ -17,6 +17,9 @@ def build_candidate_analyzer_system_prompt() -> str:
         "Prioritize retention spikes, scroll-stopping opening lines, conflict, reframing, sharp insight, emotional tension, story payoff, punchlines, sharp answers, and endings that can trigger comments or shares. "
         "Always optimize for three things together: a very strong opening, a complete idea, and a satisfying ending. "
         "Maximum duration is a hard ceiling, never a target. "
+        "Minimum duration is also a hard floor from the user configuration. Never return a candidate shorter than that floor. "
+        "Search across the full supplied transcript and return as many distinct valid candidates as target_candidate_count requests when the source supports them. "
+        "Every returned candidate must satisfy the configured duration range and minimum viral score; weak or out-of-range candidates are discarded by the pipeline. "
         "End the clip as soon as the hook, minimum context, main value, and payoff or punchline are complete. "
         "Prefer self-contained clips that can stand alone without requiring long setup. "
         "Reject clips that depend on too much missing context, start with greetings or warm-up talk, or spend too long before the real point begins. "
@@ -271,6 +274,22 @@ def build_candidate_analyzer_payload(
                 "humor": "momen lucu yang tetap punya konteks",
                 "other": "momen kuat lain yang tidak pas dengan kategori di atas",
             },
+        },
+        "candidate_generation_contract": {
+            "requested_candidate_count": strategy_payload.get("candidate_pool_count")
+            or strategy_payload.get("desired_clip_count"),
+            "minimum_required_count": strategy_payload.get("desired_clip_count"),
+            "minimum_duration_seconds_hard_floor": strategy_payload.get("minimum_duration_seconds"),
+            "maximum_duration_seconds_hard_ceiling": strategy_payload.get("maximum_duration_seconds"),
+            "minimum_viral_score_hard_floor": strategy_payload.get("minimum_viral_score"),
+            "requirements": [
+                "Scan the entire supplied transcript instead of stopping after the first strong moments.",
+                "Return distinct moments from different source ranges whenever possible.",
+                "Do not return a candidate below the minimum duration; extend only with relevant context and a complete payoff.",
+                "Do not return a candidate above the maximum duration.",
+                "Do not return a candidate whose final_viral_score is below the configured minimum.",
+                "Keep candidate_count exactly equal to the number of candidate objects returned.",
+            ],
         },
         "user_editor_briefs": {
             "content_context": content_payload.get("context"),

@@ -741,6 +741,12 @@ dashboardRouter.get(
             !Array.isArray(analyzer.candidate_source_counts)
               ? (analyzer.candidate_source_counts as Record<string, unknown>)
               : {};
+          const providerCandidateAudit =
+            analyzer.provider_candidate_audit &&
+            typeof analyzer.provider_candidate_audit === "object" &&
+            !Array.isArray(analyzer.provider_candidate_audit)
+              ? (analyzer.provider_candidate_audit as Record<string, unknown>)
+              : {};
 
           return {
             analysisMode,
@@ -762,7 +768,49 @@ dashboardRouter.get(
             openaiCandidateCount:
               typeof candidateSourceCounts.openai === "number" ? candidateSourceCounts.openai : null,
             heuristicCandidateCount:
-              typeof candidateSourceCounts.heuristic === "number" ? candidateSourceCounts.heuristic : null
+              typeof candidateSourceCounts.heuristic === "number" ? candidateSourceCounts.heuristic : null,
+            providerCandidateAudit: {
+              rawCandidateCount:
+                typeof providerCandidateAudit.raw_candidate_count === "number"
+                  ? providerCandidateAudit.raw_candidate_count
+                  : null,
+              acceptedBeforeNormalization:
+                typeof providerCandidateAudit.accepted_before_normalization === "number"
+                  ? providerCandidateAudit.accepted_before_normalization
+                  : null,
+              acceptedAfterDeduplication:
+                typeof providerCandidateAudit.accepted_after_deduplication === "number"
+                  ? providerCandidateAudit.accepted_after_deduplication
+                  : null,
+              rejectedBelowMinimumScore:
+                typeof providerCandidateAudit.rejected_below_minimum_score === "number"
+                  ? providerCandidateAudit.rejected_below_minimum_score
+                  : null,
+              rejectedBelowMinimumDuration:
+                typeof providerCandidateAudit.rejected_below_minimum_duration === "number"
+                  ? providerCandidateAudit.rejected_below_minimum_duration
+                  : null,
+              rejectedAboveMaximumDuration:
+                typeof providerCandidateAudit.rejected_above_maximum_duration === "number"
+                  ? providerCandidateAudit.rejected_above_maximum_duration
+                  : null,
+              removedByDeduplication:
+                typeof providerCandidateAudit.removed_by_deduplication === "number"
+                  ? providerCandidateAudit.removed_by_deduplication
+                  : null,
+              minimumViralScore:
+                typeof providerCandidateAudit.minimum_viral_score === "number"
+                  ? providerCandidateAudit.minimum_viral_score
+                  : null,
+              minimumDurationSeconds:
+                typeof providerCandidateAudit.minimum_duration_seconds === "number"
+                  ? providerCandidateAudit.minimum_duration_seconds
+                  : null,
+              maximumDurationSeconds:
+                typeof providerCandidateAudit.maximum_duration_seconds === "number"
+                  ? providerCandidateAudit.maximum_duration_seconds
+                  : null
+            }
           };
         })(),
         tts: ttsSummary
@@ -895,6 +943,10 @@ dashboardRouter.get(
                 aspectRatio: toOptionalString(visualConfig.aspect_ratio),
                 cropStrategy: toOptionalString(visualConfig.crop_strategy),
                 layoutTemplate: toOptionalString(toJsonRecord(visualConfig.settings).layout_template) ?? "STANDARD",
+                podcastSourceEnabled:
+                  toOptionalBoolean(toJsonRecord(visualConfig.settings).podcast_source_enabled) ?? true,
+                podcastSpotlightStyle:
+                  toOptionalString(toJsonRecord(visualConfig.settings).podcast_spotlight_style) ?? "EDITORIAL_GOLD",
                 headlineOverlayEnabled:
                   toOptionalBoolean(toJsonRecord(visualConfig.settings).headline_overlay_enabled) ?? true,
                 headlineOverlayPosition:
@@ -1374,6 +1426,8 @@ function buildAutoClipFormDefaults(
     subtitleMaxLines: 2,
     subtitleSafeMarginPercent: 12,
     layoutTemplate: "STANDARD",
+    podcastSourceEnabled: true,
+    podcastSpotlightStyle: "EDITORIAL_GOLD",
     headlineOverlayEnabled: true,
     headlineOverlayPosition: "BOTTOM",
     framingDetectionMode: "COMBINED",
@@ -1489,6 +1543,14 @@ function mergeAutoClipDefaults(
       toStringValue(presetConfig.layout_template)
       ?? toStringValue(presetConfig.layoutTemplate)
       ?? baseDefaults.layoutTemplate,
+    podcastSourceEnabled:
+      toOptionalBoolean(presetConfig.podcast_source_enabled)
+      ?? toOptionalBoolean(presetConfig.podcastSourceEnabled)
+      ?? baseDefaults.podcastSourceEnabled,
+    podcastSpotlightStyle:
+      toStringValue(presetConfig.podcast_spotlight_style)
+      ?? toStringValue(presetConfig.podcastSpotlightStyle)
+      ?? baseDefaults.podcastSpotlightStyle,
     headlineOverlayEnabled:
       toOptionalBoolean(presetConfig.headline_overlay_enabled)
       ?? toOptionalBoolean(presetConfig.headlineOverlayEnabled)

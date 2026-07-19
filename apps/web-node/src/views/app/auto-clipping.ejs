@@ -221,7 +221,23 @@
           <div class="col-md-4"><label class="form-label">Aspect ratio</label><select class="form-select" name="aspect_ratio"><option <%= formDefaults.aspectRatio === '9:16' ? 'selected' : '' %>>9:16</option><option <%= formDefaults.aspectRatio === '1:1' ? 'selected' : '' %>>1:1</option><option <%= formDefaults.aspectRatio === '4:5' ? 'selected' : '' %>>4:5</option><option <%= formDefaults.aspectRatio === '16:9' ? 'selected' : '' %>>16:9</option></select></div>
           <div class="col-md-4" data-crop-strategy-panel><label class="form-label">Crop dan speaker</label><select class="form-select" name="crop_strategy"><option value="SMART_SPEAKER" <%= ['SMART_SPEAKER','ACTIVE_SPEAKER','SPLIT_SCREEN'].includes(formDefaults.cropStrategy) ? 'selected' : '' %>>Smart speaker - adaptif 1-4 wajah</option><option value="AUTO_REFRAME" <%= formDefaults.cropStrategy === 'AUTO_REFRAME' ? 'selected' : '' %>>Auto reframe umum</option><option value="FACE_TRACKING" <%= formDefaults.cropStrategy === 'FACE_TRACKING' ? 'selected' : '' %>>Tracking satu wajah</option><option value="CENTER" <%= formDefaults.cropStrategy === 'CENTER' ? 'selected' : '' %>>Center crop</option><option value="SPEAKER_AND_SCREEN" <%= formDefaults.cropStrategy === 'SPEAKER_AND_SCREEN' ? 'selected' : '' %>>Speaker dan screen share</option></select><div class="form-text">Satu pembicara memenuhi layar. Saat 2-4 wajah terlihat stabil, layout otomatis berubah menjadi split yang rapi tanpa menduplikasi orang yang sama.</div></div>
           <div class="col-md-6" data-layout-panel="9:16"><label class="form-label">9:16 layout template</label><select class="form-select" name="layout_template"><option value="STANDARD" <%= formDefaults.layoutTemplate === 'STANDARD' ? 'selected' : '' %>>Standard - video memenuhi canvas</option><option value="PODCAST_SPOTLIGHT_9X16" <%= formDefaults.layoutTemplate === 'PODCAST_SPOTLIGHT_9X16' ? 'selected' : '' %>>Podcast spotlight - branded frame</option></select><div class="form-text">Standard mendukung headline overlay opsional. Podcast spotlight memakai layout branding lengkap.</div></div>
-          <div class="col-md-6" data-layout-panel="9:16"><label class="form-label">Channel branding source</label><div class="form-control bg-light d-flex align-items-center"><span><strong><%= formDefaults.channelName || 'Display name user' %></strong><%= formDefaults.channelTagline ? ` - ${formDefaults.channelTagline}` : '' %></span></div><div class="form-text">Nama channel diambil dari Settings user. Logo akan mengikuti logo channel di Settings, lalu fallback ke brand kit jika tersedia.</div></div>
+          <div class="col-md-6" data-layout-panel="9:16"><label class="form-label">Branding header</label><div class="form-control bg-light d-flex align-items-center"><span><strong><%= formDefaults.channelName || 'Display name user' %></strong><%= formDefaults.channelTagline ? ` - ${formDefaults.channelTagline}` : '' %></span></div><div class="form-text">Nama dan logo header mengikuti Settings user. Label source di bagian bawah memakai nama channel YouTube dari video.</div></div>
+          <div class="col-12" data-layout-panel="9:16" data-podcast-spotlight-panel>
+            <div class="auto-clip-inline-options">
+              <label class="form-check mb-0">
+                <input class="form-check-input" type="checkbox" name="podcast_source_enabled" <%= formDefaults.podcastSourceEnabled !== false ? 'checked' : '' %>>
+                <span class="form-check-label">Tampilkan source channel</span>
+              </label>
+              <div>
+                <label class="form-label" for="podcast_spotlight_style">Style Podcast Spotlight</label>
+                <select class="form-select" id="podcast_spotlight_style" name="podcast_spotlight_style">
+                  <option value="EDITORIAL_GOLD" <%= formDefaults.podcastSpotlightStyle !== 'VIDEO_FIRST' ? 'selected' : '' %>>Editorial Gold - headline dominan</option>
+                  <option value="VIDEO_FIRST" <%= formDefaults.podcastSpotlightStyle === 'VIDEO_FIRST' ? 'selected' : '' %>>Video First - panel video lebih besar</option>
+                </select>
+              </div>
+              <p class="form-text mb-0">Source otomatis membaca nama channel YouTube. Untuk file upload, sistem memakai nama channel dari Settings sebagai fallback.</p>
+            </div>
+          </div>
           <div class="col-12" data-layout-panel="9:16" data-standard-headline-panel>
             <div class="auto-clip-inline-options">
               <label class="form-check mb-0">

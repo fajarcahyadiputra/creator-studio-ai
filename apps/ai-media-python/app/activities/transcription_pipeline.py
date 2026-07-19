@@ -203,6 +203,11 @@ def _transcribe_sync(plan: TranscriptionPlan, settings: Any) -> TranscriptDocume
         plan.audio_path,
         language=plan.language_hint,
         word_timestamps=True,
+        vad_filter=True,
+        vad_parameters={
+            "min_silence_duration_ms": 350,
+            "speech_pad_ms": 180,
+        },
     )
     return build_transcript_document(
         language=(info.language or plan.language_hint or "und"),
