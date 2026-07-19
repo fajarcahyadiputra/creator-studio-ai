@@ -11,7 +11,9 @@ from app.activities.render_outputs import (
     _build_active_speaker_strategy,
     _build_subtitle_cues,
     _detect_face_layout_summary,
+    _estimate_ass_word_width,
     _render_ass,
+    _resolve_ass_word_spacing,
     _run_command_with_heartbeat,
     execute_clip_output_render,
 )
@@ -531,6 +533,21 @@ def test_render_ass_outputs_timed_blue_mint_word_highlight_events() -> None:
     assert "Dialogue: 2,0:00:00.80,0:00:01.60,Highlight" in rendered
     assert "PERBATASAN" in rendered
     assert "JAWA" in rendered
+
+
+def test_uppercase_highlight_layout_keeps_bold_words_visibly_separated() -> None:
+    uppercase_words = [
+        SubtitleCueWord(text="KONSTIKS", duration_centiseconds=80),
+        SubtitleCueWord(text="PEMBURU", duration_centiseconds=80),
+    ]
+    lowercase_words = [
+        SubtitleCueWord(text="konstiks", duration_centiseconds=80),
+        SubtitleCueWord(text="pemburu", duration_centiseconds=80),
+    ]
+
+    assert _estimate_ass_word_width("KONSTIKS", 62) > _estimate_ass_word_width("konstiks", 62)
+    assert _resolve_ass_word_spacing(uppercase_words, 62) == pytest.approx(28.52)
+    assert _resolve_ass_word_spacing(lowercase_words, 62) == pytest.approx(19.84)
 
 
 def test_apply_subtitle_text_case_preserves_word_timing_and_line_breaks() -> None:

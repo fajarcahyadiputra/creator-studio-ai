@@ -2819,7 +2819,7 @@ def _render_ass_word_highlight_events(
     positions: list[tuple[SubtitleCueWord, int, int, float]] = []
     for line_index, line in enumerate(lines):
         widths = [_estimate_ass_word_width(word.text, font_size) for word in line]
-        spacing = max(12.0, font_size * 0.32)
+        spacing = _resolve_ass_word_spacing(line, font_size)
         line_width = sum(widths) + (spacing * max(0, len(line) - 1))
         cursor_x = 540.0 - (line_width / 2)
         line_y = int(round(first_line_y + (line_index * line_height)))
@@ -2902,15 +2902,36 @@ def _render_ass_highlight_backplate_events(
 def _estimate_ass_word_width(text: str, font_size: int) -> float:
     width_units = 0.0
     for character in text:
-        if character in "ilI.,'`!|:;":
+        if character in ".,'`!|:;":
             width_units += 0.30
-        elif character in "mwMW@#%&":
+        elif character in "iljtfrI":
+            width_units += 0.34
+        elif character in "MW@#%&":
+            width_units += 0.94
+        elif character.isupper():
+            # Arial Bold capitals are wider than lowercase glyphs. Each word
+            # is positioned independently, so underestimating uppercase text
+            # makes adjacent words overlap despite a space in the source cue.
+            width_units += 0.68
+        elif character in "mw":
             width_units += 0.86
         elif character.isspace():
             width_units += 0.32
         else:
             width_units += 0.58
     return max(font_size * 0.55, width_units * font_size)
+
+
+def _resolve_ass_word_spacing(words: list[SubtitleCueWord], font_size: int) -> float:
+    visible_characters = "".join(word.text for word in words if word.text)
+    uppercase_letters = sum(character.isupper() for character in visible_characters)
+    letters = sum(character.isalpha() for character in visible_characters)
+    uppercase_ratio = uppercase_letters / letters if letters else 0.0
+
+    # Highlight words use a thick outline and separate backplates. Uppercase
+    # needs additional optical separation so those layers never touch.
+    spacing_scale = 0.46 if uppercase_ratio >= 0.75 else 0.32
+    return max(12.0, font_size * spacing_scale)
 
 
 def _format_srt_timestamp(seconds: float) -> str:
