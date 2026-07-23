@@ -23,7 +23,8 @@
           "candidate_id", "start_seconds", "end_seconds", "duration_seconds",
           "title", "hook_text", "ending_text", "summary", "why_it_works",
           "content_category", "scores", "context_complete", "safety_notes",
-          "suggested_caption", "suggested_cta", "suggested_hashtags",
+          "suggested_caption", "suggested_cta", "related_hashtags",
+          "viral_hashtags", "suggested_hashtags",
           "thumbnail_text", "speaker_ids", "scene_ids", "hook_second",
           "main_point_second", "punchline_second", "retention_level",
           "requires_context", "can_standalone"
@@ -75,6 +76,8 @@
           "safety_notes": { "type": "array", "maxItems": 10, "items": { "type": "string" } },
           "suggested_caption": { "type": "string", "minLength": 1, "maxLength": 1000 },
           "suggested_cta": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "related_hashtags": { "type": "array", "maxItems": 7, "items": { "type": "string", "minLength": 2, "maxLength": 100 } },
+          "viral_hashtags": { "type": "array", "maxItems": 5, "items": { "type": "string", "minLength": 2, "maxLength": 100 } },
           "suggested_hashtags": { "type": "array", "maxItems": 10, "items": { "type": "string" } },
           "thumbnail_text": { "type": "string", "minLength": 1, "maxLength": 120 },
           "speaker_ids": { "type": "array", "maxItems": 10, "items": { "type": "string" } },

@@ -170,6 +170,8 @@ a { color: var(--primary); text-decoration: none; }
 .candidate-score-badge { white-space: nowrap; padding: 9px 12px; border-radius: 999px; background: #e9f8ef; color: #18794e; font-weight: 800; font-size: .84rem; }
 .candidate-caption-box { margin-top: 12px; padding: 14px 16px; border-radius: 16px; background: #fff8ea; border: 1px solid #f4d79b; }
 .candidate-caption-box p { margin: 8px 0 0; color: #344054; }
+.candidate-caption-box .caption-publish-text { white-space: pre-line; }
+.caption-tag-groups { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 12px; color: #596579; font-size: .9rem; }
 .tts-model-preview-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
 .tts-model-badges { display: flex; flex-wrap: wrap; gap: 8px; }
 .tts-model-badges span { display: inline-flex; align-items: center; min-height: 30px; padding: 6px 10px; border-radius: 999px; background: #fff; color: #344054; font-size: .8rem; font-weight: 700; border: 1px solid #f4d79b; }

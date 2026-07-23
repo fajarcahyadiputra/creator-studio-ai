@@ -103,6 +103,8 @@ describe("job projection helpers", () => {
         metadataSuggestions: {
           suggested_caption: "Hook yang tajam bikin video lebih kuat.",
           suggested_cta: "Watch until the end and share your take.",
+          related_hashtags: [],
+          viral_hashtags: [],
           suggested_hashtags: ["#creatorstudio", "#shortclips"],
           thumbnail_text: "Hook yang bikin retention naik",
           hook_second: 0,

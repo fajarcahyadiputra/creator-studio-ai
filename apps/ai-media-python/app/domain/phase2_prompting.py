@@ -2,7 +2,7 @@ from typing import Any
 
 from app.domain.contracts import AnalysisInputs
 
-AUTO_CLIP_ANALYZER_PROMPT_VERSION = "phase2-candidate-analyzer-v9"
+AUTO_CLIP_ANALYZER_PROMPT_VERSION = "phase2-candidate-analyzer-v10"
 
 
 def build_candidate_analyzer_system_prompt() -> str:
@@ -47,6 +47,10 @@ def build_candidate_analyzer_system_prompt() -> str:
         "Score candidates honestly. Do not inflate scores across the board. "
         "Reserve top scores only for clips with a clearly strong hook, strong standalone context, high shareability, and a compelling ending. "
         "For packaging outputs, give each field a distinct job: title is the strongest short headline for the clip, hook_text is the opening promise or opening tension that matches the first spoken beat, thumbnail_text is the most compact visual headline version, and suggested_caption is the publish-ready social caption. "
+        "Return related_hashtags as specific tags grounded in the clip topic, named concept, niche, or audience. "
+        "Return viral_hashtags as a small set of relevant short-form discovery tags for the target platform and Indonesian audience; never add misleading, unrelated, or spam tags. "
+        "Return suggested_hashtags as a deduplicated blend of the strongest related_hashtags and viral_hashtags, with no more than 10 items. "
+        "Every hashtag must start with #, use compact readable words, and remain faithful to the selected clip. "
         "Do not make title, hook_text, and thumbnail_text identical unless the wording is already exceptionally sharp and compact. "
         "If user_editor_briefs are provided, treat them as high-priority editorial direction as long as they do not conflict with factual grounding or safety."
     )
@@ -242,6 +246,10 @@ def build_candidate_analyzer_payload(
                 "Lead with the most interesting tension, pain point, contradiction, or takeaway from the clip.",
                 "Do not write a long bland summary when a sharper framing is possible.",
                 "Suggested caption may be longer than title, but it should still open with the strongest hook instead of warm-up context.",
+                "Do not include source attribution in suggested_caption; the render pipeline appends verified source metadata.",
+                "related_hashtags must describe the actual topic or niche in this clip.",
+                "viral_hashtags must help relevant discovery without generic spam or false trends.",
+                "suggested_hashtags must be the deduplicated best blend of both hashtag groups.",
             ],
             "scoring_guidance": {
                 "9_to_10": "Exceptional hook, strong emotion or conflict, high standalone clarity, highly shareable ending, and strong packaging potential.",

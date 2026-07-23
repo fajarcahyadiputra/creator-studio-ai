@@ -59,6 +59,8 @@ const candidateOutputSchema = z.object({
   safety_notes: z.array(z.string().trim().min(1).max(200)).max(10).default([]),
   suggested_caption: z.string().trim().min(1).max(1000),
   suggested_cta: z.string().trim().min(1).max(255),
+  related_hashtags: z.array(z.string().trim().min(2).max(100)).max(7).default([]),
+  viral_hashtags: z.array(z.string().trim().min(2).max(100)).max(5).default([]),
   suggested_hashtags: z.array(z.string().trim().min(1).max(100)).max(10).default([]),
   thumbnail_text: z.string().trim().min(1).max(120),
   speaker_ids: z.array(z.string().trim().min(1).max(100)).max(10).default([]),
@@ -170,6 +172,8 @@ export function resolvePersistableCandidates(
       metadataSuggestions: {
         suggested_caption: candidate.suggested_caption,
         suggested_cta: candidate.suggested_cta,
+        related_hashtags: candidate.related_hashtags,
+        viral_hashtags: candidate.viral_hashtags,
         suggested_hashtags: candidate.suggested_hashtags,
         thumbnail_text: candidate.thumbnail_text,
         hook_second: candidate.hook_second,

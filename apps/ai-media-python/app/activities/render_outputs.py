@@ -28,6 +28,7 @@ from app.media.ffmpeg import build_clip_render_command
 from app.activities.media_validation import run_ffprobe_json
 
 SUPPORTED_SUBTITLE_FORMATS = {"srt", "ass", "vtt", "json"}
+STANDARD_9X16_BOTTOM_SAFE_MARGIN_PERCENT = 20.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +36,7 @@ class SubtitleCueWord:
     text: str
     duration_centiseconds: int
     line_break_before: bool = False
+    start_offset_centiseconds: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,11 +92,23 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
     subtitle_text_case = _resolve_subtitle_text_case(context.render_settings)
     subtitle_position = _resolve_subtitle_position(context.render_settings)
     subtitle_safe_margin_percent = _resolve_subtitle_safe_margin_percent(context.render_settings)
+    subtitle_safe_margin_percent = _resolve_effective_subtitle_safe_margin_percent(
+        aspect_ratio=aspect_ratio,
+        layout_template=layout_template,
+        position=subtitle_position,
+        safe_margin_percent=subtitle_safe_margin_percent,
+    )
     width, height = _resolve_dimensions(aspect_ratio)
     fps = 30
     clip_start_seconds = int(context.candidate.start_ms) / 1000
     clip_duration_seconds = max(int(context.candidate.duration_ms) / 1000, 0.001)
     candidate_metadata = _resolve_render_metadata(context.render_settings)
+    candidate_metadata = _build_publish_metadata(
+        metadata=candidate_metadata,
+        source_media_metadata=context.source_media.metadata,
+        aspect_ratio=aspect_ratio,
+        layout_template=layout_template,
+    )
     crop_strategy = _resolve_crop_strategy(context.render_settings)
     speaker_count = _resolve_speaker_count(
         render_settings=context.render_settings,
@@ -384,6 +398,9 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
             "media_asset_id": context.source_media.media_asset_id,
             "object_key": context.source_media.object_key,
             "duration_ms": context.source_media.duration_ms,
+            "source_title": candidate_metadata.get("source_video_title"),
+            "source_channel_name": candidate_metadata.get("source_channel_name"),
+            "source_attribution": candidate_metadata.get("source_attribution"),
         },
         "render_settings": context.render_settings,
         "render_plan": {
@@ -771,21 +788,43 @@ def _resolve_subtitle_safe_margin_percent(render_settings: dict[str, Any]) -> fl
     return max(0.0, min(resolved, 30.0))
 
 
+def _resolve_effective_subtitle_safe_margin_percent(
+    *,
+    aspect_ratio: str,
+    layout_template: str | None,
+    position: str,
+    safe_margin_percent: float,
+) -> float:
+    resolved = max(0.0, min(float(safe_margin_percent), 30.0))
+    if (
+        aspect_ratio == "9:16"
+        and layout_template is None
+        and position.strip().upper() == "BOTTOM"
+    ):
+        # Keep burned-in captions above Reels/TikTok controls and descriptions.
+        return max(resolved, STANDARD_9X16_BOTTOM_SAFE_MARGIN_PERCENT)
+    return resolved
+
+
 def _resolve_render_metadata(render_settings: dict[str, Any]) -> dict[str, Any]:
     metadata = render_settings.get("metadata")
     if not isinstance(metadata, dict):
         return {}
 
-    hashtags = metadata.get("suggested_hashtags")
-    normalized_hashtags = (
-        [value for value in hashtags if isinstance(value, str) and value.strip()]
-        if isinstance(hashtags, list)
-        else []
-    )
+    normalized_related_hashtags = _normalize_hashtags(metadata.get("related_hashtags"), max_items=7)
+    normalized_viral_hashtags = _normalize_hashtags(metadata.get("viral_hashtags"), max_items=5)
+    normalized_hashtags = _normalize_hashtags(metadata.get("suggested_hashtags"), max_items=10)
+    if not normalized_hashtags:
+        normalized_hashtags = _normalize_hashtags(
+            [*normalized_related_hashtags, *normalized_viral_hashtags],
+            max_items=10,
+        )
 
     return {
         "suggested_caption": _resolve_string(metadata.get("suggested_caption")),
         "suggested_cta": _resolve_string(metadata.get("suggested_cta")),
+        "related_hashtags": normalized_related_hashtags,
+        "viral_hashtags": normalized_viral_hashtags,
         "suggested_hashtags": normalized_hashtags,
         "thumbnail_text": _resolve_string(metadata.get("thumbnail_text")),
         "hook_second": _resolve_number(metadata.get("hook_second")),
@@ -795,6 +834,97 @@ def _resolve_render_metadata(render_settings: dict[str, Any]) -> dict[str, Any]:
         "requires_context": _resolve_boolean(metadata.get("requires_context")),
         "can_standalone": _resolve_boolean(metadata.get("can_standalone")),
     }
+
+
+def _build_publish_metadata(
+    *,
+    metadata: dict[str, Any],
+    source_media_metadata: dict[str, Any] | None,
+    aspect_ratio: str,
+    layout_template: str | None,
+) -> dict[str, Any]:
+    result = dict(metadata)
+    if aspect_ratio != "9:16" or layout_template not in {None, "PODCAST_SPOTLIGHT_9X16"}:
+        return result
+
+    source = source_media_metadata if isinstance(source_media_metadata, dict) else {}
+    source_title = _first_non_empty_string(source, "source_title", "title")
+    source_channel = _first_non_empty_string(
+        source,
+        "source_channel_name",
+        "channel",
+        "source_uploader",
+        "uploader",
+        "creator",
+    )
+    source_attribution = _format_source_attribution(source_title, source_channel)
+    base_caption = _resolve_string(result.get("suggested_caption")) or ""
+    hashtags = _normalize_hashtags(
+        [
+            *_normalize_hashtags(result.get("related_hashtags"), max_items=7),
+            *_normalize_hashtags(result.get("viral_hashtags"), max_items=5),
+            *_normalize_hashtags(result.get("suggested_hashtags"), max_items=10),
+        ],
+        max_items=10,
+    )
+
+    caption_parts = [base_caption] if base_caption else []
+    if source_attribution and source_attribution.casefold() not in base_caption.casefold():
+        caption_parts.append(source_attribution)
+    hashtag_line = " ".join(tag for tag in hashtags if tag.casefold() not in base_caption.casefold())
+    if hashtag_line:
+        caption_parts.append(hashtag_line)
+
+    result.update(
+        {
+            "base_suggested_caption": base_caption or None,
+            "suggested_caption": "\n\n".join(caption_parts),
+            "suggested_hashtags": hashtags,
+            "source_video_title": source_title,
+            "source_channel_name": source_channel,
+            "source_attribution": source_attribution,
+        }
+    )
+    return result
+
+
+def _normalize_hashtags(value: Any, *, max_items: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        normalized = re.sub(r"\s+", "", item.strip())
+        if not normalized:
+            continue
+        if not normalized.startswith("#"):
+            normalized = f"#{normalized}"
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(normalized)
+        if len(result) >= max_items:
+            break
+    return result
+
+
+def _first_non_empty_string(source: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = _resolve_string(source.get(key))
+        if value:
+            return re.sub(r"\s+", " ", value).strip()
+    return None
+
+
+def _format_source_attribution(source_title: str | None, source_channel: str | None) -> str | None:
+    if source_title and source_channel and source_title.casefold() != source_channel.casefold():
+        return f"Sumber video: {source_title} - {source_channel}"
+    if source_title or source_channel:
+        return f"Sumber video: {source_title or source_channel}"
+    return None
 
 
 async def _detect_face_layout_summary(
@@ -2204,17 +2334,24 @@ def _suppress_subtitle_cues_before(
         cursor = cue.start_seconds
         for word in cue.words:
             duration_seconds = max(0.01, word.duration_centiseconds / 100.0)
-            word_end = cursor + duration_seconds
+            word_start = (
+                cue.start_seconds + (word.start_offset_centiseconds / 100.0)
+                if word.start_offset_centiseconds is not None
+                else cursor
+            )
+            word_end = word_start + duration_seconds
             if word_end > threshold:
-                visible_duration = word_end - max(cursor, threshold)
+                visible_start = max(word_start, threshold)
+                visible_duration = word_end - visible_start
                 remaining_words.append(
                     SubtitleCueWord(
                         text=word.text,
                         duration_centiseconds=max(1, round(visible_duration * 100)),
                         line_break_before=(word.line_break_before and bool(remaining_words)),
+                        start_offset_centiseconds=max(0, round((visible_start - threshold) * 100)),
                     )
                 )
-            cursor = word_end
+            cursor = max(cursor, word_end)
 
         if remaining_words:
             lines: list[list[str]] = [[]]
@@ -2403,15 +2540,18 @@ def _build_subtitle_cues(
     current_start: float | None = None
     current_end: float | None = None
     current_words: list[str] = []
+    current_entries: list[tuple[float, float, str]] = []
     for index, (start, end, text) in enumerate(words):
         if current_start is None:
             current_start = start
             current_end = end
             current_words = [text]
+            current_entries = [(start, end, text)]
             continue
 
         current_end = max(current_end or end, end)
         current_words.append(text)
+        current_entries.append((start, end, text))
         if _subtitle_exceeds_layout(
             current_words,
             max_lines=max_lines,
@@ -2425,11 +2565,13 @@ def _build_subtitle_cues(
                 max_chars_per_line=max_chars_per_line,
             )
             if current_start is not None and finalized_words:
-                finalized_duration_ratio = len(finalized_words) / max(len(current_words), 1)
-                finalized_end = current_start + ((current_end - current_start) * finalized_duration_ratio)
+                finalized_entries = current_entries[: len(finalized_words)]
+                overflow_entries = current_entries[len(finalized_words) :]
+                finalized_start = finalized_entries[0][0]
+                finalized_end = finalized_entries[-1][1]
                 cues.append(
                     SubtitleCue(
-                        start_seconds=max(0.0, current_start - clip_start_seconds),
+                        start_seconds=max(0.0, finalized_start - clip_start_seconds),
                         end_seconds=max(0.1, finalized_end - clip_start_seconds),
                         text=_format_subtitle_text(
                             finalized_words,
@@ -2439,17 +2581,19 @@ def _build_subtitle_cues(
                         ),
                         words=_build_subtitle_cue_words(
                             finalized_words,
-                            current_start,
+                            finalized_start,
                             finalized_end,
+                            word_timings=finalized_entries,
                             max_lines=max_lines,
                             max_words_per_line=max_words_per_line,
                             max_chars_per_line=max_chars_per_line,
                         ),
                     )
                 )
-            current_start = finalized_end
-            current_end = end
+            current_start = overflow_entries[0][0] if overflow_entries else None
+            current_end = overflow_entries[-1][1] if overflow_entries else None
             current_words = overflow_words
+            current_entries = overflow_entries
             continue
 
         has_terminal_punctuation = text.endswith((".", "!", "?"))
@@ -2497,6 +2641,7 @@ def _build_subtitle_cues(
                         current_words,
                         current_start,
                         current_end,
+                        word_timings=current_entries,
                         max_lines=max_lines,
                         max_words_per_line=max_words_per_line,
                         max_chars_per_line=max_chars_per_line,
@@ -2506,6 +2651,7 @@ def _build_subtitle_cues(
             current_start = None
             current_end = None
             current_words = []
+            current_entries = []
 
     if current_start is not None and current_end is not None and current_words:
         cues.append(
@@ -2522,6 +2668,7 @@ def _build_subtitle_cues(
                     current_words,
                     current_start,
                     current_end,
+                    word_timings=current_entries,
                     max_lines=max_lines,
                     max_words_per_line=max_words_per_line,
                     max_chars_per_line=max_chars_per_line,
@@ -2835,6 +2982,7 @@ def _build_subtitle_cue_words(
     cue_start_seconds: float,
     cue_end_seconds: float,
     *,
+    word_timings: list[tuple[float, float, str]] | None = None,
     max_lines: int,
     max_words_per_line: int,
     max_chars_per_line: int,
@@ -2850,6 +2998,11 @@ def _build_subtitle_cue_words(
         max_lines=max_lines,
     )
     line_word_counts = [len(line.split()) for line in lines if line.strip()]
+    timed_words = _normalize_timed_subtitle_words(word_timings or [])
+    timing_is_usable = (
+        len(timed_words) == len(normalized_words)
+        and [entry[2] for entry in timed_words] == normalized_words
+    )
     total_duration_centiseconds = max(1, int(round((cue_end_seconds - cue_start_seconds) * 100)))
     base_duration = total_duration_centiseconds // max(len(normalized_words), 1)
     remainder = total_duration_centiseconds % max(len(normalized_words), 1)
@@ -2862,16 +3015,42 @@ def _build_subtitle_cue_words(
         offset += count
 
     for index, word in enumerate(normalized_words):
-        duration_centiseconds = max(1, base_duration + (1 if index < remainder else 0))
+        if timing_is_usable:
+            word_start, word_end, _ = timed_words[index]
+            start_offset_centiseconds = max(0, round((word_start - cue_start_seconds) * 100))
+            duration_centiseconds = max(1, round((word_end - word_start) * 100))
+        else:
+            start_offset_centiseconds = sum(
+                max(1, base_duration + (1 if prior_index < remainder else 0))
+                for prior_index in range(index)
+            )
+            duration_centiseconds = max(1, base_duration + (1 if index < remainder else 0))
         cue_words.append(
             SubtitleCueWord(
                 text=word,
                 duration_centiseconds=duration_centiseconds,
                 line_break_before=index in line_start_indexes and index != 0,
+                start_offset_centiseconds=start_offset_centiseconds,
             )
         )
 
     return tuple(cue_words)
+
+
+def _normalize_timed_subtitle_words(
+    entries: list[tuple[float, float, str]],
+) -> list[tuple[float, float, str]]:
+    normalized: list[tuple[float, float, str]] = []
+    for start_seconds, end_seconds, raw_text in entries:
+        tokens = _normalize_subtitle_words([raw_text])
+        if not tokens or end_seconds <= start_seconds:
+            continue
+        token_duration = (end_seconds - start_seconds) / len(tokens)
+        for index, token in enumerate(tokens):
+            token_start = start_seconds + (token_duration * index)
+            token_end = start_seconds + (token_duration * (index + 1))
+            normalized.append((token_start, token_end, token))
+    return normalized
 
 
 def _normalize_subtitle_words(words: list[str]) -> list[str]:
@@ -2988,6 +3167,7 @@ def _apply_subtitle_text_case(cues: list[SubtitleCue], text_case: str) -> list[S
                     text=transform(word.text),
                     duration_centiseconds=word.duration_centiseconds,
                     line_break_before=word.line_break_before,
+                    start_offset_centiseconds=word.start_offset_centiseconds,
                 )
                 for word in cue.words
             ),
@@ -3175,9 +3355,15 @@ def _render_ass_word_highlight_events(
         positioned_text = rf"{{\an5\pos({x_position},{y_position})}}{_escape_ass_text(word.text)}"
         events.append(f"Dialogue: 0,{cue_start},{cue_end},Default,,0,0,0,,{positioned_text}")
 
-        highlight_start = min(cue.end_seconds, cue.start_seconds + elapsed_seconds)
-        elapsed_seconds += max(1, word.duration_centiseconds) / 100.0
-        highlight_end = min(cue.end_seconds, cue.start_seconds + elapsed_seconds)
+        word_offset_seconds = (
+            word.start_offset_centiseconds / 100.0
+            if word.start_offset_centiseconds is not None
+            else elapsed_seconds
+        )
+        word_duration_seconds = max(1, word.duration_centiseconds) / 100.0
+        highlight_start = min(cue.end_seconds, cue.start_seconds + word_offset_seconds)
+        highlight_end = min(cue.end_seconds, highlight_start + word_duration_seconds)
+        elapsed_seconds = max(elapsed_seconds, word_offset_seconds + word_duration_seconds)
         if highlight_end <= highlight_start:
             continue
         events.extend(

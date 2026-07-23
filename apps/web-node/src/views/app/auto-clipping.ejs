@@ -328,7 +328,7 @@
                 <input type="hidden" name="split_min_face_count" value="2">
                 <div class="col-md-4"><label class="form-label">Subtitle language</label><input class="form-control" name="subtitle_language" value="<%= formDefaults.subtitleLanguage %>"></div>
                 <div class="col-md-4"><label class="form-label">Primary subtitle format</label><select class="form-select" name="subtitle_primary_format"><option <%= formDefaults.subtitlePrimaryFormat === 'ASS' ? 'selected' : '' %>>ASS</option><option <%= formDefaults.subtitlePrimaryFormat === 'SRT' ? 'selected' : '' %>>SRT</option><option <%= formDefaults.subtitlePrimaryFormat === 'VTT' ? 'selected' : '' %>>VTT</option><option <%= formDefaults.subtitlePrimaryFormat === 'JSON' ? 'selected' : '' %>>JSON</option></select></div>
-                <div class="col-md-4"><label class="form-label">Subtitle safe margin %</label><input class="form-control" name="subtitle_safe_margin_percent" type="number" min="0" max="30" value="<%= formDefaults.subtitleSafeMarginPercent %>"></div>
+                <div class="col-md-4"><label class="form-label">Subtitle safe margin %</label><input class="form-control" name="subtitle_safe_margin_percent" type="number" min="0" max="30" value="<%= formDefaults.subtitleSafeMarginPercent %>"><div class="form-text">Layout Standard 9:16 memakai minimum 20% agar subtitle aman dari tombol platform.</div></div>
                 <div class="col-md-4"><label class="form-label">Font</label><input class="form-control" name="subtitle_font_family" value="<%= formDefaults.subtitleFontFamily %>" placeholder="Montserrat"></div>
               </div>
             </details>

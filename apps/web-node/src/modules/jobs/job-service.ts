@@ -2547,6 +2547,12 @@ export function buildRenderSettings(source: RenderSettingsSource): Record<string
       suggested_caption:
         typeof metadataSuggestions.suggested_caption === "string" ? metadataSuggestions.suggested_caption : null,
       suggested_cta: typeof metadataSuggestions.suggested_cta === "string" ? metadataSuggestions.suggested_cta : null,
+      related_hashtags: Array.isArray(metadataSuggestions.related_hashtags)
+        ? metadataSuggestions.related_hashtags.filter((value): value is string => typeof value === "string")
+        : [],
+      viral_hashtags: Array.isArray(metadataSuggestions.viral_hashtags)
+        ? metadataSuggestions.viral_hashtags.filter((value): value is string => typeof value === "string")
+        : [],
       suggested_hashtags: Array.isArray(metadataSuggestions.suggested_hashtags)
         ? metadataSuggestions.suggested_hashtags.filter((value): value is string => typeof value === "string")
         : [],

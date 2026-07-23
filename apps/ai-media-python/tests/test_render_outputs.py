@@ -10,12 +10,14 @@ from app.activities.render_outputs import (
     _apply_subtitle_text_case,
     _build_active_speaker_strategy,
     _build_layout_options,
+    _build_publish_metadata,
     _build_speech_activity_evidence,
     _build_subtitle_cues,
     _detect_face_layout_summary,
     _estimate_ass_word_width,
     _render_ass,
     _resolve_ass_word_spacing,
+    _resolve_effective_subtitle_safe_margin_percent,
     _run_command_with_heartbeat,
     _select_full_display_title,
     _suppress_subtitle_cues_before,
@@ -23,6 +25,49 @@ from app.activities.render_outputs import (
     execute_clip_output_render,
 )
 from app.domain.contracts import TranscriptSegment, TranscriptWord
+
+
+def test_build_publish_metadata_adds_source_and_tag_groups_for_standard_9x16() -> None:
+    result = _build_publish_metadata(
+        metadata={
+            "suggested_caption": "Insight penting tentang cara menjaga ginjal.",
+            "related_hashtags": ["#Kesehatan", "#Ginjal"],
+            "viral_hashtags": ["#WajibTahu", "#kesehatan"],
+            "suggested_hashtags": ["#VideoPendek"],
+        },
+        source_media_metadata={
+            "source_title": "Kenali Fungsi Ginjal",
+            "source_channel_name": "Podcast Sehat",
+        },
+        aspect_ratio="9:16",
+        layout_template=None,
+    )
+
+    assert result["source_attribution"] == "Sumber video: Kenali Fungsi Ginjal - Podcast Sehat"
+    assert result["suggested_hashtags"] == [
+        "#Kesehatan",
+        "#Ginjal",
+        "#WajibTahu",
+        "#VideoPendek",
+    ]
+    assert "Sumber video: Kenali Fungsi Ginjal - Podcast Sehat" in result["suggested_caption"]
+    assert result["suggested_caption"].endswith("#Kesehatan #Ginjal #WajibTahu #VideoPendek")
+
+
+def test_build_publish_metadata_does_not_change_non_9x16_caption() -> None:
+    metadata = {
+        "suggested_caption": "Caption asli",
+        "suggested_hashtags": ["#Asli"],
+    }
+
+    result = _build_publish_metadata(
+        metadata=metadata,
+        source_media_metadata={"source_channel_name": "Channel Sumber"},
+        aspect_ratio="16:9",
+        layout_template=None,
+    )
+
+    assert result == metadata
 
 
 @pytest.mark.asyncio
@@ -580,6 +625,33 @@ def test_build_subtitle_cues_splits_to_new_cue_before_layout_overflow() -> None:
     assert not cues[1].text.strip().lower().startswith("lalu")
 
 
+def test_build_subtitle_cues_preserves_word_gaps_for_highlight_timing() -> None:
+    cues = _build_subtitle_cues(
+        transcript_segments=[
+            TranscriptSegment(
+                segment_id="segment-1",
+                start_seconds=10.0,
+                end_seconds=11.8,
+                text="kata berikutnya",
+                speaker_label=None,
+                confidence=0.95,
+                words=[
+                    TranscriptWord(start_seconds=10.0, end_seconds=10.4, text="kata"),
+                    TranscriptWord(start_seconds=11.2, end_seconds=11.8, text="berikutnya"),
+                ],
+            )
+        ],
+        clip_start_seconds=10.0,
+        clip_duration_seconds=2.0,
+    )
+
+    assert len(cues) == 1
+    assert cues[0].words[0].start_offset_centiseconds == 0
+    assert cues[0].words[0].duration_centiseconds == 40
+    assert cues[0].words[1].start_offset_centiseconds == 120
+    assert cues[0].words[1].duration_centiseconds == 60
+
+
 def test_render_ass_uses_ass_line_break_escape_for_multiline_cues() -> None:
     rendered = _render_ass(
         [
@@ -621,6 +693,35 @@ def test_render_ass_outputs_timed_blue_mint_word_highlight_events() -> None:
     assert "JAWA" in rendered
 
 
+def test_render_ass_word_highlight_uses_real_word_offsets_instead_of_compacting_gaps() -> None:
+    rendered = _render_ass(
+        [
+            SubtitleCue(
+                start_seconds=2.0,
+                end_seconds=4.0,
+                text="KATA BERIKUTNYA",
+                words=(
+                    SubtitleCueWord(
+                        text="KATA",
+                        duration_centiseconds=40,
+                        start_offset_centiseconds=0,
+                    ),
+                    SubtitleCueWord(
+                        text="BERIKUTNYA",
+                        duration_centiseconds=60,
+                        start_offset_centiseconds=120,
+                    ),
+                ),
+            )
+        ],
+        word_highlight=True,
+    )
+
+    assert "Dialogue: 2,0:00:02.00,0:00:02.40,Highlight" in rendered
+    assert "Dialogue: 2,0:00:03.20,0:00:03.80,Highlight" in rendered
+    assert "Dialogue: 2,0:00:02.40,0:00:03.00,Highlight" not in rendered
+
+
 def test_uppercase_highlight_layout_keeps_bold_words_visibly_separated() -> None:
     uppercase_words = [
         SubtitleCueWord(text="KONSTIKS", duration_centiseconds=80),
@@ -644,7 +745,12 @@ def test_apply_subtitle_text_case_preserves_word_timing_and_line_breaks() -> Non
             text="Perbatasan Jawa",
             words=(
                 SubtitleCueWord(text="Perbatasan", duration_centiseconds=60),
-                SubtitleCueWord(text="Jawa", duration_centiseconds=40, line_break_before=True),
+                SubtitleCueWord(
+                    text="Jawa",
+                    duration_centiseconds=40,
+                    line_break_before=True,
+                    start_offset_centiseconds=60,
+                ),
             ),
         )
     ]
@@ -656,6 +762,7 @@ def test_apply_subtitle_text_case_preserves_word_timing_and_line_breaks() -> Non
     assert [word.text for word in uppercase[0].words] == ["PERBATASAN", "JAWA"]
     assert uppercase[0].words[1].line_break_before is True
     assert uppercase[0].words[1].duration_centiseconds == 40
+    assert uppercase[0].words[1].start_offset_centiseconds == 60
     assert lowercase[0].text == "perbatasan jawa"
 
 
@@ -820,3 +927,33 @@ def test_render_ass_honors_top_and_safe_bottom_positions() -> None:
 
     assert ",8,64,64,230,1" in top
     assert ",2,64,64,230,1" in bottom
+
+
+def test_standard_9x16_bottom_subtitle_uses_platform_safe_minimum() -> None:
+    assert _resolve_effective_subtitle_safe_margin_percent(
+        aspect_ratio="9:16",
+        layout_template=None,
+        position="BOTTOM",
+        safe_margin_percent=8,
+    ) == 20
+
+
+def test_platform_safe_minimum_does_not_override_other_layouts_or_positions() -> None:
+    assert _resolve_effective_subtitle_safe_margin_percent(
+        aspect_ratio="9:16",
+        layout_template="PODCAST_SPOTLIGHT_9X16",
+        position="BOTTOM",
+        safe_margin_percent=8,
+    ) == 8
+    assert _resolve_effective_subtitle_safe_margin_percent(
+        aspect_ratio="9:16",
+        layout_template=None,
+        position="TOP",
+        safe_margin_percent=8,
+    ) == 8
+    assert _resolve_effective_subtitle_safe_margin_percent(
+        aspect_ratio="16:9",
+        layout_template=None,
+        position="BOTTOM",
+        safe_margin_percent=8,
+    ) == 8

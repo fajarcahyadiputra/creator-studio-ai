@@ -398,7 +398,7 @@ dashboardRouter.get(
           renderSettings.visual && typeof renderSettings.visual === "object" && !Array.isArray(renderSettings.visual)
             ? (renderSettings.visual as Record<string, unknown>)
             : {};
-        const metadata =
+        const configuredMetadata =
           renderSettings.metadata && typeof renderSettings.metadata === "object" && !Array.isArray(renderSettings.metadata)
             ? (renderSettings.metadata as Record<string, unknown>)
             : {};
@@ -406,6 +406,11 @@ dashboardRouter.get(
           output.qualityReport && typeof output.qualityReport === "object" && !Array.isArray(output.qualityReport)
             ? (output.qualityReport as Record<string, unknown>)
             : {};
+        const qualityMetadata =
+          qualityReport.metadata && typeof qualityReport.metadata === "object" && !Array.isArray(qualityReport.metadata)
+            ? (qualityReport.metadata as Record<string, unknown>)
+            : {};
+        const metadata = Object.keys(qualityMetadata).length > 0 ? qualityMetadata : configuredMetadata;
         const qualityCandidate =
           qualityReport.candidate && typeof qualityReport.candidate === "object" && !Array.isArray(qualityReport.candidate)
             ? (qualityReport.candidate as Record<string, unknown>)
@@ -622,6 +627,14 @@ dashboardRouter.get(
             typeof metadata.retention_level === "string" ? metadata.retention_level : null,
           suggestedCaption:
             typeof metadata.suggested_caption === "string" ? metadata.suggested_caption : null,
+          relatedHashtags: Array.isArray(metadata.related_hashtags)
+            ? metadata.related_hashtags.filter((tag): tag is string => typeof tag === "string")
+            : [],
+          viralHashtags: Array.isArray(metadata.viral_hashtags)
+            ? metadata.viral_hashtags.filter((tag): tag is string => typeof tag === "string")
+            : [],
+          sourceAttribution:
+            typeof metadata.source_attribution === "string" ? metadata.source_attribution : null,
           thumbnailPlaybackUrl: null,
           previewPlaybackUrl,
           finalPlaybackUrl
@@ -1424,7 +1437,7 @@ function buildAutoClipFormDefaults(
     subtitleFontFamily: "Montserrat",
     subtitlePosition: "BOTTOM",
     subtitleMaxLines: 2,
-    subtitleSafeMarginPercent: 12,
+    subtitleSafeMarginPercent: 20,
     layoutTemplate: "STANDARD",
     podcastSourceEnabled: true,
     podcastSpotlightStyle: "EDITORIAL_GOLD",

@@ -96,7 +96,7 @@ Returns the structured Phase 2 output payload attached to a job.
           "attempted_provider_label": "OpenAI",
           "attempted_model": "gpt-5.4-mini",
           "latency_ms": 1853.51,
-          "prompt_version": "phase2-candidate-analyzer-v8",
+          "prompt_version": "phase2-candidate-analyzer-v10",
           "fallback_reason": "HTTPStatusError",
           "fallback_trigger": "provider_error"
         },
@@ -116,7 +116,9 @@ Returns the structured Phase 2 output payload attached to a job.
           "safety_notes": [],
           "suggested_caption": "....",
           "suggested_cta": "Watch until the end and share your take.",
-          "suggested_hashtags": ["#creatorstudio", "#shortclips"],
+          "related_hashtags": ["#ContentStrategy", "#AudienceRetention"],
+          "viral_hashtags": ["#VideoPendek", "#WajibTahu"],
+          "suggested_hashtags": ["#ContentStrategy", "#AudienceRetention", "#VideoPendek", "#WajibTahu"],
           "thumbnail_text": "Kenapa hook ini bikin orang berhenti scroll",
           "speaker_ids": ["speaker-1"],
           "scene_ids": ["scene-2"],
@@ -171,6 +173,12 @@ Returns the structured Phase 2 output payload attached to a job.
   }
 }
 ```
+
+Untuk output final berasio `9:16` dengan layout Standard atau Podcast Spotlight, worker render menyusun
+`suggested_caption` siap publikasi dari caption analyzer, atribusi sumber media yang terverifikasi, dan maksimal
+10 hashtag terdeduplikasi. `related_hashtags` berisi tag yang spesifik terhadap topik clip, sedangkan
+`viral_hashtags` berisi tag discovery short-form yang tetap relevan. Output lama tetap dapat dibaca; caption dengan
+atribusi sumber diterapkan pada render atau rerender baru.
 
 `clip_candidates` reflects the persisted relational review rows when available. `output_summary` is `null` until the workflow has attached a Phase 2 result. `clip_outputs` stays empty until rendered clips are persisted.
 

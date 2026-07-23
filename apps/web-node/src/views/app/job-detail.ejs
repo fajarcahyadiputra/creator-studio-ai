@@ -1200,7 +1200,17 @@
                   <% if (output.suggestedCaption) { %>
                     <div class="candidate-caption-box">
                       <strong>Caption rekomendasi:</strong>
-                      <p><%= output.suggestedCaption %></p>
+                      <p class="caption-publish-text"><%= output.suggestedCaption %></p>
+                      <% if ((output.relatedHashtags && output.relatedHashtags.length) || (output.viralHashtags && output.viralHashtags.length)) { %>
+                        <div class="caption-tag-groups" aria-label="Kelompok hashtag rekomendasi">
+                          <% if (output.relatedHashtags && output.relatedHashtags.length) { %>
+                            <span><strong>Topik:</strong> <%= output.relatedHashtags.join(' ') %></span>
+                          <% } %>
+                          <% if (output.viralHashtags && output.viralHashtags.length) { %>
+                            <span><strong>Viral:</strong> <%= output.viralHashtags.join(' ') %></span>
+                          <% } %>
+                        </div>
+                      <% } %>
                     </div>
                   <% } %>
                   <% if (output.retentionLevel) { %>

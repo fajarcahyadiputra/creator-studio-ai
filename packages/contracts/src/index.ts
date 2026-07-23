@@ -41,6 +41,8 @@ export interface AutoClipCandidateSummary {
   safety_notes: string[];
   suggested_caption: string;
   suggested_cta: string;
+  related_hashtags: string[];
+  viral_hashtags: string[];
   suggested_hashtags: string[];
   thumbnail_text: string;
   speaker_ids: string[];

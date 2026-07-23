@@ -115,6 +115,8 @@ def test_pipeline_builds_ranked_candidates() -> None:
     assert len(candidates) >= 1
     assert candidates[0].scores["final_viral_score"] >= 6.5
     assert candidates[0].title
+    assert candidates[0].related_hashtags
+    assert candidates[0].viral_hashtags
     assert candidates[0].suggested_hashtags
     assert candidates[0].retention_level in {"very_high", "high", "medium", "low"}
     assert candidates[0].punchline_second <= candidates[0].duration_seconds

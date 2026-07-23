@@ -167,6 +167,8 @@ class CandidateAnalysis(BaseModel):
     safety_notes: list[str] = Field(default_factory=list, max_length=10)
     suggested_caption: str = Field(min_length=1, max_length=1000)
     suggested_cta: str = Field(min_length=1, max_length=255)
+    related_hashtags: list[str] = Field(default_factory=list, max_length=7)
+    viral_hashtags: list[str] = Field(default_factory=list, max_length=5)
     suggested_hashtags: list[str] = Field(default_factory=list, max_length=10)
     thumbnail_text: str = Field(min_length=1, max_length=120)
     speaker_ids: list[str] = Field(default_factory=list, max_length=10)

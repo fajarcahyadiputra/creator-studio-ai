@@ -322,6 +322,8 @@ def _candidate_from_segments(
         punchline_second=punchline_second,
         duration_seconds=duration_seconds,
     )
+    related_hashtags = _suggest_related_hashtags(transcript.language, combined_text)
+    viral_hashtags = _suggest_viral_hashtags(transcript.language)
     return CandidateAnalysis(
         candidate_id=f"candidate-{index:02d}-{sha1(summary.encode('utf-8')).hexdigest()[:8]}",
         start_seconds=segments[0].start_seconds,
@@ -337,7 +339,9 @@ def _candidate_from_segments(
         safety_notes=_build_safety_notes(avoided_topic_matches, sensitive_topic_matches),
         suggested_caption=summary,
         suggested_cta=_resolve_cta(config.cta_preference),
-        suggested_hashtags=_suggest_hashtags(transcript.language, combined_text),
+        related_hashtags=related_hashtags,
+        viral_hashtags=viral_hashtags,
+        suggested_hashtags=_deduplicate_hashtags([*related_hashtags, *viral_hashtags]),
         thumbnail_text=title[:80],
         speaker_ids=speaker_ids,
         scene_ids=scene_ids,
@@ -581,16 +585,47 @@ def _build_title(text: str, *, hook_text: str, ending_text: str) -> str:
     return _truncate_title_words(best, max_words=9)
 
 
-def _suggest_hashtags(language: str, text: str) -> list[str]:
-    base = ["#creatorstudio", "#shortclips"]
-    if language.startswith("id"):
-        base.append("#kontencreator")
+def _suggest_related_hashtags(language: str, text: str) -> list[str]:
+    base: list[str] = []
     lowered = text.lower()
     if "marketing" in lowered:
         base.append("#marketing")
     if "bisnis" in lowered:
         base.append("#bisnis")
-    return base[:5]
+    if any(term in lowered for term in ("sehat", "dokter", "medis", "ginjal", "darah")):
+        base.append("#kesehatan" if language.startswith("id") else "#health")
+    if any(term in lowered for term in ("uang", "ekonomi", "investasi", "keuangan")):
+        base.append("#keuangan" if language.startswith("id") else "#finance")
+    if any(term in lowered for term in ("otak", "psikologi", "mental", "stres", "stress")):
+        base.append("#kesehatanmental" if language.startswith("id") else "#mentalhealth")
+    if not base:
+        base.append("#insight" if language.startswith("id") else "#insights")
+    return _deduplicate_hashtags(base, max_items=7)
+
+
+def _suggest_viral_hashtags(language: str) -> list[str]:
+    if language.startswith("id"):
+        return ["#VideoPendek", "#KontenIndonesia", "#WajibTahu"]
+    return ["#ShortVideo", "#MustWatch", "#LearnOnTikTok"]
+
+
+def _deduplicate_hashtags(values: list[str], *, max_items: int = 10) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = value.strip()
+        if not normalized:
+            continue
+        if not normalized.startswith("#"):
+            normalized = f"#{normalized}"
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(normalized)
+        if len(result) >= max_items:
+            break
+    return result
 
 
 def _matching_terms(text: str, terms: tuple[str, ...]) -> tuple[str, ...]:
