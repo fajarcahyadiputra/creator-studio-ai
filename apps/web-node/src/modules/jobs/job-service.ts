@@ -102,6 +102,7 @@ interface RegenerateAutoClipInput {
   standalone_priority: "REQUIRED" | "PREFERRED" | "FLEXIBLE";
   require_spoken_audio: boolean;
   profanity_handling: "KEEP" | "MUTE" | "BLEEP" | "SUBTITLE_CENSOR";
+  speech_cleanup_enabled: boolean;
   remove_long_silence: boolean;
   remove_filler_words: boolean;
   aspect_ratio: "9:16" | "1:1" | "4:5" | "16:9" | "CUSTOM";
@@ -1896,8 +1897,9 @@ function buildRegeneratedAutoClippingInput(
       standalone_priority: input.standalone_priority,
       require_spoken_audio: input.require_spoken_audio,
       profanity_handling: input.profanity_handling,
-      remove_long_silence: input.remove_long_silence,
-      remove_filler_words: input.remove_filler_words
+      speech_cleanup_enabled: input.speech_cleanup_enabled,
+      remove_long_silence: input.speech_cleanup_enabled,
+      remove_filler_words: input.speech_cleanup_enabled
     },
     visual: {
       ...currentVisual,
@@ -2522,7 +2524,10 @@ export function buildRenderSettings(source: RenderSettingsSource): Record<string
     subtitle: normalizedSubtitle,
     strategy: {
       target_platform: strategy.target_platform ?? null,
-      objective: strategy.objective ?? null
+      objective: strategy.objective ?? null,
+      speech_cleanup_enabled: strategy.speech_cleanup_enabled === true,
+      remove_long_silence: strategy.remove_long_silence === true,
+      remove_filler_words: strategy.remove_filler_words === true
     },
     content: {
       speaker_count:

@@ -102,6 +102,77 @@ def build_audio_transcode(
     return FfmpegCommand(executable="ffmpeg", arguments=tuple(arguments))
 
 
+def build_timeline_cleanup_command(
+    *,
+    source: str | Path,
+    destination: str | Path,
+    keep_intervals: list[tuple[float, float]],
+    video_preset: str = "veryfast",
+    audio_edge_fade_seconds: float = 0.04,
+) -> FfmpegCommand:
+    if not keep_intervals:
+        raise ValueError("keep_intervals must not be empty")
+    if video_preset not in {"ultrafast", "superfast", "veryfast", "faster", "fast", "medium"}:
+        raise ValueError("unsupported video preset")
+    if audio_edge_fade_seconds < 0 or audio_edge_fade_seconds > 0.08:
+        raise ValueError("audio_edge_fade_seconds must be between 0 and 0.08")
+
+    filters: list[str] = []
+    concat_inputs: list[str] = []
+    for index, (start_seconds, end_seconds) in enumerate(keep_intervals):
+        if start_seconds < 0 or end_seconds <= start_seconds:
+            raise ValueError("keep interval end must be greater than start")
+        duration = end_seconds - start_seconds
+        fade_duration = min(audio_edge_fade_seconds, max(0.0, duration / 4))
+        fade_out_start = max(0.0, duration - fade_duration)
+        filters.append(
+            f"[0:v]trim=start={start_seconds:.6f}:end={end_seconds:.6f},"
+            f"setpts=PTS-STARTPTS[v{index}]"
+        )
+        audio_filter = (
+            f"[0:a]atrim=start={start_seconds:.6f}:end={end_seconds:.6f},"
+            "asetpts=PTS-STARTPTS"
+        )
+        if fade_duration > 0:
+            audio_filter += (
+                f",afade=t=in:st=0:d={fade_duration:.3f},"
+                f"afade=t=out:st={fade_out_start:.6f}:d={fade_duration:.3f}"
+            )
+        filters.append(f"{audio_filter}[a{index}]")
+        concat_inputs.append(f"[v{index}][a{index}]")
+
+    filters.append(
+        f"{''.join(concat_inputs)}concat=n={len(keep_intervals)}:v=1:a=1[vout][aout]"
+    )
+    return FfmpegCommand(
+        executable="ffmpeg",
+        arguments=(
+            "-hide_banner",
+            "-nostdin",
+            "-y",
+            "-i",
+            str(source),
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            "[vout]",
+            "-map",
+            "[aout]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            video_preset,
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-movflags",
+            "+faststart",
+            str(destination),
+        ),
+    )
+
+
 def build_clip_render_command(
     *,
     source: str | Path,

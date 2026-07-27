@@ -13,7 +13,8 @@ import {
   retryJobSchema,
   ttsJobSchema
 } from "./schemas.js";
-import { AppError } from "../../shared/errors/app-error.js";
+import { AppError, ValidationError } from "../../shared/errors/app-error.js";
+import { findLocalTtsModel } from "../tts/local-tts-model-registry.js";
 import { assertIdempotencyKey, type ClipOutputArtifact, JobService, serializeJob } from "./job-service.js";
 import type { JobEventBus } from "./job-event-bus.js";
 
@@ -512,6 +513,7 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     validateBody(ttsJobSchema),
     asyncHandler(async (request, response) => {
       const idempotencyKey = assertIdempotencyKey(request.get("idempotency-key"));
+      await validateLocalTtsModelSelection(request.validatedBody);
       const job = await jobService.createTextToSpeechJob({
         userId: request.identity!.effectiveUserId,
         idempotencyKey,
@@ -561,6 +563,7 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
     asyncHandler(async (request, response) => {
       const jobId = routeParam(request.params.jobId, "jobId");
       const idempotencyKey = assertIdempotencyKey(request.get("idempotency-key"));
+      await validateLocalTtsModelSelection(request.validatedBody);
       const job = await jobService.regenerateTextToSpeechJob({
         userId: request.identity!.effectiveUserId,
         jobId,
@@ -1112,6 +1115,28 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
   );
 
   return router;
+}
+
+async function validateLocalTtsModelSelection(input: unknown) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return;
+  const modelKey = (input as Record<string, unknown>).local_model_key;
+  if (typeof modelKey !== "string" || !modelKey.trim()) return;
+
+  const model = await findLocalTtsModel(modelKey);
+  if (!model) {
+    throw new ValidationError("Model suara lokal tidak dikenal.", {
+      fields: { local_model_key: ["Pilih model suara yang tersedia di dashboard TTS."] }
+    });
+  }
+  if (!model.available) {
+    throw new ValidationError("Checkpoint untuk model suara ini belum tersedia.", {
+      fields: {
+        local_model_key: [
+          `Tambahkan ${model.baseModelKey}.onnx beserta file konfigurasi JSON ke folder model_tts.`
+        ]
+      }
+    });
+  }
 }
 
 function parseClipOutputArtifact(value: unknown): ClipOutputArtifact {

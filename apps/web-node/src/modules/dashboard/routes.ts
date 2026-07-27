@@ -447,6 +447,27 @@ dashboardRouter.get(
           !Array.isArray(qualityReport.render_plan)
             ? (qualityReport.render_plan as Record<string, unknown>)
             : {};
+        const speechCleanup =
+          qualityReport.speech_cleanup &&
+          typeof qualityReport.speech_cleanup === "object" &&
+          !Array.isArray(qualityReport.speech_cleanup)
+            ? (qualityReport.speech_cleanup as Record<string, unknown>)
+            : {};
+        const speechCleanupRemovals = Array.isArray(speechCleanup.removals)
+          ? speechCleanup.removals
+              .filter(
+                (removal): removal is Record<string, unknown> =>
+                  Boolean(removal)
+                  && typeof removal === "object"
+                  && !Array.isArray(removal)
+              )
+              .map((removal) => ({
+                startTime: typeof removal.clip_start_time === "number" ? removal.clip_start_time : null,
+                endTime: typeof removal.clip_end_time === "number" ? removal.clip_end_time : null,
+                reason: typeof removal.reason === "string" ? removal.reason : "speech_cleanup",
+                confidence: typeof removal.confidence === "number" ? removal.confidence : null
+              }))
+          : [];
         const visualSettings =
           visual.settings && typeof visual.settings === "object" && !Array.isArray(visual.settings)
             ? (visual.settings as Record<string, unknown>)
@@ -584,6 +605,23 @@ dashboardRouter.get(
               ? String(qualityReport.status)
               : null,
           latestAttemptMessage: latestAttemptMessage ?? warningMessage,
+          speechCleanup: {
+            enabled: speechCleanup.enabled === true,
+            applied: speechCleanup.applied === true,
+            removalCount:
+              typeof speechCleanup.removal_count === "number"
+                ? speechCleanup.removal_count
+                : speechCleanupRemovals.length,
+            removedDurationSeconds:
+              typeof speechCleanup.removed_duration_seconds === "number"
+                ? speechCleanup.removed_duration_seconds
+                : 0,
+            outputDurationSeconds:
+              typeof speechCleanup.output_duration_seconds === "number"
+                ? speechCleanup.output_duration_seconds
+                : null,
+            removals: speechCleanupRemovals
+          },
           validationStatus:
             typeof qualityValidation.status === "string" ? String(qualityValidation.status) : null,
           validationWarnings,
@@ -950,7 +988,10 @@ dashboardRouter.get(
                 ctaPreference: toOptionalString(strategyConfig.cta_preference),
                 standalonePriority: toOptionalString(strategyConfig.standalone_priority),
                 requireSpokenAudio: toOptionalBoolean(strategyConfig.require_spoken_audio),
-                profanityHandling: toOptionalString(strategyConfig.profanity_handling)
+                profanityHandling: toOptionalString(strategyConfig.profanity_handling),
+                speechCleanupEnabled: toOptionalBoolean(strategyConfig.speech_cleanup_enabled) ?? false,
+                removeLongSilence: toOptionalBoolean(strategyConfig.remove_long_silence) ?? false,
+                removeFillerWords: toOptionalBoolean(strategyConfig.remove_filler_words) ?? false
               },
               visual: {
                 aspectRatio: toOptionalString(visualConfig.aspect_ratio),
@@ -1052,8 +1093,10 @@ dashboardRouter.get(
     const selectedPreset = ttsPresets.find((preset) => preset.isDefault) ?? ttsPresets[0] ?? null;
     const presetConfig = toJsonRecord(selectedPreset?.config);
     const defaultLocalModel =
-      localTtsModels.find((model) => model.languageCode.toLowerCase().startsWith("id_")) ??
-      localTtsModels[0] ??
+      localTtsModels.find(
+        (model) => model.available && /^id(?:_|-)/i.test(model.languageCode)
+      ) ??
+      localTtsModels.find((model) => model.available) ??
       null;
     const selectedLocalModelKey =
       toOptionalString(presetConfig.local_model_key) ??
@@ -1061,7 +1104,9 @@ dashboardRouter.get(
       defaultLocalModel?.key ??
       "";
     const selectedLocalModel =
-      localTtsModels.find((model) => model.key === selectedLocalModelKey) ?? defaultLocalModel;
+      localTtsModels.find((model) => model.key === selectedLocalModelKey && model.available) ??
+      defaultLocalModel;
+    const effectiveLocalModelKey = selectedLocalModel?.key ?? "";
     response.render("app/text-to-speech", {
       title: "Text to Speech",
       ttsPresets: ttsPresets.map((preset) => ({
@@ -1082,12 +1127,24 @@ dashboardRouter.get(
         speakerCount: model.speakerCount,
         phonemeType: model.phonemeType,
         dataset: model.dataset,
-        defaultSampleText: model.defaultSampleText
+        defaultSampleText: model.defaultSampleText,
+        engine: model.engine,
+        baseModelKey: model.baseModelKey,
+        profileKind: model.profileKind,
+        description: model.description,
+        gender: model.gender,
+        ageGroup: model.ageGroup,
+        character: model.character,
+        intonation: model.intonation,
+        speakingStyle: model.speakingStyle,
+        licenseName: model.licenseName,
+        licenseUrl: model.licenseUrl,
+        available: model.available
       })),
       selectedPresetId: selectedPreset?.id ?? "",
       formDefaults: {
         language: toOptionalString(presetConfig.language) ?? "id",
-        localModelKey: selectedLocalModelKey,
+        localModelKey: effectiveLocalModelKey,
         voiceIdentifier: toOptionalString(presetConfig.voice_identifier) ?? "",
         speakingStyle: toOptionalString(presetConfig.speaking_style) ?? "documentary",
         emotion: toOptionalString(presetConfig.emotion) ?? "serious",
@@ -1463,19 +1520,39 @@ function isValidLocalTtsModel(model: unknown): model is {
   phonemeType: string | null;
   dataset: string | null;
   defaultSampleText: string;
+  engine: "piper";
+  baseModelKey: string;
+  profileKind: "derived" | "checkpoint";
+  description: string;
+  gender: string | null;
+  ageGroup: string | null;
+  character: string | null;
+  intonation: string | null;
+  speakingStyle: string | null;
+  licenseName: string | null;
+  licenseUrl: string | null;
+  available: boolean;
 } {
   if (!model || typeof model !== "object" || Array.isArray(model)) {
     return false;
   }
   const value = model as Record<string, unknown>;
-  return [
+  const requiredStringsValid = [
     value.key,
     value.displayName,
     value.languageCode,
     value.localeGroup,
     value.voiceName,
-    value.defaultSampleText
+    value.defaultSampleText,
+    value.baseModelKey,
+    value.description
   ].every((entry) => typeof entry === "string");
+  return (
+    requiredStringsValid &&
+    value.engine === "piper" &&
+    (value.profileKind === "derived" || value.profileKind === "checkpoint") &&
+    typeof value.available === "boolean"
+  );
 }
 
 function mergeAutoClipDefaults(

@@ -13,6 +13,7 @@ from app.domain.auto_clip_pipeline import (
     build_output_summary,
     build_pipeline_config,
     deduplicate_and_rank,
+    ensure_complete_candidate_title,
     normalize_candidates,
     PipelineConfig,
     supplement_ranked_candidates,
@@ -447,10 +448,28 @@ def _normalize_provider_batch_output(output: Any) -> Any:
         if not isinstance(candidate, dict):
             normalized_candidates.append(candidate)
             continue
-        normalized_candidates.append(_normalize_candidate_time_markers(candidate))
+        normalized_candidate = _normalize_candidate_time_markers(candidate)
+        normalized_candidates.append(_normalize_candidate_title(normalized_candidate))
 
     normalized = dict(output)
     normalized["candidates"] = normalized_candidates
+    return normalized
+
+
+def _normalize_candidate_title(candidate: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(candidate)
+    original_title = str(candidate.get("title") or "")
+    repaired_title = ensure_complete_candidate_title(
+        original_title,
+        hook_text=str(candidate.get("hook_text") or ""),
+        summary=str(candidate.get("summary") or ""),
+        ending_text=str(candidate.get("ending_text") or ""),
+    )
+    normalized["title"] = repaired_title
+
+    thumbnail_text = str(candidate.get("thumbnail_text") or "")
+    if thumbnail_text.strip().lower() == original_title.strip().lower():
+        normalized["thumbnail_text"] = repaired_title[:120].rstrip()
     return normalized
 
 

@@ -995,8 +995,9 @@ if (autoClipForm) {
         standalone_priority: String(data.get("standalone_priority") || "PREFERRED").trim(),
         require_spoken_audio: data.get("require_spoken_audio") === "on",
         profanity_handling: String(data.get("profanity_handling") || "KEEP"),
-        remove_long_silence: data.get("remove_long_silence") === "on",
-        remove_filler_words: data.get("remove_filler_words") === "on"
+        speech_cleanup_enabled: data.get("speech_cleanup_enabled") === "on",
+        remove_long_silence: data.get("speech_cleanup_enabled") === "on",
+        remove_filler_words: data.get("speech_cleanup_enabled") === "on"
       }),
       visual: {
         aspect_ratio: String(data.get("aspect_ratio")),
@@ -1208,6 +1209,7 @@ if (ttsForm) {
   const previewAudio = ttsForm.querySelector("[data-tts-preview-audio]");
   const previewStatus = ttsForm.querySelector("[data-tts-preview-status]");
   const modelBadges = ttsForm.querySelector("[data-tts-model-badges]");
+  const modelDescription = ttsForm.querySelector("[data-tts-model-description]");
   var previewObjectUrl = null;
 
   const renderLocalModelPreview = () => {
@@ -1216,12 +1218,25 @@ if (ttsForm) {
       const badges = selectedModel
         ? [
             selectedModel.languageCode,
-            selectedModel.voiceName,
+            selectedModel.profileKind === "derived" ? "Profil suara turunan" : "Checkpoint asli",
+            selectedModel.gender,
+            selectedModel.ageGroup,
+            selectedModel.character,
+            selectedModel.speakingStyle,
             selectedModel.quality ? `${selectedModel.quality} quality` : null,
-            selectedModel.sampleRate ? `${selectedModel.sampleRate} Hz` : null
+            selectedModel.sampleRate ? `${selectedModel.sampleRate} Hz` : null,
+            selectedModel.licenseName
           ].filter(Boolean)
         : ["Belum ada model dipilih"];
       modelBadges.innerHTML = badges.map((badge) => `<span>${escapeHtml(String(badge))}</span>`).join("");
+    }
+    if (modelDescription) {
+      modelDescription.textContent = selectedModel
+        ? `${selectedModel.description || ""}${selectedModel.intonation ? ` Intonasi: ${selectedModel.intonation}.` : ""}${selectedModel.baseModelKey ? ` Model dasar: ${selectedModel.baseModelKey}.` : ""}`
+        : "Pilih suara untuk melihat karakter dan lisensinya.";
+    }
+    if (previewButton) {
+      previewButton.disabled = Boolean(selectedModel && selectedModel.available === false);
     }
 
     if (selectedModel && previewTextField && !String(previewTextField.value || "").trim()) {
@@ -1257,7 +1272,7 @@ if (ttsForm) {
     const selectedModel = localModels.find((model) => model?.key === localModelSelector?.value);
     if (selectedModel) {
       const languageField = ttsForm.querySelector('[name="language"]');
-      if (languageField && !String(languageField.value || "").trim()) {
+      if (languageField) {
         languageField.value = String(selectedModel.languageCode || "");
       }
       if (previewTextField && selectedModel.defaultSampleText) {

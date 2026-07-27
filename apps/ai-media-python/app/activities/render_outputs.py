@@ -16,6 +16,10 @@ from temporalio.exceptions import ApplicationError
 from app.config import get_settings
 from app.activities.warning_events import emit_retry_warning
 from app.domain.contracts import ClipOutputResult, ClipRenderArtifactUpload, ClipRenderContext, TranscriptSegment
+from app.domain.speech_cleanup import (
+    build_speech_cleanup_plan,
+    remap_transcript_segments,
+)
 from app.infrastructure.clip_output_client import ClipOutputClient
 from app.media.face_detection import (
     FaceDetectionUnavailable,
@@ -24,7 +28,7 @@ from app.media.face_detection import (
     detect_faces_in_image,
     summarize_face_samples,
 )
-from app.media.ffmpeg import build_clip_render_command
+from app.media.ffmpeg import build_clip_render_command, build_timeline_cleanup_command
 from app.activities.media_validation import run_ffprobe_json
 
 SUPPORTED_SUBTITLE_FORMATS = {"srt", "ass", "vtt", "json"}
@@ -129,11 +133,54 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
     headline_path = working_directory / "headline.txt"
     quote_path = working_directory / "quote.txt"
     source_label_path = working_directory / "source-label.txt"
+    cleaned_source_path = working_directory / "speech-cleaned-source.mp4"
 
-    subtitle_cues = _build_subtitle_cues(
-        transcript_segments=context.transcript.segments if context.transcript else [],
+    original_transcript_segments = context.transcript.segments if context.transcript else []
+    speech_cleanup_plan = build_speech_cleanup_plan(
+        transcript_segments=original_transcript_segments,
         clip_start_seconds=clip_start_seconds,
         clip_duration_seconds=clip_duration_seconds,
+        enabled=_resolve_speech_cleanup_enabled(context.render_settings),
+    )
+    render_source = str(context.source_media.download_url)
+    render_clip_start_seconds = clip_start_seconds
+    render_clip_duration_seconds = clip_duration_seconds
+    render_transcript_segments = original_transcript_segments
+    speech_cleanup_command = None
+    if speech_cleanup_plan.applied:
+        speech_cleanup_command = build_timeline_cleanup_command(
+            source=render_source,
+            destination=cleaned_source_path,
+            keep_intervals=[
+                (span.source_start_seconds, span.source_end_seconds)
+                for span in speech_cleanup_plan.timeline
+            ],
+        )
+        await _run_command_with_heartbeat(
+            speech_cleanup_command.as_exec_args(),
+            timeout_seconds=settings.RENDER_OUTPUT_TIMEOUT_SECONDS,
+            heartbeat_details={
+                "clip_output_id": context.clip_output_id,
+                "job_id": context.job_id,
+                "candidate_id": context.candidate.candidate_id,
+                "stage": "RENDERING_FINAL_CLIPS",
+                "artifact": "speech_cleanup",
+            },
+        )
+        if not cleaned_source_path.exists():
+            raise RuntimeError("speech cleanup completed without creating its intermediate output")
+        render_source = str(cleaned_source_path)
+        render_clip_start_seconds = 0.0
+        render_clip_duration_seconds = speech_cleanup_plan.output_duration_seconds
+        render_transcript_segments = remap_transcript_segments(
+            original_transcript_segments,
+            speech_cleanup_plan,
+        )
+
+    subtitle_cues = _build_subtitle_cues(
+        transcript_segments=render_transcript_segments,
+        clip_start_seconds=render_clip_start_seconds,
+        clip_duration_seconds=render_clip_duration_seconds,
         max_lines=subtitle_max_lines,
         layout_template=layout_template,
     )
@@ -165,14 +212,14 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
             subtitle_path_for_burn_in = subtitle_ass_path
 
     speech_activity_evidence = _build_speech_activity_evidence(
-        context.transcript.segments if context.transcript else [],
-        clip_start_seconds=clip_start_seconds,
-        clip_duration_seconds=clip_duration_seconds,
+        render_transcript_segments,
+        clip_start_seconds=render_clip_start_seconds,
+        clip_duration_seconds=render_clip_duration_seconds,
     )
     face_layout_summary = await _detect_face_layout_summary(
-        source=str(context.source_media.download_url),
-        clip_start_seconds=clip_start_seconds,
-        clip_duration_seconds=clip_duration_seconds,
+        source=render_source,
+        clip_start_seconds=render_clip_start_seconds,
+        clip_duration_seconds=render_clip_duration_seconds,
         working_directory=working_directory,
         timeout_seconds=min(max(settings.MEDIA_PROBE_TIMEOUT_SECONDS, 20), 90),
         active_speaker_tracking=crop_strategy in {"ACTIVE_SPEAKER", "SMART_SPEAKER"},
@@ -186,7 +233,7 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         candidate=context.candidate,
         metadata=candidate_metadata,
         source_media_metadata=context.source_media.metadata,
-        transcript_segments=context.transcript.segments if context.transcript else [],
+        transcript_segments=render_transcript_segments,
         face_layout_summary=face_layout_summary,
         working_directory=working_directory,
         channel_name_path=channel_name_path,
@@ -194,6 +241,8 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         headline_path=headline_path,
         quote_path=quote_path,
         source_label_path=source_label_path,
+        clip_start_seconds_override=render_clip_start_seconds,
+        clip_duration_seconds_override=render_clip_duration_seconds,
     )
     if (
         subtitle_path_for_burn_in is not None
@@ -230,10 +279,10 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         layout_options.pop("logo_source", None)
 
     render_command = build_clip_render_command(
-        source=str(context.source_media.download_url),
+        source=render_source,
         destination=final_path,
-        start_seconds=clip_start_seconds,
-        duration_seconds=clip_duration_seconds,
+        start_seconds=render_clip_start_seconds,
+        duration_seconds=render_clip_duration_seconds,
         source_width=context.source_media.width,
         source_height=context.source_media.height,
         width=width,
@@ -314,7 +363,7 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         aspect_ratio=aspect_ratio,
         width=width,
         height=height,
-        expected_duration_ms=int(round(clip_duration_seconds * 1000)),
+        expected_duration_ms=int(round(render_clip_duration_seconds * 1000)),
         subtitle_format=subtitle_format if subtitle_path_for_upload else None,
         final_observed=final_probe_summary,
         thumbnail_generated=False,
@@ -324,6 +373,8 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if logo_fetch_warning:
         validation["warnings"].append(logo_fetch_warning)
+    validation["checks"]["speech_cleanup"] = True
+    validation["observed"]["speech_cleanup"] = speech_cleanup_plan.to_metadata()
     if isinstance(face_layout_summary.get("warning"), str):
         validation["warnings"].append(face_layout_summary["warning"])
     tracking_quality = face_layout_summary.get("tracking_quality_gate")
@@ -405,6 +456,11 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         "render_settings": context.render_settings,
         "render_plan": {
             "command": render_command.as_exec_args(),
+            "speech_cleanup_command": (
+                speech_cleanup_command.as_exec_args()
+                if speech_cleanup_command is not None
+                else None
+            ),
             "width": width,
             "height": height,
             "fps": fps,
@@ -458,6 +514,7 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
             },
         },
         "validation": validation,
+        "speech_cleanup": speech_cleanup_plan.to_metadata(),
         "artifacts": uploaded_artifacts,
         "metadata": candidate_metadata,
         "branding": layout_options.get("branding"),
@@ -575,6 +632,20 @@ def _resolve_aspect_ratio(render_settings: dict[str, Any]) -> str:
         if isinstance(value, str) and value:
             return value
     return "9:16"
+
+
+def _resolve_speech_cleanup_enabled(render_settings: dict[str, Any]) -> bool:
+    strategy = render_settings.get("strategy")
+    if not isinstance(strategy, dict):
+        return False
+    value = strategy.get("speech_cleanup_enabled")
+    if isinstance(value, bool):
+        return value
+    # Old job snapshots can still opt in through both legacy controls.
+    return (
+        strategy.get("remove_long_silence") is True
+        and strategy.get("remove_filler_words") is True
+    )
 
 
 def _resolve_layout_template(render_settings: dict[str, Any], aspect_ratio: str) -> str | None:
@@ -1201,6 +1272,8 @@ def _build_layout_options(
     quote_path: Path,
     source_label_path: Path,
     source_media_metadata: dict[str, Any] | None = None,
+    clip_start_seconds_override: float | None = None,
+    clip_duration_seconds_override: float | None = None,
 ) -> dict[str, Any]:
     visual = render_settings.get("visual")
     visual_settings = visual.get("settings") if isinstance(visual, dict) else None
@@ -1220,8 +1293,16 @@ def _build_layout_options(
         if isinstance(raw_active_speaker_count, (int, float))
         else 0
     )
-    clip_start_seconds = float(candidate.start_ms) / 1000.0
-    clip_duration_seconds = max(0.0, float(candidate.duration_ms) / 1000.0)
+    clip_start_seconds = (
+        max(0.0, float(clip_start_seconds_override))
+        if clip_start_seconds_override is not None
+        else float(candidate.start_ms) / 1000.0
+    )
+    clip_duration_seconds = (
+        max(0.0, float(clip_duration_seconds_override))
+        if clip_duration_seconds_override is not None
+        else max(0.0, float(candidate.duration_ms) / 1000.0)
+    )
     active_speaker_strategy = _build_active_speaker_strategy(
         transcript_segments,
         clip_start_seconds=clip_start_seconds,

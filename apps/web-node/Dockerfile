@@ -37,6 +37,7 @@ COPY --from=build /workspace/apps/web-node/prisma.config.ts ./apps/web-node/pris
 COPY --from=build /workspace/apps/web-node/src/generated ./apps/web-node/src/generated
 COPY --from=build /workspace/apps/web-node/src/modules/auth/password.ts ./apps/web-node/src/modules/auth/password.ts
 COPY --from=build /workspace/packages/contracts/dist ./packages/contracts/dist
+COPY --from=build /workspace/packages/contracts/json-schema ./packages/contracts/json-schema
 COPY --from=build /workspace/packages/contracts/package.json ./packages/contracts/package.json
 WORKDIR /workspace/apps/web-node
 USER node

@@ -67,6 +67,69 @@ Key files:
 - `apps/ai-media-python/app/workflows/foundation_auto_clipping.py`
 - `apps/ai-media-python/app/activities/progress.py`
 
+### Optional Speech Cleanup
+
+The create and regenerate forms expose one `Rapikan ucapan otomatis`
+checkbox. It maps to `strategy.speech_cleanup_enabled` and defaults to
+`false`, so existing and new jobs do not change speech unless the user opts
+in.
+
+When enabled, the final renderer:
+
+1. Builds a conservative edit decision list from word-level transcript
+   timing.
+2. Detects long silence, isolated high-confidence filler words, exact
+   unintended repetition, and explicit non-speech markers.
+3. Skips low-confidence edits and caps removed material at 22 percent of the
+   selected clip.
+4. Preserves speech-edge padding and applies short audio fades around joined
+   spans.
+5. Renders one cleaned intermediate timeline, then remaps transcript timing
+   before subtitle generation, face tracking, crop, and final render.
+6. Stores `start_time`, `end_time`, `reason`, `confidence`, and
+   `final_timeline` under `quality_report.speech_cleanup`.
+
+Semantic decisions such as off-topic discussion or an overly long intro stay
+in candidate analysis. The renderer does not silently remove them because a
+word-timing heuristic cannot guarantee that meaning is preserved.
+
+Key files:
+
+- `apps/ai-media-python/app/domain/speech_cleanup.py`
+- `apps/ai-media-python/app/activities/render_outputs.py`
+- `apps/ai-media-python/app/media/ffmpeg.py`
+- `apps/web-node/src/views/app/auto-clipping.ejs`
+- `apps/web-node/src/views/app/job-detail.ejs`
+
+## Text-to-Speech Job
+
+1. The user opens `/app/tools/text-to-speech`. Node reads the shared open-source voice catalog from `packages/contracts/json-schema/tts-voice-profiles.json` and merges it with Piper checkpoints actually present in `TTS_MODEL_DIR`.
+2. Catalog entries are derived voice profiles. They reference a `model_key` checkpoint and configure pacing, variation, volume, and a conservative pitch transform. They are only selectable when that checkpoint is installed.
+3. Raw checkpoint keys discovered in `model_tts` remain available and keep their previous synthesis behavior, so existing presets and jobs remain backward compatible.
+4. `Generate test voice` calls `/api/v1/tts/local-model-preview`, which proxies to the Python API and synthesizes one short WAV directly. It does not create a `Job`, call Temporal/OpenAI, or persist an artifact.
+5. Job submission validates the selected local model before creating the durable job. Unknown profile keys and profiles with missing checkpoints return a field-level `422` error.
+6. Node creates `Job`, `JobAttempt`, and `TtsRequest`, then starts `FoundationTextToSpeechWorkflow`.
+7. The segmentation activity uses the configured local or provider-backed segmentation mode; the local preview path is independent from this full workflow.
+8. The synthesis activity resolves a profile key to its base Piper checkpoint, renders every speech segment, inserts planned pauses, applies best-effort open-source DSP tuning, and transcodes to the requested output format.
+9. If optional DSP tuning fails, the original Piper WAV is retained instead of failing the TTS job.
+10. Python uploads the final audio through the internal media target contract. Node persists `TtsOutput`, `MediaAsset`, duration, format, base checkpoint, selected voice profile, and renderer metadata.
+11. Job detail exposes the stored audio for playback and download. No Prisma migration is required for the catalog because the selected key and render metadata are already snapshotted by `TtsRequest` and `TtsOutput`.
+
+To add another derived voice profile, add one JSON entry to `tts-voice-profiles.json`. To add a genuinely different checkpoint, place its `.onnx` and `.onnx.json` files in `TTS_MODEL_DIR`; it will also remain selectable through its raw legacy key.
+
+Key files:
+
+- `packages/contracts/json-schema/tts-voice-profiles.json`
+- `apps/web-node/src/modules/tts/local-tts-model-registry.ts`
+- `apps/web-node/src/views/app/text-to-speech.ejs`
+- `apps/web-node/src/modules/jobs/routes.ts`
+- `apps/ai-media-python/app/domain/tts_models.py`
+- `apps/ai-media-python/app/application/local_tts_preview.py`
+- `apps/ai-media-python/app/application/local_tts_render.py`
+- `apps/ai-media-python/app/application/tts_voice_profile.py`
+- `apps/ai-media-python/app/activities/tts_synthesis.py`
+- `apps/ai-media-python/app/workflows/foundation_text_to_speech.py`
+
 ## Progress Projection
 
 Python activities call:
@@ -117,6 +180,9 @@ Main public API paths:
 - Uploads: `/api/v1/uploads/*`
 - Auto clipping: `/api/v1/auto-clipping/jobs`
 - Auto clipping regenerate: `/api/v1/auto-clipping/jobs/:jobId/regenerate`
+- Text to speech: `/api/v1/tts/jobs`
+- Text to speech regenerate: `/api/v1/tts/jobs/:jobId/regenerate`
+- Lightweight local voice preview: `/api/v1/tts/local-model-preview`
 - Jobs: `/api/v1/jobs`, `/api/v1/jobs/:jobId`, cancel/retry/events/SSE
 
 Internal API:

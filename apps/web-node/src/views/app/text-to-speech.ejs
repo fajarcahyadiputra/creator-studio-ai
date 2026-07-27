@@ -36,14 +36,18 @@
             </select>
           </div>
           <div class="col-md-6">
-            <label class="form-label">Local Piper model</label>
+            <label class="form-label">Suara Indonesia open-source</label>
             <select class="form-select" name="local_model_key" data-tts-local-model-selector>
-              <option value="">Choose local model</option>
+              <option value="">Pilih suara lokal</option>
               <% localTtsModels.forEach((model) => { %>
-                <option value="<%= model.key %>" <%= formDefaults.localModelKey === model.key ? 'selected' : '' %>><%= model.displayName %></option>
+                <option
+                  value="<%= model.key %>"
+                  <%= formDefaults.localModelKey === model.key ? 'selected' : '' %>
+                  <%= model.available ? '' : 'disabled' %>
+                ><%= model.displayName %><%= model.gender ? ` · ${model.gender}` : '' %><%= model.speakingStyle ? ` · ${model.speakingStyle}` : '' %><%= model.available ? '' : ' · model belum tersedia' %></option>
               <% }) %>
             </select>
-            <div class="form-text">Model diambil dari folder lokal <code>model_tts</code> dan akan dipakai untuk test suara Piper.</div>
+            <div class="form-text">Semua suara berjalan lokal dengan Piper. Profil turunan memakai checkpoint Indonesia yang tersedia di <code>model_tts</code>; checkpoint lama tetap didukung.</div>
           </div>
           <div class="col-md-3">
             <label class="form-label">Language</label>
@@ -109,6 +113,7 @@
               <span>Belum ada model dipilih</span>
             </div>
           </div>
+          <p class="text-muted small mt-2 mb-0" data-tts-model-description>Pilih suara untuk melihat karakter dan lisensinya.</p>
           <div class="row g-3 mt-1">
             <div class="col-12">
               <label class="form-label">Sample preview text</label>

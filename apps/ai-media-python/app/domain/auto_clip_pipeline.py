@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from hashlib import sha1
 from typing import Iterable
@@ -574,15 +575,41 @@ def _build_title(text: str, *, hook_text: str, ending_text: str) -> str:
         if lowered in seen:
             continue
         seen.add(lowered)
-        ranked.append((_score_title_candidate(normalized), normalized))
+        if _title_is_complete(normalized, support_text=text):
+            ranked.append((_score_title_candidate(normalized), normalized))
 
     if not ranked:
-        fallback = _truncate_title_words(_normalize_title_candidate(hook_text) or _normalize_title_candidate(text), max_words=9)
+        fallback = _normalize_title_candidate(hook_text) or _normalize_title_candidate(text)
         return fallback or "Momen penting ini"
 
     ranked.sort(key=lambda item: (item[0], -len(item[1].split())), reverse=True)
-    best = ranked[0][1]
-    return _truncate_title_words(best, max_words=9)
+    return ranked[0][1]
+
+
+def ensure_complete_candidate_title(
+    title: str,
+    *,
+    hook_text: str,
+    summary: str,
+    ending_text: str,
+) -> str:
+    """Keep provider packaging only when it reads as a complete grounded headline."""
+    normalized_title = _normalize_title_candidate(title)
+    support_text = " ".join(part for part in (hook_text, summary, ending_text) if part).strip()
+    if normalized_title and _title_is_complete(normalized_title, support_text=support_text):
+        return normalized_title
+
+    fallback = _build_title(
+        support_text,
+        hook_text=hook_text,
+        ending_text=ending_text,
+    )
+    if _title_is_complete(fallback, support_text=support_text):
+        return fallback
+
+    # The hook is preferable to preserving a provider title with a broken promise.
+    safe_hook = _normalize_title_candidate(hook_text)
+    return safe_hook or "Momen penting ini"
 
 
 def _suggest_related_hashtags(language: str, text: str) -> list[str]:
@@ -1084,6 +1111,48 @@ def _score_title_candidate(text: str) -> float:
     if len(words) < 2:
         score -= 4.0
     return score
+
+
+def _title_is_complete(title: str, *, support_text: str) -> bool:
+    normalized = _normalize_title_candidate(title)
+    words = normalized.split()
+    if len(words) < 2:
+        return False
+
+    final_word = words[-1].lower().strip(".,!?;:")
+    if final_word in {
+        "dari",
+        "untuk",
+        "karena",
+        "dengan",
+        "tanpa",
+        "terhadap",
+        "sebagai",
+        "yang",
+        "dan",
+        "atau",
+        "di",
+        "ke",
+        "pada",
+        "oleh",
+        "kalau",
+        "tapi",
+        "agar",
+        "supaya",
+    }:
+        return False
+
+    comparison = re.search(r"\blebih\b.+\bdari\s+([\w-]+)$", normalized, flags=re.IGNORECASE)
+    if comparison:
+        comparison_object = comparison.group(1).lower()
+        grounded_words = {
+            token.lower()
+            for token in re.findall(r"[\w-]+", support_text)
+        }
+        if comparison_object not in grounded_words:
+            return False
+
+    return True
 
 
 def _truncate_title_words(text: str, *, max_words: int) -> str:

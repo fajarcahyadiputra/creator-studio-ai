@@ -22,7 +22,11 @@ async def execute_tts_audio_synthesis(payload: dict[str, Any]) -> dict[str, Any]
     input_snapshot = payload.get("input_snapshot")
     document_payload = payload.get("document")
     metadata_payload = payload.get("metadata")
-    if not isinstance(job_id, str) or not isinstance(input_snapshot, dict) or not isinstance(document_payload, dict):
+    if (
+        not isinstance(job_id, str)
+        or not isinstance(input_snapshot, dict)
+        or not isinstance(document_payload, dict)
+    ):
         raise ApplicationError(
             "job_id, input_snapshot, and document are required",
             non_retryable=True,
@@ -94,6 +98,9 @@ async def execute_tts_audio_synthesis(payload: dict[str, Any]) -> dict[str, Any]
         "provider": "local-piper",
         "renderer": "piper-tts",
         "model_key": request.local_model_key,
+        "base_model_key": render_result.base_model_key,
+        "voice_name": render_result.voice_name,
+        "voice_profile_kind": render_result.profile_kind,
         "language": request.language,
         "requested_format": preferred_format,
         "format": output_audio["format"],

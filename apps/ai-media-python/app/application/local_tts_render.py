@@ -8,6 +8,10 @@ from functools import lru_cache
 from pydantic import BaseModel, Field
 from temporalio.exceptions import ApplicationError
 
+from app.application.tts_voice_profile import (
+    apply_voice_profile_audio,
+    build_piper_synthesis_config,
+)
 from app.domain.contracts import TtsSpeechSegmentsDocument
 from app.domain.tts_models import get_local_tts_model
 
@@ -25,6 +29,10 @@ class LocalTtsRenderResult:
     sample_rate: int
     channels: int
     segment_count: int
+    model_key: str
+    base_model_key: str
+    profile_kind: str
+    voice_name: str
 
 
 def synthesize_local_tts_document(request: LocalTtsRenderRequest) -> LocalTtsRenderResult:
@@ -38,10 +46,18 @@ def synthesize_local_tts_document(request: LocalTtsRenderRequest) -> LocalTtsRen
 
     segments = request.document.segments
     if not segments:
-        raise ApplicationError("At least one TTS segment is required", non_retryable=True, type="InvalidInput")
+        raise ApplicationError(
+            "At least one TTS segment is required",
+            non_retryable=True,
+            type="InvalidInput",
+        )
 
     voice = _load_voice(str(model.model_path))
-    synthesis_config = _build_synthesis_config(request.speaking_speed)
+    synthesis_config = build_piper_synthesis_config(
+        model.synthesis,
+        speaking_speed=request.speaking_speed,
+        is_derived_profile=model.profile_kind == "derived",
+    )
     segment_wavs = [_render_segment_wav(voice, segment.text, synthesis_config) for segment in segments]
     channels, sample_width, sample_rate = _inspect_wav(segment_wavs[0])
 
@@ -66,7 +82,8 @@ def synthesize_local_tts_document(request: LocalTtsRenderRequest) -> LocalTtsRen
             if pause_ms > 0:
                 _append_silence(destination, pause_ms, sample_rate, channels, sample_width)
 
-    audio_bytes = output_buffer.getvalue()
+    audio_bytes = apply_voice_profile_audio(output_buffer.getvalue(), model.synthesis)
+    channels, _, sample_rate = _inspect_wav(audio_bytes)
     duration_ms = _measure_wav_duration_ms(audio_bytes)
     return LocalTtsRenderResult(
         audio_bytes=audio_bytes,
@@ -74,6 +91,10 @@ def synthesize_local_tts_document(request: LocalTtsRenderRequest) -> LocalTtsRen
         sample_rate=sample_rate,
         channels=channels,
         segment_count=len(segments),
+        model_key=model.key,
+        base_model_key=model.base_model_key,
+        profile_kind=model.profile_kind,
+        voice_name=model.display_name,
     )
 
 
@@ -116,19 +137,6 @@ def _append_silence(
     frame_count = round(sample_rate * duration_ms / 1000)
     silence_frame = b"\x00" * sample_width * channels
     destination.writeframes(silence_frame * frame_count)
-
-
-def _build_synthesis_config(speaking_speed: float | None) -> object | None:
-    if speaking_speed is None or abs(speaking_speed - 1.0) < 0.01:
-        return None
-
-    try:
-        from piper import SynthesisConfig
-    except ImportError:
-        return None
-
-    length_scale = max(0.5, min(2.0, round(1 / speaking_speed, 3)))
-    return SynthesisConfig(length_scale=length_scale)
 
 
 @lru_cache(maxsize=16)

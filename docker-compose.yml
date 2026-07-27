@@ -212,6 +212,7 @@ services:
     volumes:
       - ./model_tts:/models/tts:ro
       - ./model_face:/models/face:ro
+      - ./secrets/yt-dlp:/run/secrets/yt-dlp:ro
     depends_on:
       temporal:
         condition: service_healthy
@@ -241,6 +242,7 @@ services:
     volumes:
       - ./model_tts:/models/tts:ro
       - ./model_face:/models/face:ro
+      - ./secrets/yt-dlp:/run/secrets/yt-dlp:ro
     command:
       ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:

@@ -202,8 +202,15 @@
                 <option value="OBJECT_AND_CONSEQUENCE">Object and consequence</option>
               </select>
             </div>
-            <div class="col-md-3"><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="remove_long_silence" checked><span class="form-check-label">Remove long silence</span></label></div>
-            <div class="col-md-3"><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="remove_filler_words"><span class="form-check-label">Remove filler words</span></label></div>
+            <div class="col-12">
+              <label class="form-check auto-clip-choice-card">
+                <input class="form-check-input" type="checkbox" name="speech_cleanup_enabled">
+                <span>
+                  <strong class="form-check-label">Rapikan ucapan otomatis</strong>
+                  <small class="d-block text-muted mt-1">Hapus hanya filler, pengulangan, noise ucapan, dan jeda panjang yang terdeteksi aman. Sistem mempertahankan makna, memberi padding pada titik potong, dan melewati edit berisiko.</small>
+                </span>
+              </label>
+            </div>
           </div>
         </details>
       </div>

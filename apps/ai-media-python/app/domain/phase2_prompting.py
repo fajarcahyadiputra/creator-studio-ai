@@ -2,7 +2,7 @@ from typing import Any
 
 from app.domain.contracts import AnalysisInputs
 
-AUTO_CLIP_ANALYZER_PROMPT_VERSION = "phase2-candidate-analyzer-v10"
+AUTO_CLIP_ANALYZER_PROMPT_VERSION = "phase2-candidate-analyzer-v11"
 
 
 def build_candidate_analyzer_system_prompt() -> str:
@@ -52,6 +52,9 @@ def build_candidate_analyzer_system_prompt() -> str:
         "Return suggested_hashtags as a deduplicated blend of the strongest related_hashtags and viral_hashtags, with no more than 10 items. "
         "Every hashtag must start with #, use compact readable words, and remain faithful to the selected clip. "
         "Do not make title, hook_text, and thumbnail_text identical unless the wording is already exceptionally sharp and compact. "
+        "Every title must be a complete, standalone Indonesian thought. Never end a title with a dangling connector, comparison, or unclear object. "
+        "A comparison such as lebih parah dari X must name a specific, transcript-grounded X and remain logically understandable; otherwise rewrite it as a complete factual hook. "
+        "Before returning JSON, read every title by itself and reject or rewrite any wording that makes the viewer ask what the final noun refers to. "
         "If user_editor_briefs are provided, treat them as high-priority editorial direction as long as they do not conflict with factual grounding or safety."
     )
 
@@ -116,6 +119,7 @@ def build_candidate_analyzer_payload(
             "standalone_priority": strategy_payload.get("standalone_priority"),
             "require_spoken_audio": strategy_payload.get("require_spoken_audio"),
             "profanity_handling": strategy_payload.get("profanity_handling"),
+            "speech_cleanup_enabled": strategy_payload.get("speech_cleanup_enabled", False),
             "remove_long_silence": strategy_payload.get("remove_long_silence"),
             "remove_filler_words": strategy_payload.get("remove_filler_words"),
         },
@@ -222,6 +226,10 @@ def build_candidate_analyzer_payload(
                 "If the raw transcript line is too long, compress it into a sharp hook while preserving the actual meaning and stakes.",
                 "Prefer titles that name the real object, risk, conflict, or consequence, for example pressure, debt, crisis, mistake, danger, collapse, or why something happens.",
                 "Do not output a title that feels cut off, trailing, or incomplete.",
+                "The title must remain grammatically and semantically complete when read without the caption, thumbnail, or source transcript.",
+                "Never end on a connector such as dari, untuk, karena, dengan, tanpa, terhadap, sebagai, yang, dan, atau, di, ke, pada, oleh, kalau, atau tapi.",
+                "Never end a comparison with an unclear or ungrounded object. Bad: Doom scrolling lebih parah dari korban. Good: Doom scrolling bisa memicu trauma, or another complete claim supported by the transcript.",
+                "Do a final standalone-title check: who or what is affected, what happens, and whether every comparison has a clear object.",
                 "Target title shape: 4 to 9 words, compact enough to fit a premium 9:16 headline without looking cramped.",
                 "Make the title work as a two-part visual headline: setup or problem first, strongest risk or payoff second.",
                 "If the clip contains a clear object and consequence, prefer that over a vague reaction. Example: tekanan pipa tinggi is stronger than oke jadi gitu.",

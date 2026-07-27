@@ -1,0 +1,208 @@
+{
+  "version": 1,
+  "engine": "piper",
+  "catalog_name": "Creator Studio AI Indonesian open-source voice profiles",
+  "catalog_description": "Derived voice profiles for the locally installed Piper Indonesian checkpoint. Profiles tune pacing, variation, volume, and pitch without downloading a paid provider model.",
+  "profiles": [
+    {
+      "key": "id-aruna-warm",
+      "model_key": "id_ID-news_tts-medium",
+      "display_name": "Aruna",
+      "language_code": "id_ID",
+      "profile_kind": "derived",
+      "gender": "female",
+      "age": "adult",
+      "character": "Hangat dan ramah",
+      "intonation": "Lembut, natural",
+      "speaking_style": "storytelling",
+      "description": "Suara hangat untuk storytelling, edukasi ringan, dan narasi lifestyle.",
+      "sample_text": "Halo, saya Aruna. Mari kita ceritakan ide ini dengan hangat dan mudah dipahami.",
+      "license": {
+        "name": "Piper voice model terms",
+        "url": "https://huggingface.co/rhasspy/piper-voices/tree/main/id/id_ID/news_tts/medium"
+      },
+      "synthesis": {
+        "rate": 0.96,
+        "pitch_semitones": 2.2,
+        "noise_scale": 0.62,
+        "noise_w_scale": 0.72,
+        "volume": 0.98
+      }
+    },
+    {
+      "key": "id-laras-clear",
+      "model_key": "id_ID-news_tts-medium",
+      "display_name": "Laras",
+      "language_code": "id_ID",
+      "profile_kind": "derived",
+      "gender": "female",
+      "age": "young_adult",
+      "character": "Jernih dan energik",
+      "intonation": "Ceria, tegas",
+      "speaking_style": "social",
+      "description": "Suara jernih untuk konten sosial, tutorial singkat, dan promosi.",
+      "sample_text": "Halo, saya Laras. Informasi penting akan terdengar jelas, ringan, dan penuh energi.",
+      "license": {
+        "name": "Piper voice model terms",
+        "url": "https://huggingface.co/rhasspy/piper-voices/tree/main/id/id_ID/news_tts/medium"
+      },
+      "synthesis": {
+        "rate": 1.06,
+        "pitch_semitones": 3.0,
+        "noise_scale": 0.68,
+        "noise_w_scale": 0.78,
+        "volume": 1.0
+      }
+    },
+    {
+      "key": "id-kirana-calm",
+      "model_key": "id_ID-news_tts-medium",
+      "display_name": "Kirana",
+      "language_code": "id_ID",
+      "profile_kind": "derived",
+      "gender": "female",
+      "age": "adult",
+      "character": "Tenang dan elegan",
+      "intonation": "Pelan, reflektif",
+      "speaking_style": "documentary",
+      "description": "Suara tenang untuk dokumenter, audiobook, dan materi reflektif.",
+      "sample_text": "Saya Kirana. Dengarkan kisah ini perlahan, dengan suasana tenang dan penuh makna.",
+      "license": {
+        "name": "Piper voice model terms",
+        "url": "https://huggingface.co/rhasspy/piper-voices/tree/main/id/id_ID/news_tts/medium"
+      },
+      "synthesis": {
+        "rate": 0.9,
+        "pitch_semitones": 1.4,
+        "noise_scale": 0.55,
+        "noise_w_scale": 0.68,
+        "volume": 0.96
+      }
+    },
+    {
+      "key": "id-nadira-authoritative",
+      "model_key": "id_ID-news_tts-medium",
+      "display_name": "Nadira",
+      "language_code": "id_ID",
+      "profile_kind": "derived",
+      "gender": "female",
+      "age": "mature",
+      "character": "Berwibawa dan profesional",
+      "intonation": "Stabil, informatif",
+      "speaking_style": "news",
+      "description": "Suara profesional untuk berita, presentasi, dan penjelasan formal.",
+      "sample_text": "Saya Nadira. Berikut informasi utama yang perlu Anda ketahui hari ini.",
+      "license": {
+        "name": "Piper voice model terms",
+        "url": "https://huggingface.co/rhasspy/piper-voices/tree/main/id/id_ID/news_tts/medium"
+      },
+      "synthesis": {
+        "rate": 0.98,
+        "pitch_semitones": 0.8,
+        "noise_scale": 0.5,
+        "noise_w_scale": 0.64,
+        "volume": 1.02
+      }
+    },
+    {
+      "key": "id-bima-deep",
+      "model_key": "id_ID-news_tts-medium",
+      "display_name": "Bima",
+      "language_code": "id_ID",
+      "profile_kind": "derived",
+      "gender": "male",
+      "age": "adult",
+      "character": "Dalam dan meyakinkan",
+      "intonation": "Tegas, sinematik",
+      "speaking_style": "documentary",
+      "description": "Suara dalam untuk dokumenter, sejarah, dan narasi sinematik.",
+      "sample_text": "Saya Bima. Mari melihat fakta di balik peristiwa ini dengan lebih mendalam.",
+      "license": {
+        "name": "Piper voice model terms",
+        "url": "https://huggingface.co/rhasspy/piper-voices/tree/main/id/id_ID/news_tts/medium"
+      },
+      "synthesis": {
+        "rate": 0.92,
+        "pitch_semitones": -3.0,
+        "noise_scale": 0.54,
+        "noise_w_scale": 0.66,
+        "volume": 1.04
+      }
+    },
+    {
+      "key": "id-raka-natural",
+      "model_key": "id_ID-news_tts-medium",
+      "display_name": "Raka",
+      "language_code": "id_ID",
+      "profile_kind": "derived",
+      "gender": "male",
+      "age": "young_adult",
+      "character": "Natural dan bersahabat",
+      "intonation": "Santai, komunikatif",
+      "speaking_style": "conversational",
+      "description": "Suara santai untuk podcast, explainer, dan konten percakapan.",
+      "sample_text": "Halo, saya Raka. Kita bahas topik ini dengan santai, jelas, dan langsung ke intinya.",
+      "license": {
+        "name": "Piper voice model terms",
+        "url": "https://huggingface.co/rhasspy/piper-voices/tree/main/id/id_ID/news_tts/medium"
+      },
+      "synthesis": {
+        "rate": 1.02,
+        "pitch_semitones": -1.5,
+        "noise_scale": 0.64,
+        "noise_w_scale": 0.76,
+        "volume": 1.0
+      }
+    },
+    {
+      "key": "id-arya-energetic",
+      "model_key": "id_ID-news_tts-medium",
+      "display_name": "Arya",
+      "language_code": "id_ID",
+      "profile_kind": "derived",
+      "gender": "male",
+      "age": "young_adult",
+      "character": "Energik dan optimistis",
+      "intonation": "Cepat, ekspresif",
+      "speaking_style": "promotion",
+      "description": "Suara energik untuk iklan, hook video, dan pengumuman.",
+      "sample_text": "Saya Arya. Siap membuat pesan Anda terdengar lebih hidup dan menarik perhatian.",
+      "license": {
+        "name": "Piper voice model terms",
+        "url": "https://huggingface.co/rhasspy/piper-voices/tree/main/id/id_ID/news_tts/medium"
+      },
+      "synthesis": {
+        "rate": 1.1,
+        "pitch_semitones": -0.8,
+        "noise_scale": 0.72,
+        "noise_w_scale": 0.82,
+        "volume": 1.06
+      }
+    },
+    {
+      "key": "id-damar-mature",
+      "model_key": "id_ID-news_tts-medium",
+      "display_name": "Damar",
+      "language_code": "id_ID",
+      "profile_kind": "derived",
+      "gender": "male",
+      "age": "mature",
+      "character": "Tenang dan berpengalaman",
+      "intonation": "Lambat, berwibawa",
+      "speaking_style": "audiobook",
+      "description": "Suara matang untuk audiobook, edukasi serius, dan narasi panjang.",
+      "sample_text": "Saya Damar. Setiap gagasan akan disampaikan dengan tenang, runtut, dan berwibawa.",
+      "license": {
+        "name": "Piper voice model terms",
+        "url": "https://huggingface.co/rhasspy/piper-voices/tree/main/id/id_ID/news_tts/medium"
+      },
+      "synthesis": {
+        "rate": 0.86,
+        "pitch_semitones": -4.0,
+        "noise_scale": 0.48,
+        "noise_w_scale": 0.62,
+        "volume": 1.02
+      }
+    }
+  ]
+}

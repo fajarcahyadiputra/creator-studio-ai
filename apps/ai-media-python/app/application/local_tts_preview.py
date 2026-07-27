@@ -7,6 +7,10 @@ from functools import lru_cache
 from pydantic import BaseModel, Field
 from temporalio.exceptions import ApplicationError
 
+from app.application.tts_voice_profile import (
+    apply_voice_profile_audio,
+    build_piper_synthesis_config,
+)
 from app.config import get_settings
 from app.domain.tts_models import LocalTtsModel, get_local_tts_model
 
@@ -31,11 +35,19 @@ def synthesize_local_tts_preview(request: LocalTtsPreviewRequest) -> bytes:
 
     voice = _load_voice(str(model.model_path))
     buffer = io.BytesIO()
+    synthesis_config = build_piper_synthesis_config(
+        model.synthesis,
+        speaking_speed=None,
+        is_derived_profile=model.profile_kind == "derived",
+    )
 
     with wave.open(buffer, "wb") as wav_file:
-        voice.synthesize_wav(normalized_text, wav_file)
+        if synthesis_config is None:
+            voice.synthesize_wav(normalized_text, wav_file)
+        else:
+            voice.synthesize_wav(normalized_text, wav_file, syn_config=synthesis_config)
 
-    return buffer.getvalue()
+    return apply_voice_profile_audio(buffer.getvalue(), model.synthesis)
 
 
 def default_preview_text(model: LocalTtsModel | None) -> str:
@@ -43,11 +55,13 @@ def default_preview_text(model: LocalTtsModel | None) -> str:
     default_text = settings.TTS_SAMPLE_TEXT.strip()
     if model is None:
         return default_text
+    if model.sample_text:
+        return model.sample_text
 
     language = model.language_code.lower()
-    if language.startswith("id_"):
+    if language.startswith(("id_", "id-")):
         return default_text
-    if language.startswith("en_"):
+    if language.startswith(("en_", "en-")):
         return "Hello, this is a sample voice preview for your narration workflow."
     return default_text
 

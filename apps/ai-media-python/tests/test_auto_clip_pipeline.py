@@ -12,6 +12,7 @@ from app.domain.auto_clip_pipeline import (
     build_output_summary,
     build_pipeline_config,
     deduplicate_and_rank,
+    ensure_complete_candidate_title,
     normalize_candidates,
 )
 from app.domain.auto_clip_stages import compute_overall_progress
@@ -208,6 +209,43 @@ def test_pipeline_title_avoids_weak_filler_opening_words() -> None:
     assert candidates
     assert candidates[0].title.lower() != "oke"
     assert "tekanan" in candidates[0].title.lower() or "pecah" in candidates[0].title.lower()
+
+
+def test_provider_title_with_ungrounded_comparison_is_repaired() -> None:
+    repaired = ensure_complete_candidate_title(
+        "Doom scrolling Bisa Lebih Parah dari Korban",
+        hook_text="Doom scrolling membuat kejadian buruk terasa terjadi terus.",
+        summary="Paparan berita berulang membuat sistem stres terus berputar dan dapat memicu trauma.",
+        ending_text="Karena otak membaca kejadiannya seperti terjadi terus.",
+    )
+
+    assert repaired != "Doom scrolling Bisa Lebih Parah dari Korban"
+    assert repaired.lower().split()[-1] not in {"dari", "karena", "yang", "dan"}
+    assert "korban" not in repaired.lower()
+
+
+def test_complete_provider_title_is_preserved() -> None:
+    title = "Doom Scrolling Bisa Memicu Trauma"
+
+    repaired = ensure_complete_candidate_title(
+        title,
+        hook_text="Doom scrolling membuat kejadian buruk terasa terjadi terus.",
+        summary="Paparan berita berulang dapat memicu trauma.",
+        ending_text="Sistem stres akhirnya terus berputar.",
+    )
+
+    assert repaired == title
+
+
+def test_heuristic_title_is_not_cut_at_a_fixed_word_count() -> None:
+    repaired = ensure_complete_candidate_title(
+        "",
+        hook_text="Doom scrolling membuat sistem stres terus berputar tanpa sempat pulih.",
+        summary="Doom scrolling membuat sistem stres terus berputar tanpa sempat pulih.",
+        ending_text="Sistem stres tidak sempat pulih.",
+    )
+
+    assert repaired.endswith("pulih")
 
 
 def test_pipeline_rejects_internal_reintro_and_topic_reset_segments() -> None:
@@ -574,7 +612,7 @@ async def test_phase2_analyzer_uses_openai_provider_when_available() -> None:
     assert summary["candidate_count"] == 1
     analyzer = summary["analyzer"]
     assert analyzer["analysis_mode"] == "openai"
-    assert analyzer["prompt_version"] == "phase2-candidate-analyzer-v2"
+    assert analyzer["prompt_version"] == "phase2-candidate-analyzer-v11"
     assert analyzer["provider"] == "openai"
     assert analyzer["provider_request_id"] == "req_openai_123"
     assert analyzer["token_usage"]["total_tokens"] == 1480

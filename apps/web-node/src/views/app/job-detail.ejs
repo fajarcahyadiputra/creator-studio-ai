@@ -635,17 +635,14 @@
                           <label class="form-label">Subtitle font family</label>
                           <input class="form-control" name="subtitle_font_family" value="<%= outputSummary.requestSnapshot.subtitle.fontFamily ?? '' %>">
                         </div>
-                        <div class="col-md-4 form-check d-flex align-items-end">
-                          <div>
-                            <input class="form-check-input" type="checkbox" name="remove_long_silence" id="remove_long_silence_regenerate" <%= outputSummary.requestSnapshot.strategy.removeLongSilence !== false ? 'checked' : '' %>>
-                            <label class="form-check-label" for="remove_long_silence_regenerate">Remove long silence</label>
-                          </div>
-                        </div>
-                        <div class="col-md-4 form-check d-flex align-items-end">
-                          <div>
-                            <input class="form-check-input" type="checkbox" name="remove_filler_words" id="remove_filler_words_regenerate" <%= outputSummary.requestSnapshot.strategy.removeFillerWords ? 'checked' : '' %>>
-                            <label class="form-check-label" for="remove_filler_words_regenerate">Remove filler words</label>
-                          </div>
+                        <div class="col-12">
+                          <label class="form-check auto-clip-choice-card">
+                            <input class="form-check-input" type="checkbox" name="speech_cleanup_enabled" id="speech_cleanup_enabled_regenerate" <%= outputSummary.requestSnapshot.strategy.speechCleanupEnabled ? 'checked' : '' %>>
+                            <span>
+                              <strong class="form-check-label">Rapikan ucapan otomatis</strong>
+                              <small class="d-block text-muted mt-1">Aktifkan untuk membuang edit ucapan yang ber-confidence tinggi. Regenerate tetap mempertahankan bagian yang berisiko mengubah makna atau membuat jump cut buruk.</small>
+                            </span>
+                          </label>
                         </div>
                         <div class="col-md-4">
                           <label class="form-label">Selection brief</label>
@@ -1280,6 +1277,58 @@
                       <p>Output ini difokuskan ke render final, subtitle, dan metadata agar workflow review lebih cepat dan storage tetap hemat.</p>
                     </div>
                   </div>
+                  <% if (output.speechCleanup?.enabled) { %>
+                    <details class="clip-output-technical mt-3">
+                      <summary>
+                        Rapikan ucapan:
+                        <% if (output.speechCleanup.applied) { %>
+                          <%= output.speechCleanup.removalCount %> bagian dirapikan
+                        <% } else { %>
+                          tidak ada edit aman
+                        <% } %>
+                      </summary>
+                      <div class="mt-3">
+                        <% if (output.speechCleanup.applied) { %>
+                          <p class="text-muted small">
+                            Durasi yang dibuang <strong><%= Number(output.speechCleanup.removedDurationSeconds).toFixed(2) %> detik</strong>.
+                            <% if (typeof output.speechCleanup.outputDurationSeconds === 'number') { %>
+                              Durasi akhir <strong><%= Number(output.speechCleanup.outputDurationSeconds).toFixed(2) %> detik</strong>.
+                            <% } %>
+                          </p>
+                          <div class="table-responsive">
+                            <table class="table table-sm align-middle mb-0">
+                              <thead>
+                                <tr><th>Waktu clip</th><th>Alasan</th><th>Confidence</th></tr>
+                              </thead>
+                              <tbody>
+                                <% output.speechCleanup.removals.forEach((removal) => { %>
+                                  <tr>
+                                    <td>
+                                      <%= typeof removal.startTime === 'number' ? removal.startTime.toFixed(2) : '-' %>s
+                                      -
+                                      <%= typeof removal.endTime === 'number' ? removal.endTime.toFixed(2) : '-' %>s
+                                    </td>
+                                    <td>
+                                      <% if (removal.reason === 'long_silence') { %>Jeda kosong panjang
+                                      <% } else if (removal.reason === 'filler_word') { %>Kata pengisi
+                                      <% } else if (removal.reason === 'unintended_repetition') { %>Pengulangan tidak disengaja
+                                      <% } else if (removal.reason === 'non_speech_noise') { %>Suara non-ucapan
+                                      <% } else { %><%= removal.reason %><% } %>
+                                    </td>
+                                    <td><%= typeof removal.confidence === 'number' ? `${Math.round(removal.confidence * 100)}%` : '-' %></td>
+                                  </tr>
+                                <% }) %>
+                              </tbody>
+                            </table>
+                          </div>
+                        <% } else { %>
+                          <p class="text-muted small mb-0">
+                            Sistem tidak menemukan bagian ber-confidence tinggi yang aman dihapus tanpa mengubah makna atau membuat sambungan terasa kasar.
+                          </p>
+                        <% } %>
+                      </div>
+                    </details>
+                  <% } %>
                   <% if (output.subtitleAvailable) { %>
                     <div class="text-muted small mt-3">
                       Subtitle tersedia:

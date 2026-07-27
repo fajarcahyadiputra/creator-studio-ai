@@ -29,6 +29,13 @@ YOUTUBE_DOWNLOAD_STRATEGIES: tuple[tuple[str, str | None], ...] = (
     ("android-vr", "android_vr"),
     ("default", None),
 )
+DEFAULT_YT_DLP_COOKIES_FILE = Path("/run/secrets/yt-dlp/cookies.txt")
+YOUTUBE_AUTHENTICATION_MARKERS = (
+    "sign in to confirm you’re not a bot",
+    "sign in to confirm you're not a bot",
+    "use --cookies-from-browser or --cookies",
+    "login required",
+)
 
 
 def _normalize_target_video_height(value: Any) -> int:
@@ -63,6 +70,7 @@ def _build_ytdlp_options(
     output_template: str | None = None,
     target_video_height: int = 1080,
     player_client: str | None = None,
+    cookie_file: Path | None = None,
 ) -> dict[str, Any]:
     options: dict[str, Any] = {
         "quiet": True,
@@ -84,6 +92,8 @@ def _build_ytdlp_options(
         # extractor cache across retries can repeat the same rejected URL.
         "cachedir": False,
     }
+    if cookie_file is not None:
+        options["cookiefile"] = str(cookie_file)
 
     if skip_download:
         options["skip_download"] = True
@@ -115,8 +125,10 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
         raise ApplicationError("project_id must be a string when provided", non_retryable=True, type="InvalidInput")
 
     settings = get_settings()
+    cookie_file_source = _resolve_ytdlp_cookie_file(settings.YT_DLP_COOKIES_FILE)
     workdir = Path(settings.TEMP_WORKDIR) / user_id / job_id / "external-source" / _build_activity_workdir_name()
     workdir.mkdir(parents=True, exist_ok=True)
+    cookie_file = _prepare_ytdlp_cookie_file(cookie_file_source, workdir)
     stage = "extract-info"
 
     client = MediaAssetClient()
@@ -131,7 +143,7 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
     downloaded_path: Path | None = None
     try:
         info = await _await_with_heartbeat(
-            asyncio.to_thread(_extract_source_info, source_url),
+            asyncio.to_thread(_extract_source_info, source_url, cookie_file),
             {
                 "job_id": job_id,
                 "stage": "PROBING_MEDIA",
@@ -145,7 +157,13 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
 
         stage = "download"
         downloaded_path = await _await_with_heartbeat(
-            asyncio.to_thread(_download_source_media, source_url, download_template, target_video_height),
+            asyncio.to_thread(
+                _download_source_media,
+                source_url,
+                download_template,
+                target_video_height,
+                cookie_file,
+            ),
             {
                 "job_id": job_id,
                 "stage": "PROBING_MEDIA",
@@ -326,15 +344,20 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
         shutil.rmtree(workdir, ignore_errors=True)
 
 
-def _extract_source_info(source_url: str) -> dict[str, Any]:
-    with YoutubeDL(_build_ytdlp_options(skip_download=True)) as ydl:
+def _extract_source_info(source_url: str, cookie_file: Path | None = None) -> dict[str, Any]:
+    with YoutubeDL(_build_ytdlp_options(skip_download=True, cookie_file=cookie_file)) as ydl:
         info = ydl.extract_info(source_url, download=False)
     if not isinstance(info, dict):
         raise RuntimeError("yt-dlp did not return a source info document")
     return info
 
 
-def _download_source_media(source_url: str, output_template: str, target_video_height: int = 1080) -> Path:
+def _download_source_media(
+    source_url: str,
+    output_template: str,
+    target_video_height: int = 1080,
+    cookie_file: Path | None = None,
+) -> Path:
     base_dir = Path(output_template).parent
     file_template = Path(output_template).name
     failures: list[str] = []
@@ -352,6 +375,7 @@ def _download_source_media(source_url: str, output_template: str, target_video_h
                     output_template=attempt_template,
                     target_video_height=target_video_height,
                     player_client=player_client,
+                    cookie_file=cookie_file,
                 )
             ) as ydl:
                 ydl.download([source_url])
@@ -378,6 +402,41 @@ def _download_source_media(source_url: str, output_template: str, target_video_h
             shutil.rmtree(attempt_dir, ignore_errors=True)
 
     raise DownloadError("; ".join(failures))
+
+
+def _resolve_ytdlp_cookie_file(configured_path: str | None) -> Path | None:
+    raw_path = configured_path.strip() if isinstance(configured_path, str) else ""
+    cookie_file = Path(raw_path) if raw_path else DEFAULT_YT_DLP_COOKIES_FILE
+    if not cookie_file.exists():
+        if raw_path:
+            raise ApplicationError(
+                "YouTube cookie file is configured but was not found inside the worker container. "
+                "Mount the file and verify YT_DLP_COOKIES_FILE.",
+                non_retryable=True,
+                type="YoutubeAuthenticationConfigurationError",
+            )
+        return None
+    if not cookie_file.is_file() or cookie_file.stat().st_size == 0:
+        raise ApplicationError(
+            "YouTube cookie file is empty or is not a regular file. Export fresh cookies.txt in Netscape format.",
+            non_retryable=True,
+            type="YoutubeAuthenticationConfigurationError",
+        )
+    logger.info("YouTube cookie authentication enabled")
+    return cookie_file
+
+
+def _prepare_ytdlp_cookie_file(source: Path | None, workdir: Path) -> Path | None:
+    if source is None:
+        return None
+    runtime_cookie_file = workdir / "youtube-cookies.txt"
+    shutil.copyfile(source, runtime_cookie_file)
+    return runtime_cookie_file
+
+
+def _is_youtube_authentication_error(error: Exception) -> bool:
+    message = str(error).lower()
+    return any(marker in message for marker in YOUTUBE_AUTHENTICATION_MARKERS)
 
 
 def _build_activity_workdir_name() -> str:
@@ -456,6 +515,12 @@ def _safe_file_stem(value: Any) -> str:
 
 def _summarize_materialization_error(*, stage: str, error: Exception) -> str:
     message = str(error).strip() or type(error).__name__
+    if _is_youtube_authentication_error(error):
+        return (
+            f"{stage}: YoutubeAuthenticationRequired: YouTube blocked unauthenticated server access. "
+            "Upload the video directly, or ask an administrator to mount a fresh cookies.txt file "
+            "for the worker."
+        )
     if isinstance(error, DownloadError):
         return f"{stage}: yt-dlp download failed: {message}"
     if isinstance(error, httpx.HTTPStatusError):

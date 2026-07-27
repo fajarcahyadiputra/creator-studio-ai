@@ -94,6 +94,18 @@ describe("dashboard tool routes", () => {
         phonemeType: null,
         dataset: null,
         defaultSampleText: "Halo dunia",
+        engine: "piper",
+        baseModelKey: "id_ID-test-medium",
+        profileKind: "checkpoint",
+        description: "Test model",
+        gender: null,
+        ageGroup: null,
+        character: null,
+        intonation: null,
+        speakingStyle: null,
+        licenseName: null,
+        licenseUrl: null,
+        available: true,
       },
     ]);
 

@@ -91,6 +91,24 @@ rejected repeatedly:
 - for session-protected sources, configure worker-side YouTube authentication instead of asking the user to open
   the video locally
 
+If the error says `Sign in to confirm you're not a bot`, export cookies from an authenticated browser as a
+Netscape-format `cookies.txt` file, then place it at:
+
+```text
+secrets/yt-dlp/cookies.txt
+```
+
+The Compose worker mounts that directory read-only at `/run/secrets/yt-dlp`. The worker discovers the default
+`/run/secrets/yt-dlp/cookies.txt` path automatically. Alternatively, set `YT_DLP_COOKIES_FILE` to another path
+that is mounted inside both Python containers. Restart the Python worker after replacing the file:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate ai-media-python ai-media-python-api
+```
+
+Never commit or log this file. It contains an authenticated browser session. Use a dedicated account, refresh the
+export when YouTube invalidates it, and only import media you own or are authorized to process.
+
 After changing the `yt-dlp` dependency, rebuild the `ai-media-python` image. Source watch mode reloads Python code
 but does not install updated packages.
 

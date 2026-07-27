@@ -144,7 +144,8 @@ export const autoClipJobSchema = z.object({
     standalone_priority: standalonePriorityField,
     require_spoken_audio: z.boolean().default(true),
     profanity_handling: z.enum(["KEEP", "MUTE", "BLEEP", "SUBTITLE_CENSOR"]).default("KEEP"),
-    remove_long_silence: z.boolean().default(true),
+    speech_cleanup_enabled: z.boolean().default(false),
+    remove_long_silence: z.boolean().default(false),
     remove_filler_words: z.boolean().default(false)
   }).refine((value) => value.maximum_duration_seconds >= value.minimum_duration_seconds, {
     message: "Maximum duration must be greater than or equal to minimum duration."
@@ -259,7 +260,8 @@ export const regenerateAutoClipJobSchema = z
     standalone_priority: standalonePriorityField,
     require_spoken_audio: booleanField(true),
     profanity_handling: z.enum(["KEEP", "MUTE", "BLEEP", "SUBTITLE_CENSOR"]).default("KEEP"),
-    remove_long_silence: booleanField(true),
+    speech_cleanup_enabled: booleanField(false),
+    remove_long_silence: booleanField(false),
     remove_filler_words: booleanField(false),
     aspect_ratio: z.enum(["9:16", "1:1", "4:5", "16:9", "CUSTOM"]),
     crop_strategy: z.enum(["CENTER", "SMART_SPEAKER", "ACTIVE_SPEAKER", "FACE_TRACKING", "AUTO_REFRAME", "SPLIT_SCREEN", "SPEAKER_AND_SCREEN", "BLURRED_BACKGROUND", "MANUAL"]),

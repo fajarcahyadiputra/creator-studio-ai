@@ -16,9 +16,10 @@ __pycache__/
 *.pyc
 apps/web-node/src/generated/prisma/
 apps/web-node/prisma/dev.db
-storage/
 tmp/
 .tmp/
 model_tts
 model_face
 graphify-out
+secrets/yt-dlp/*
+!secrets/yt-dlp/.gitkeep

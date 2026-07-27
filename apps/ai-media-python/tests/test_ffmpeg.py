@@ -11,6 +11,7 @@ from app.media.ffmpeg import (
     build_audio_extraction,
     build_clip_render_command,
     build_ffprobe_command,
+    build_timeline_cleanup_command,
     summarize_ffprobe_payload,
 )
 from app.media.face_detection import (
@@ -84,6 +85,21 @@ def test_audio_command_uses_exec_arguments_not_shell_string() -> None:
     assert args[0] == "ffmpeg"
     assert str(source) in args
     assert args[-1] == str(destination)
+
+
+def test_timeline_cleanup_command_trims_and_concatenates_kept_intervals() -> None:
+    command = build_timeline_cleanup_command(
+        source="/tmp/source.mp4",
+        destination="/tmp/cleaned.mp4",
+        keep_intervals=[(2.0, 5.0), (6.0, 8.5)],
+    )
+    arguments = command.as_exec_args()
+    filter_graph = arguments[arguments.index("-filter_complex") + 1]
+
+    assert "trim=start=2.000000:end=5.000000" in filter_graph
+    assert "atrim=start=6.000000:end=8.500000" in filter_graph
+    assert "concat=n=2:v=1:a=1[vout][aout]" in filter_graph
+    assert arguments[-1] == "/tmp/cleaned.mp4"
 
 
 def test_audio_command_rejects_unknown_sample_rate() -> None:
