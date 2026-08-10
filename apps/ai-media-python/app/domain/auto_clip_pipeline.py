@@ -60,6 +60,14 @@ def build_candidate_analyses(
     analysis_inputs: AnalysisInputs,
     config: PipelineConfig,
 ) -> list[CandidateAnalysis]:
+    candidates, _ = build_candidate_analyses_with_audit(analysis_inputs, config)
+    return candidates
+
+
+def build_candidate_analyses_with_audit(
+    analysis_inputs: AnalysisInputs,
+    config: PipelineConfig,
+) -> tuple[list[CandidateAnalysis], dict[str, object]]:
     transcript = analysis_inputs.transcript
     windows = _build_segment_windows(transcript, config)
     candidates: list[CandidateAnalysis] = []
@@ -74,20 +82,116 @@ def build_candidate_analyses(
             silences=analysis_inputs.silences,
             config=config,
         )
-        if (
-            candidate.scores["final_viral_score"] >= config.minimum_viral_score
-            and candidate.duration_seconds >= config.minimum_duration_seconds
-            and candidate.duration_seconds <= config.maximum_duration_seconds
-        ):
+        if _candidate_duration_is_valid(candidate, config):
             candidates.append(candidate)
+
+    return limit_and_score_candidates_with_quality_backfill(candidates, analysis_inputs, config)
+
+
+def limit_and_score_candidates_with_quality_backfill(
+    candidates: list[CandidateAnalysis],
+    analysis_inputs: AnalysisInputs,
+    config: PipelineConfig,
+) -> tuple[list[CandidateAnalysis], dict[str, object]]:
+    duration_valid_candidates = [candidate for candidate in candidates if _candidate_duration_is_valid(candidate, config)]
+    strict_candidates = [
+        candidate
+        for candidate in duration_valid_candidates
+        if _candidate_final_score(candidate) >= config.minimum_viral_score
+    ]
+    relaxed_floor = _quality_backfill_floor(config)
+    relaxed_candidates = [
+        candidate
+        for candidate in duration_valid_candidates
+        if _candidate_final_score(candidate) >= relaxed_floor
+    ]
+
     normalized = normalize_candidates(
-        candidates,
+        strict_candidates,
         analysis_inputs.scenes,
         analysis_inputs.silences,
         analysis_inputs.transcript.segments,
         float(config.maximum_duration_seconds),
     )
-    return deduplicate_and_rank(normalized, config.candidate_pool_count)
+    ranked = deduplicate_and_rank(normalized, config.candidate_pool_count)
+    strict_ranked_count = len(ranked)
+    required_count = min(config.desired_clip_count, config.candidate_pool_count)
+
+    if len(ranked) < required_count:
+        normalized_backfill = normalize_candidates(
+            relaxed_candidates,
+            analysis_inputs.scenes,
+            analysis_inputs.silences,
+            analysis_inputs.transcript.segments,
+            float(config.maximum_duration_seconds),
+        )
+        ranked_backfill = deduplicate_and_rank(normalized_backfill, config.candidate_pool_count)
+        ranked = supplement_ranked_candidates(ranked, ranked_backfill, config.candidate_pool_count)
+
+    quality_backfilled_count = max(0, len(ranked) - strict_ranked_count)
+    after_quality_backfill_count = len(ranked)
+
+    if len(ranked) < required_count:
+        normalized_quantity_backfill = normalize_candidates(
+            duration_valid_candidates,
+            analysis_inputs.scenes,
+            analysis_inputs.silences,
+            analysis_inputs.transcript.segments,
+            float(config.maximum_duration_seconds),
+        )
+        ranked = supplement_quantity_candidates(
+            ranked,
+            normalized_quantity_backfill,
+            desired_count=required_count,
+        )
+
+    audit = {
+        "raw_candidate_count": len(candidates),
+        "duration_valid_candidate_count": len(duration_valid_candidates),
+        "accepted_before_normalization": len(strict_candidates),
+        "normalized_candidate_count": len(normalized),
+        "accepted_after_deduplication": strict_ranked_count,
+        "accepted_after_quality_backfill": after_quality_backfill_count,
+        "accepted_after_quantity_backfill": len(ranked),
+        "quality_backfill_count": quality_backfilled_count,
+        "quantity_backfill_count": max(0, len(ranked) - after_quality_backfill_count),
+        "quantity_backfill_ignores_text_similarity": len(ranked) > after_quality_backfill_count,
+        "quality_backfill_floor": relaxed_floor,
+        "removed_by_deduplication": max(0, len(normalized) - strict_ranked_count),
+        "rejected_below_minimum_score": sum(
+            1 for candidate in duration_valid_candidates if _candidate_final_score(candidate) < config.minimum_viral_score
+        ),
+        "rejected_below_backfill_floor": sum(
+            1 for candidate in duration_valid_candidates if _candidate_final_score(candidate) < relaxed_floor
+        ),
+        "rejected_below_minimum_duration": sum(
+            1 for candidate in candidates if candidate.duration_seconds < config.minimum_duration_seconds
+        ),
+        "rejected_above_maximum_duration": sum(
+            1 for candidate in candidates if candidate.duration_seconds > config.maximum_duration_seconds
+        ),
+        "minimum_viral_score": config.minimum_viral_score,
+        "minimum_duration_seconds": config.minimum_duration_seconds,
+        "maximum_duration_seconds": config.maximum_duration_seconds,
+        "requested_candidate_pool_count": config.candidate_pool_count,
+        "required_final_clip_count": config.desired_clip_count,
+    }
+    return ranked, audit
+
+
+def _candidate_duration_is_valid(candidate: CandidateAnalysis, config: PipelineConfig) -> bool:
+    return (
+        candidate.duration_seconds >= config.minimum_duration_seconds
+        and candidate.duration_seconds <= config.maximum_duration_seconds
+    )
+
+
+def _candidate_final_score(candidate: CandidateAnalysis) -> float:
+    return float(candidate.scores.get("final_viral_score", 0))
+
+
+def _quality_backfill_floor(config: PipelineConfig) -> float:
+    return max(5.8, round(config.minimum_viral_score - 1.0, 2))
 
 
 def normalize_candidates(
@@ -205,6 +309,36 @@ def supplement_ranked_candidates(
                 resolved_id = f"{base_id[:100 - len(suffix_text)]}{suffix_text}"
                 suffix += 1
             candidate = candidate.model_copy(update={"candidate_id": resolved_id})
+        selected.append(candidate)
+    return selected
+
+
+def supplement_quantity_candidates(
+    primary: list[CandidateAnalysis],
+    supplemental: list[CandidateAnalysis],
+    *,
+    desired_count: int,
+) -> list[CandidateAnalysis]:
+    """Fill missing requested slots without letting similar wording collapse distinct moments."""
+    selected = list(primary[:desired_count])
+    ranked_supplemental = sorted(
+        supplemental,
+        key=lambda item: (
+            float(item.scores["final_viral_score"]),
+            1 if item.can_standalone else 0,
+            _retention_priority(item.retention_level),
+            -len(item.safety_notes),
+            -item.duration_seconds,
+        ),
+        reverse=True,
+    )
+    for candidate in ranked_supplemental:
+        if len(selected) >= desired_count:
+            break
+        if candidate.candidate_id in {item.candidate_id for item in selected}:
+            continue
+        if any(_overlap_ratio(candidate, existing) > 0.6 for existing in selected):
+            continue
         selected.append(candidate)
     return selected
 

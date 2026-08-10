@@ -466,6 +466,17 @@ class TranscriptionResult(BaseModel):
     transcript: TranscriptDocument
 
 
+class TranscriptionResultReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_asset_id: str = Field(min_length=1, max_length=64)
+    job_id: str | None = Field(default=None, min_length=1, max_length=64)
+    output_transcript_path: str = Field(min_length=1, max_length=1000)
+    language: str = Field(min_length=2, max_length=20)
+    segment_count: int = Field(ge=0)
+    word_count: int = Field(ge=0)
+
+
 class TranscriptionPersistenceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

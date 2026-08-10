@@ -62,6 +62,18 @@ function createRegeneratePayload() {
 }
 
 describe("speech cleanup request schemas", () => {
+  it("accepts a multi-line topic longer than the legacy varchar limit", () => {
+    const payload = createAutoClipPayload();
+    payload.content = {
+      ...payload.content,
+      topic: "Topik utama dengan konteks yang lengkap. ".repeat(12)
+    };
+
+    const parsed = autoClipJobSchema.parse(payload);
+
+    expect(parsed.content.topic?.length).toBeGreaterThan(255);
+  });
+
   it("keeps speech cleanup disabled for existing create payloads", () => {
     const parsed = autoClipJobSchema.parse(createAutoClipPayload());
 

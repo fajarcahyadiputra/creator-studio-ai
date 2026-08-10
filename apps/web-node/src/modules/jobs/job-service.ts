@@ -82,7 +82,15 @@ interface RegenerateAutoClipInput {
     | "CONTROVERSY"
     | "STORYTELLING"
     | "PRODUCT_AWARENESS"
-    | "LEAD_GENERATION";
+    | "LEAD_GENERATION"
+    | "RETENTION"
+    | "VIRALITY"
+    | "BRAND_AWARENESS"
+    | "COMMUNITY_DISCUSSION"
+    | "THOUGHT_LEADERSHIP"
+    | "SALES_CONVERSION"
+    | "NEWS_COMMENTARY"
+    | "AUTHORITY_BUILDING";
   tones_text: string[];
   desired_clip_count?: number;
   candidate_pool_count?: number;
@@ -136,6 +144,7 @@ interface RegenerateAutoClipInput {
   subtitle_max_lines?: number;
   subtitle_safe_margin_percent?: number;
   subtitle_profanity_censor: boolean;
+  subtitle_typo_correction: boolean;
 }
 
 interface RegenerateTtsInput {
@@ -580,16 +589,29 @@ export class JobService {
   public async cancel(userId: string, jobId: string): Promise<void> {
     const job = await prisma.job.findFirst({ where: { id: jobId, userId, deletedAt: null } });
     if (!job) throw new NotFoundError("Job");
-    if (!["QUEUED", "RUNNING", "PAUSED", "PAUSE_REQUESTED"].includes(job.status)) {
+    if (job.status === "CANCELED") return;
+    if (!["UPLOADING", "QUEUED", "RUNNING", "PAUSED", "PAUSE_REQUESTED", "CANCEL_REQUESTED"].includes(job.status)) {
       throw new ConflictError("JOB_NOT_CANCELABLE", `A ${job.status} job cannot be canceled.`);
     }
-    if (!job.workflowId) throw new ConflictError("WORKFLOW_NOT_STARTED", "The workflow has not started.");
+
     await prisma.job.update({
       where: { id: job.id },
-      data: { status: "CANCEL_REQUESTED", cancelRequestedAt: new Date() }
+      data: { status: "CANCEL_REQUESTED", cancelRequestedAt: job.cancelRequestedAt ?? new Date() }
     });
-    const client = await temporalClient();
-    await client.workflow.getHandle(job.workflowId).cancel();
+
+    let temporalCancelWarning: string | null = null;
+    if (job.workflowId) {
+      try {
+        const client = await temporalClient();
+        await client.workflow.getHandle(job.workflowId).cancel();
+      } catch (error) {
+        temporalCancelWarning = stringifyUnknownError(error);
+      }
+    } else {
+      temporalCancelWarning = "Workflow had not started yet; canceled locally.";
+    }
+
+    await finalizeCanceledJob(job.id, temporalCancelWarning);
   }
 
   public async retry(params: {
@@ -1933,7 +1955,8 @@ function buildRegeneratedAutoClippingInput(
         max_lines: input.subtitle_max_lines,
         safe_margin_percent: input.subtitle_safe_margin_percent,
         word_highlight: subtitleStyleUsesWordHighlight(input.subtitle_style),
-        profanity_censor: input.subtitle_profanity_censor
+        profanity_censor: input.subtitle_profanity_censor,
+        typo_correction: input.subtitle_typo_correction
       })
     },
     ai:
@@ -2085,6 +2108,71 @@ function collectGeneratedArtifactsForJob(job: {
 function resolveFoundationWorkflowName(jobType: string): string {
   if (jobType === "TEXT_TO_SPEECH") return "FoundationTextToSpeechWorkflow";
   return "FoundationAutoClippingWorkflow";
+}
+
+async function finalizeCanceledJob(jobId: string, temporalCancelWarning: string | null) {
+  const now = new Date();
+  await prisma.$transaction(async (tx) => {
+    const current = await tx.job.findUnique({
+      where: { id: jobId },
+      select: {
+        id: true,
+        status: true,
+        eventSequence: true,
+        currentStage: true,
+        progressPercent: true,
+        cancelRequestedAt: true,
+        completedAt: true
+      }
+    });
+    if (!current) throw new NotFoundError("Job");
+    if (current.status === "CANCELED") return;
+
+    const nextSequence = current.eventSequence + 1n;
+    await tx.job.update({
+      where: { id: current.id },
+      data: {
+        status: "CANCELED",
+        eventSequence: nextSequence,
+        cancelRequestedAt: current.cancelRequestedAt ?? now,
+        completedAt: current.completedAt ?? now
+      }
+    });
+
+    await tx.jobAttempt.updateMany({
+      where: { jobId: current.id, status: { in: ["CREATED", "RUNNING"] } },
+      data: { status: "CANCELED", completedAt: now }
+    });
+    await tx.jobStage.updateMany({
+      where: { jobId: current.id, status: { in: ["QUEUED", "RUNNING", "PAUSED"] } },
+      data: { status: "CANCELED", completedAt: now }
+    });
+    await tx.jobStage.updateMany({
+      where: { jobId: current.id, status: "PENDING" },
+      data: { status: "SKIPPED", completedAt: now }
+    });
+
+    await tx.jobEvent.create({
+      data: {
+        jobId: current.id,
+        sequence: nextSequence,
+        stage: current.currentStage,
+        stageProgress: null,
+        overallProgress: current.progressPercent,
+        eventType: "job.canceled",
+        message: "Job cancellation completed.",
+        userMessage: "Job dibatalkan dan antrean sudah dilepas.",
+        metadata: temporalCancelWarning
+          ? { source: "web-node.cancel", temporal_cancel_warning: temporalCancelWarning }
+          : { source: "web-node.cancel" }
+      }
+    });
+  });
+}
+
+function stringifyUnknownError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 function canDeleteJob(status: string) {

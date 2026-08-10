@@ -3,7 +3,7 @@ import { z } from "zod";
 import { env } from "../../config/env.js";
 import { JobStatus, JobType } from "../../generated/prisma/enums.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
-import { createPublicSignedObjectReadUrl } from "../../infrastructure/storage/s3.js";
+import { createPublicSignedObjectReadUrl, objectExists } from "../../infrastructure/storage/s3.js";
 import { asyncHandler } from "../../shared/http/async-handler.js";
 import { validateBody } from "../../shared/http/validate.js";
 import { logger } from "../../shared/logging/logger.js";
@@ -28,6 +28,51 @@ const TERMINAL_JOB_DISPLAY_STAGE: Partial<Record<JobStatus, string>> = {
 function resolveRequestOrigin(request: { protocol: string; get(name: string): string | undefined }) {
   const host = request.get("host");
   return host ? `${request.protocol}://${host}` : undefined;
+}
+
+async function resolveClipPlaybackArtifact(params: {
+  jobId: string;
+  clipOutputId: string;
+  artifact: "preview" | "final";
+  objectKey: string | null;
+}) {
+  if (!params.objectKey) {
+    return { available: false, missing: false, storageCheckFailed: false, playbackUrl: null };
+  }
+
+  try {
+    if (!(await objectExists(params.objectKey))) {
+      logger.warn(
+        {
+          jobId: params.jobId,
+          clipOutputId: params.clipOutputId,
+          artifact: params.artifact,
+          objectKey: params.objectKey
+        },
+        "Clip output references an object that is missing from storage"
+      );
+      return { available: false, missing: true, storageCheckFailed: false, playbackUrl: null };
+    }
+
+    return {
+      available: true,
+      missing: false,
+      storageCheckFailed: false,
+      playbackUrl: await createPublicSignedObjectReadUrl(params.objectKey)
+    };
+  } catch (error) {
+    logger.warn(
+      {
+        err: error,
+        jobId: params.jobId,
+        clipOutputId: params.clipOutputId,
+        artifact: params.artifact,
+        objectKey: params.objectKey
+      },
+      "Failed to verify clip output artifact in storage"
+    );
+    return { available: false, missing: false, storageCheckFailed: true, playbackUrl: null };
+  }
 }
 
 function normalizeAnalyzerModeLabel(mode: string | null) {
@@ -503,12 +548,20 @@ dashboardRouter.get(
           && qualityChecks.playable === true
             ? "PASSED"
             : output.qualityStatus;
-        const previewPlaybackUrl = output.previewObjectKey
-          ? await createPublicSignedObjectReadUrl(output.previewObjectKey)
-          : null;
-        const finalPlaybackUrl = output.finalObjectKey
-          ? await createPublicSignedObjectReadUrl(output.finalObjectKey)
-          : null;
+        const [previewArtifact, finalArtifact] = await Promise.all([
+          resolveClipPlaybackArtifact({
+            jobId: job.id,
+            clipOutputId: output.id,
+            artifact: "preview",
+            objectKey: output.previewObjectKey
+          }),
+          resolveClipPlaybackArtifact({
+            jobId: job.id,
+            clipOutputId: output.id,
+            artifact: "final",
+            objectKey: output.finalObjectKey
+          })
+        ]);
         return {
           id: output.id,
           candidateId: output.candidateId,
@@ -526,8 +579,12 @@ dashboardRouter.get(
           width: output.width,
           height: output.height,
           createdAt: output.createdAt,
-          previewAvailable: Boolean(output.previewObjectKey),
-          finalAvailable: Boolean(output.finalObjectKey),
+          previewAvailable: previewArtifact.available,
+          finalAvailable: finalArtifact.available,
+          previewMissing: previewArtifact.missing,
+          finalMissing: finalArtifact.missing,
+          videoStorageCheckFailed:
+            previewArtifact.storageCheckFailed || finalArtifact.storageCheckFailed,
           metadataAvailable: Boolean(output.metadataObjectKey),
           thumbnailAvailable: false,
           subtitleAvailable: output.subtitles.length > 0,
@@ -674,8 +731,8 @@ dashboardRouter.get(
           sourceAttribution:
             typeof metadata.source_attribution === "string" ? metadata.source_attribution : null,
           thumbnailPlaybackUrl: null,
-          previewPlaybackUrl,
-          finalPlaybackUrl
+          previewPlaybackUrl: previewArtifact.playbackUrl,
+          finalPlaybackUrl: finalArtifact.playbackUrl
         };
       }));
     const clipOutputByCandidateId = new Map(clipOutputs.map((output) => [output.candidateId, output]));
@@ -1023,6 +1080,7 @@ dashboardRouter.get(
                 maxLines: toOptionalNumber(toJsonRecord(subtitleConfig.settings).max_lines),
                 safeMarginPercent: toOptionalNumber(toJsonRecord(subtitleConfig.settings).safe_margin_percent),
                 profanityCensor: toOptionalBoolean(toJsonRecord(subtitleConfig.settings).profanity_censor),
+                typoCorrection: toOptionalBoolean(toJsonRecord(subtitleConfig.settings).typo_correction),
                 wordHighlight: toOptionalBoolean(toJsonRecord(subtitleConfig.settings).word_highlight),
                 textCase: toOptionalString(toJsonRecord(subtitleConfig.settings).text_case) ?? "UPPERCASE"
               },

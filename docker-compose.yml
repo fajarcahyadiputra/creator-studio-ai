@@ -56,12 +56,12 @@ services:
       minio:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
+    # users/ contains durable clip, TTS, subtitle, and branding artifacts; never apply a global expiry rule.
     command:
       - >-
         mc alias set local http://minio:9000 minioadmin minioadmin123 &&
         mc mb --ignore-existing local/creator-media &&
-        mc anonymous set none local/creator-media &&
-        mc ilm rule add --expire-days 2 --prefix 'users/' local/creator-media || true
+        mc anonymous set none local/creator-media
     networks: [internal]
     restart: "no"
 
@@ -111,7 +111,7 @@ services:
   migrate:
     image: creator-studio-ai-web-node:dev
     pull_policy: never
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -122,11 +122,16 @@ services:
   seed:
     image: creator-studio-ai-web-node:dev
     pull_policy: never
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     depends_on:
       migrate:
         condition: service_completed_successfully
-    command: ["npx", "prisma", "db", "seed"]
+    command:
+      [
+        "sh",
+        "-c",
+        "npm run prisma:seed"
+      ]
     networks: [internal]
     restart: "no"
 
@@ -135,7 +140,7 @@ services:
     build:
       context: .
       dockerfile: apps/web-node/Dockerfile
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     volumes:
       - ./model_tts:/models/tts:ro
     depends_on:
@@ -168,7 +173,7 @@ services:
   web-email-worker:
     image: creator-studio-ai-web-node:dev
     pull_policy: never
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     depends_on:
       redis:
         condition: service_healthy
@@ -181,7 +186,7 @@ services:
     build:
       context: .
       dockerfile: apps/media-ingestion-node/Dockerfile
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     depends_on:
       minio-init:
         condition: service_completed_successfully
@@ -208,7 +213,7 @@ services:
     build:
       context: .
       dockerfile: apps/ai-media-python/Dockerfile
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     volumes:
       - ./model_tts:/models/tts:ro
       - ./model_face:/models/face:ro
@@ -238,7 +243,7 @@ services:
   ai-media-python-api:
     image: creator-studio-ai-ai-media-python:dev
     pull_policy: never
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     volumes:
       - ./model_tts:/models/tts:ro
       - ./model_face:/models/face:ro

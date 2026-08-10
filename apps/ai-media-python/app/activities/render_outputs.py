@@ -33,6 +33,18 @@ from app.activities.media_validation import run_ffprobe_json
 
 SUPPORTED_SUBTITLE_FORMATS = {"srt", "ass", "vtt", "json"}
 STANDARD_9X16_BOTTOM_SAFE_MARGIN_PERCENT = 20.0
+DEFAULT_SUBTITLE_TYPO_CORRECTIONS = {
+    # Conservative spelling fixes only. Do not normalize slang or rewrite style.
+    "ngak": "nggak",
+    "ngga": "nggak",
+    "engga": "enggak",
+    "karna": "karena",
+    "sekrang": "sekarang",
+    "skarang": "sekarang",
+    "sebenerny": "sebenernya",
+    "sebenarny": "sebenarnya",
+    "koraban": "korban",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +105,8 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
     subtitle_burned_in = _resolve_subtitle_burned_in(context.render_settings)
     subtitle_max_lines = _resolve_subtitle_max_lines(context.render_settings)
     subtitle_word_highlight = _resolve_subtitle_word_highlight(context.render_settings)
+    subtitle_typo_correction = _resolve_subtitle_typo_correction(context.render_settings)
+    subtitle_typo_corrections = _resolve_subtitle_typo_corrections(context.render_settings)
     subtitle_text_case = _resolve_subtitle_text_case(context.render_settings)
     subtitle_position = _resolve_subtitle_position(context.render_settings)
     subtitle_safe_margin_percent = _resolve_subtitle_safe_margin_percent(context.render_settings)
@@ -184,6 +198,8 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
         max_lines=subtitle_max_lines,
         layout_template=layout_template,
     )
+    if subtitle_typo_correction:
+        subtitle_cues = _apply_subtitle_typo_correction(subtitle_cues, subtitle_typo_corrections)
     subtitle_cues = _apply_subtitle_text_case(subtitle_cues, subtitle_text_case)
     subtitle_path_for_upload: Path | None = None
     subtitle_path_for_burn_in: Path | None = None
@@ -505,6 +521,7 @@ async def execute_clip_output_render(payload: dict[str, Any]) -> dict[str, Any]:
             "language": subtitle_language if subtitle_path_for_upload else None,
             "burned_in": subtitle_burned_in,
             "text_case": subtitle_text_case,
+            "typo_correction": subtitle_typo_correction,
             "cue_count": len(subtitle_cues),
             "sidecars": {
                 "srt": subtitle_srt_path.name if subtitle_srt_path.exists() else None,
@@ -829,6 +846,47 @@ def _resolve_subtitle_word_highlight(render_settings: dict[str, Any]) -> bool:
     settings = _resolve_subtitle_settings(render_settings)
     value = settings.get("word_highlight")
     return value is True
+
+
+def _resolve_subtitle_typo_correction(render_settings: dict[str, Any]) -> bool:
+    settings = _resolve_subtitle_settings(render_settings)
+    for key in ("typo_correction", "correct_typos", "spellcheck"):
+        value = settings.get(key)
+        if isinstance(value, bool):
+            return value
+    return False
+
+
+def _resolve_subtitle_typo_corrections(render_settings: dict[str, Any]) -> dict[str, str]:
+    settings = _resolve_subtitle_settings(render_settings)
+    corrections = dict(DEFAULT_SUBTITLE_TYPO_CORRECTIONS)
+    custom = settings.get("typo_corrections")
+
+    if isinstance(custom, dict):
+        for source, replacement in custom.items():
+            if isinstance(source, str) and isinstance(replacement, str):
+                _add_subtitle_typo_correction(corrections, source, replacement)
+    elif isinstance(custom, list):
+        for item in custom:
+            if not isinstance(item, dict):
+                continue
+            source = item.get("from") or item.get("source") or item.get("wrong")
+            replacement = item.get("to") or item.get("replacement") or item.get("correct")
+            if isinstance(source, str) and isinstance(replacement, str):
+                _add_subtitle_typo_correction(corrections, source, replacement)
+
+    return corrections
+
+
+def _add_subtitle_typo_correction(corrections: dict[str, str], source: str, replacement: str) -> None:
+    normalized_source = source.strip().lower()
+    normalized_replacement = replacement.strip()
+    if not normalized_source or not normalized_replacement:
+        return
+    # A word-level subtitle correction must not split or merge timing tokens.
+    if re.search(r"\s", normalized_source) or re.search(r"\s", normalized_replacement):
+        return
+    corrections[normalized_source] = normalized_replacement
 
 
 def _resolve_subtitle_text_case(render_settings: dict[str, Any]) -> str:
@@ -3230,6 +3288,74 @@ def _normalize_subtitle_tokens(text: str) -> list[str]:
     if not normalized:
         return []
     return re.findall(r"[a-z0-9]+(?:'[a-z0-9]+)?", normalized)
+
+
+def _apply_subtitle_typo_correction(
+    cues: list[SubtitleCue],
+    corrections: dict[str, str],
+) -> list[SubtitleCue]:
+    if not corrections:
+        return cues
+
+    corrected_cues: list[SubtitleCue] = []
+    for cue in cues:
+        corrected_words = tuple(
+            SubtitleCueWord(
+                text=_correct_subtitle_token(word.text, corrections),
+                duration_centiseconds=word.duration_centiseconds,
+                line_break_before=word.line_break_before,
+                start_offset_centiseconds=word.start_offset_centiseconds,
+            )
+            for word in cue.words
+        )
+        corrected_text = (
+            _format_subtitle_text_from_words(corrected_words)
+            if corrected_words
+            else _correct_subtitle_text(cue.text, corrections)
+        )
+        corrected_cues.append(
+            SubtitleCue(
+                start_seconds=cue.start_seconds,
+                end_seconds=cue.end_seconds,
+                text=corrected_text,
+                words=corrected_words,
+            )
+        )
+    return corrected_cues
+
+
+def _correct_subtitle_text(text: str, corrections: dict[str, str]) -> str:
+    return re.sub(r"\S+", lambda match: _correct_subtitle_token(match.group(0), corrections), text)
+
+
+def _correct_subtitle_token(token: str, corrections: dict[str, str]) -> str:
+    match = re.match(r"^([^0-9A-Za-zÀ-ÿ]*)([0-9A-Za-zÀ-ÿ][0-9A-Za-zÀ-ÿ'’\-]*)([^0-9A-Za-zÀ-ÿ]*)$", token)
+    if not match:
+        return token
+
+    prefix, core, suffix = match.groups()
+    replacement = corrections.get(core.replace("’", "'").lower())
+    if not replacement or re.search(r"\s", replacement):
+        return token
+
+    return f"{prefix}{_preserve_subtitle_token_case(core, replacement)}{suffix}"
+
+
+def _preserve_subtitle_token_case(source: str, replacement: str) -> str:
+    if source.isupper():
+        return replacement.upper()
+    if source[:1].isupper() and source[1:].islower():
+        return replacement[:1].upper() + replacement[1:]
+    return replacement
+
+
+def _format_subtitle_text_from_words(words: tuple[SubtitleCueWord, ...]) -> str:
+    lines: list[list[str]] = [[]]
+    for word in words:
+        if word.line_break_before and lines[-1]:
+            lines.append([])
+        lines[-1].append(word.text)
+    return "\n".join(" ".join(line).strip() for line in lines if line).strip()
 
 
 def _apply_subtitle_text_case(cues: list[SubtitleCue], text_case: str) -> list[SubtitleCue]:

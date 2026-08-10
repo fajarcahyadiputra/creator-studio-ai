@@ -698,7 +698,7 @@ model AutoClipRequest {
   speakerCount           Int?
   contentTitle           String?  @db.VarChar(255)
   contentContext         String?
-  topic                  String?  @db.VarChar(255)
+  topic                  String?  @db.Text
   customVocabulary       Json     @default("[]")
   rightsConfirmedAt      DateTime
   strategyConfig         Json

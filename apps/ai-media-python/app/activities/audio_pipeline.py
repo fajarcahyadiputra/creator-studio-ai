@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
+from time import monotonic
 
 import httpx
 from temporalio import activity
@@ -93,13 +95,13 @@ async def execute_audio_extraction(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
     try:
-        _stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            timeout=settings.AUDIO_EXTRACTION_TIMEOUT_SECONDS,
+        _stdout, stderr = await _communicate_with_heartbeat(
+            process,
+            plan=plan,
+            timeout_seconds=float(settings.AUDIO_EXTRACTION_TIMEOUT_SECONDS),
         )
     except asyncio.TimeoutError as error:
-        process.kill()
-        await process.communicate()
+        await _terminate_process(process)
         timeout_error = TimeoutError("ffmpeg audio extraction timed out")
         await emit_retry_warning(
             job_id=plan.job_id,
@@ -114,6 +116,9 @@ async def execute_audio_extraction(payload: dict[str, Any]) -> dict[str, Any]:
             },
         )
         raise timeout_error from error
+    except asyncio.CancelledError:
+        await _terminate_process(process)
+        raise
 
     if process.returncode != 0:
         message = stderr.decode("utf-8", errors="replace").strip() or "ffmpeg exited with a non-zero status"
@@ -179,6 +184,61 @@ async def execute_audio_extraction(payload: dict[str, Any]) -> dict[str, Any]:
         }
     )
     return result.model_dump(mode="json")
+
+
+async def _communicate_with_heartbeat(
+    process: asyncio.subprocess.Process,
+    *,
+    plan: AudioExtractionPlan,
+    timeout_seconds: float,
+) -> tuple[bytes, bytes]:
+    communicate_task = asyncio.create_task(process.communicate())
+    started_at = monotonic()
+    heartbeat_interval_seconds = 5.0
+
+    while True:
+        elapsed_seconds = monotonic() - started_at
+        remaining_seconds = timeout_seconds - elapsed_seconds
+        if remaining_seconds <= 0:
+            communicate_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await communicate_task
+            raise asyncio.TimeoutError
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                asyncio.shield(communicate_task),
+                timeout=min(heartbeat_interval_seconds, remaining_seconds),
+            )
+            activity.heartbeat(
+                {
+                    "media_asset_id": plan.media_asset_id,
+                    "output_audio_path": plan.output_audio_path,
+                    "sample_rate": plan.sample_rate,
+                    "elapsed_seconds": round(monotonic() - started_at, 2),
+                    "completed": True,
+                }
+            )
+            return stdout, stderr
+        except asyncio.TimeoutError:
+            activity.heartbeat(
+                {
+                    "media_asset_id": plan.media_asset_id,
+                    "output_audio_path": plan.output_audio_path,
+                    "sample_rate": plan.sample_rate,
+                    "elapsed_seconds": round(monotonic() - started_at, 2),
+                    "completed": False,
+                }
+            )
+
+
+async def _terminate_process(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is None:
+        process.kill()
+    try:
+        await asyncio.wait_for(process.communicate(), timeout=10)
+    except (asyncio.TimeoutError, ProcessLookupError):
+        pass
 
 
 async def _source_object_exists(download_url: str) -> bool:

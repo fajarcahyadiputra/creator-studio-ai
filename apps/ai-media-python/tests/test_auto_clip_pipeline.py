@@ -9,10 +9,12 @@ from app.application.phase2_candidate_analyzer import (
 from app.domain.auto_clip_pipeline import (
     _apply_natural_tail_padding,
     build_candidate_analyses,
+    build_candidate_analyses_with_audit,
     build_output_summary,
     build_pipeline_config,
     deduplicate_and_rank,
     ensure_complete_candidate_title,
+    limit_and_score_candidates_with_quality_backfill,
     normalize_candidates,
 )
 from app.domain.auto_clip_stages import compute_overall_progress
@@ -95,6 +97,54 @@ def analysis_inputs() -> AnalysisInputs:
     )
 
 
+def candidate_analysis(candidate_id: str, *, start_seconds: float, score: float) -> CandidateAnalysis:
+    return CandidateAnalysis(
+        candidate_id=candidate_id,
+        start_seconds=start_seconds,
+        end_seconds=start_seconds + 30.0,
+        duration_seconds=30.0,
+        title=f"Kandidat viral {candidate_id}",
+        hook_text="Kenapa momen ini penting untuk dipahami sekarang?",
+        ending_text="Makanya bagian ini tetap punya payoff yang jelas.",
+        summary=f"Kandidat {candidate_id} membahas insight singkat dengan payoff jelas.",
+        why_it_works=["Hook jelas dan punya payoff."],
+        content_category="insight",
+        context_complete=True,
+        safety_notes=[],
+        suggested_caption="Insight ini bisa memicu diskusi penonton.",
+        suggested_cta="Komentar pendapat kamu.",
+        related_hashtags=["#Insight"],
+        viral_hashtags=["#FYP"],
+        suggested_hashtags=["#Insight", "#FYP"],
+        thumbnail_text=f"Kandidat viral {candidate_id}",
+        speaker_ids=["SPEAKER_01"],
+        scene_ids=["scene-1"],
+        hook_second=0.0,
+        main_point_second=10.0,
+        punchline_second=29.0,
+        retention_level="high",
+        requires_context=False,
+        can_standalone=True,
+        scores={
+            "hook": 8.0,
+            "conflict": 7.0,
+            "emotion": 7.0,
+            "novelty": 7.0,
+            "comment_potential": 7.5,
+            "base_viral_score": score,
+            "final_viral_score": score,
+            "penalties": {
+                "context": 0,
+                "weak_ending": 0,
+                "slow_start": 0,
+                "duplicate": 0,
+                "unsafe_or_misleading": 0,
+                "cut_quality": 0,
+            },
+        },
+    )
+
+
 def test_stage_progress_is_weighted() -> None:
     assert compute_overall_progress("VALIDATING_SOURCE", 100) > compute_overall_progress("VALIDATING_SOURCE", 10)
     assert compute_overall_progress("TRANSCRIBING", 100) > compute_overall_progress("PROBING_MEDIA", 100)
@@ -122,6 +172,27 @@ def test_pipeline_builds_ranked_candidates() -> None:
     assert candidates[0].retention_level in {"very_high", "high", "medium", "low"}
     assert candidates[0].punchline_second <= candidates[0].duration_seconds
     assert candidates[0].duration_seconds >= 15
+
+
+def test_pipeline_backfills_when_minimum_score_is_too_strict_for_requested_count() -> None:
+    config = build_pipeline_config(
+        {
+            "strategy": {
+                "desired_clip_count": 2,
+                "candidate_pool_count": 2,
+                "minimum_duration_seconds": 15,
+                "maximum_duration_seconds": 45,
+                "minimum_viral_score": 8.0,
+            }
+        }
+    )
+
+    candidates, audit = build_candidate_analyses_with_audit(analysis_inputs(), config)
+
+    assert len(candidates) >= 2
+    assert audit["accepted_before_normalization"] < config.desired_clip_count
+    assert audit["quality_backfill_count"] > 0
+    assert all(candidate.duration_seconds >= config.minimum_duration_seconds for candidate in candidates)
 
 
 def test_output_summary_is_json_ready() -> None:
@@ -164,6 +235,31 @@ def test_pipeline_applies_strategy_preferences_to_candidates() -> None:
     assert candidates[0].suggested_cta == "Save this and follow for part two."
     assert any("sensitive topic" in note.lower() for note in candidates[0].safety_notes)
     assert candidates[0].scores["final_viral_score"] >= candidates[0].scores["base_viral_score"] - 0.5
+
+
+def test_candidate_backfill_keeps_requested_count_when_quality_floor_is_strict() -> None:
+    config = build_pipeline_config(
+        {
+            "strategy": {
+                "desired_clip_count": 5,
+                "candidate_pool_count": 10,
+                "minimum_duration_seconds": 15,
+                "maximum_duration_seconds": 45,
+                "minimum_viral_score": 7.5,
+            }
+        }
+    )
+    candidates = [
+        candidate_analysis(f"candidate-{index}", start_seconds=index * 50.0, score=score)
+        for index, score in enumerate([8.1, 7.8, 7.6, 7.2, 6.9, 6.2], start=1)
+    ]
+
+    ranked, audit = limit_and_score_candidates_with_quality_backfill(candidates, analysis_inputs(), config)
+
+    assert len(ranked) == 5
+    assert audit["accepted_after_deduplication"] < config.desired_clip_count
+    assert audit["accepted_after_quantity_backfill"] == 5
+    assert audit["quality_backfill_count"] + audit["quantity_backfill_count"] > 0
 
 
 def test_pipeline_title_avoids_weak_filler_opening_words() -> None:

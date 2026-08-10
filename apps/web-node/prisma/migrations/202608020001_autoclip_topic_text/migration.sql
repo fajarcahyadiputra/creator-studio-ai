@@ -1,0 +1,1 @@
+ALTER TABLE "AutoClipRequest" ALTER COLUMN "topic" TYPE TEXT;

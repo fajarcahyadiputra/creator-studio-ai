@@ -53,6 +53,9 @@ ANALYZER_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
 EXTERNAL_SOURCE_ACTIVITY_TIMEOUT = timedelta(
     seconds=max(300, int(get_settings().EXTERNAL_SOURCE_MATERIALIZATION_TIMEOUT_SECONDS))
 )
+AUDIO_EXTRACTION_ACTIVITY_TIMEOUT = timedelta(
+    seconds=max(60, int(get_settings().AUDIO_EXTRACTION_TIMEOUT_SECONDS) + 60)
+)
 
 
 def _summarize_activity_failure(error: Exception) -> str:
@@ -296,8 +299,8 @@ class FoundationAutoClippingWorkflow:
                 audio_result = await workflow.execute_activity(
                     execute_audio_extraction,
                     audio_plan,
-                    start_to_close_timeout=timedelta(minutes=10),
-                    heartbeat_timeout=timedelta(seconds=15),
+                    start_to_close_timeout=AUDIO_EXTRACTION_ACTIVITY_TIMEOUT,
+                    heartbeat_timeout=timedelta(seconds=30),
                     retry_policy=ACTIVITY_RETRY,
                 )
                 await self._emit(

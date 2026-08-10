@@ -28,17 +28,17 @@ RUN npm run build --workspace @creator-studio/contracts \
 
 FROM base AS runtime
 ENV NODE_ENV=production
-COPY --from=dependencies /workspace/node_modules ./node_modules
-COPY --from=dependencies /workspace/apps/web-node/node_modules ./apps/web-node/node_modules
-COPY --from=build /workspace/apps/web-node/dist ./apps/web-node/dist
-COPY --from=build /workspace/apps/web-node/package.json ./apps/web-node/package.json
-COPY --from=build /workspace/apps/web-node/prisma ./apps/web-node/prisma
-COPY --from=build /workspace/apps/web-node/prisma.config.ts ./apps/web-node/prisma.config.ts
-COPY --from=build /workspace/apps/web-node/src/generated ./apps/web-node/src/generated
-COPY --from=build /workspace/apps/web-node/src/modules/auth/password.ts ./apps/web-node/src/modules/auth/password.ts
-COPY --from=build /workspace/packages/contracts/dist ./packages/contracts/dist
-COPY --from=build /workspace/packages/contracts/json-schema ./packages/contracts/json-schema
-COPY --from=build /workspace/packages/contracts/package.json ./packages/contracts/package.json
+COPY --chown=node:node --from=dependencies /workspace/node_modules ./node_modules
+COPY --chown=node:node --from=dependencies /workspace/apps/web-node/node_modules ./apps/web-node/node_modules
+COPY --chown=node:node --from=build /workspace/apps/web-node/dist ./apps/web-node/dist
+COPY --chown=node:node --from=build /workspace/apps/web-node/package.json ./apps/web-node/package.json
+COPY --chown=node:node --from=build /workspace/apps/web-node/prisma ./apps/web-node/prisma
+COPY --chown=node:node --from=build /workspace/apps/web-node/prisma.config.ts ./apps/web-node/prisma.config.ts
+COPY --chown=node:node --from=build /workspace/apps/web-node/src/generated ./apps/web-node/src/generated
+COPY --chown=node:node --from=build /workspace/apps/web-node/src/modules/auth/password.ts ./apps/web-node/src/modules/auth/password.ts
+COPY --chown=node:node --from=build /workspace/packages/contracts/dist ./packages/contracts/dist
+COPY --chown=node:node --from=build /workspace/packages/contracts/json-schema ./packages/contracts/json-schema
+COPY --chown=node:node --from=build /workspace/packages/contracts/package.json ./packages/contracts/package.json
 WORKDIR /workspace/apps/web-node
 USER node
 CMD ["node", "dist/server.js"]

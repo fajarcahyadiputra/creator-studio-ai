@@ -59,7 +59,7 @@ describe("admin job management routes", () => {
 
     expect(response.status).toBe(200);
     expect(adminJobService.cancelJob).toHaveBeenCalledWith("job-1");
-    expect(writeAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "ADMIN_JOB_CANCEL_REQUESTED" }));
+    expect(writeAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "ADMIN_JOB_CANCELED" }));
   });
 
   it("requests admin retry and writes an audit entry", async () => {
@@ -117,4 +117,3 @@ function buildApp(
   });
   return app;
 }
-

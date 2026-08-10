@@ -271,6 +271,37 @@ export class JobProjectionService {
         where: { jobId, stageVersion: 1 }
       });
 
+      if (current.status === "CANCELED" && input.status !== "CANCELED" && input.event_type !== "job.canceled") {
+        const nextSequence = current.eventSequence + 1n;
+        const event = await tx.jobEvent.create({
+          data: {
+            jobId,
+            sequence: nextSequence,
+            stage: current.currentStage ?? input.stage,
+            stageProgress: null,
+            overallProgress: current.progressPercent,
+            eventType: "job.event_ignored_after_cancel",
+            message: `Ignored stale ${input.event_type} event after job cancellation.`,
+            userMessage: "Event workflow lama diabaikan karena job sudah dibatalkan.",
+            metadata: {
+              source: "job-projection-service",
+              ignored_event_type: input.event_type,
+              ignored_status: input.status ?? null,
+              ignored_stage: input.stage
+            },
+            occurredAt: input.occurred_at ? new Date(input.occurred_at) : new Date()
+          }
+        });
+        await tx.job.update({
+          where: { id: jobId },
+          data: { eventSequence: nextSequence }
+        });
+        return {
+          event,
+          queuedClipOutputIds: []
+        };
+      }
+
       const nextSequence = current.eventSequence + 1n;
       const nextStatus = input.status ?? (current.status === "QUEUED" ? "RUNNING" : current.status);
       const outputSummary = resolveOutputSummary(input.metadata);

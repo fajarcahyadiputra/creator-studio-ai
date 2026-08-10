@@ -96,8 +96,8 @@
           <% if (clipOutputs.length) { %>
             <a class="btn btn-outline-secondary" href="/app/jobs/<%= job.id %>/export-index">Download all index</a>
           <% } %>
-          <% if (['QUEUED','RUNNING','PAUSED','PAUSE_REQUESTED'].includes(job.status)) { %>
-            <form data-api-form action="/api/v1/jobs/<%= job.id %>/cancel" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn-outline-danger" type="submit">Cancel</button></form>
+          <% if (['QUEUED','RUNNING','PAUSED','PAUSE_REQUESTED','CANCEL_REQUESTED'].includes(job.status)) { %>
+            <form data-api-form action="/api/v1/jobs/<%= job.id %>/cancel" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn-outline-danger" type="submit"><%= job.status === 'CANCEL_REQUESTED' ? 'Finalize cancel' : 'Cancel' %></button></form>
           <% } %>
           <% if (['FAILED', 'NEEDS_REVIEW'].includes(job.status)) { %>
             <form data-api-form data-idempotency-key="true" action="/api/v1/jobs/<%= job.id %>/retry" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="reason" value="Retry requested from job detail"><input type="hidden" name="stage" value="<%= job.currentStage ?? '' %>"><button class="btn btn-outline-warning" type="submit">Retry failed stage</button></form>
@@ -310,7 +310,8 @@
                         </div>
                         <div class="col-md-6">
                           <label class="form-label">Topic</label>
-                          <input class="form-control" name="topic" value="<%= outputSummary.requestSnapshot.topic ?? '' %>" placeholder="Topik utama">
+                          <textarea class="form-control" name="topic" rows="4" maxlength="20000" placeholder="Topik utama, konteks panjang, istilah penting, atau daftar angle yang perlu dipahami AI."><%= outputSummary.requestSnapshot.topic ?? '' %></textarea>
+                          <div class="form-text">Bisa isi banyak teks. Dipakai untuk membantu AI memahami konteks besar video.</div>
                         </div>
                         <div class="col-md-3">
                           <label class="form-label">Target platform</label>
@@ -323,8 +324,23 @@
                         <div class="col-md-3">
                           <label class="form-label">Objective</label>
                           <select class="form-select" name="objective">
-                            <% ['ENGAGEMENT','EDUCATION','CONTROVERSY','STORYTELLING','PRODUCT_AWARENESS','LEAD_GENERATION'].forEach((value) => { %>
-                              <option value="<%= value %>" <%= outputSummary.requestSnapshot.strategy.objective === value ? 'selected' : '' %>><%= value %></option>
+                            <% [
+                              ['EDUCATION', 'Edukasi / insight jelas'],
+                              ['ENGAGEMENT', 'Komentar dan diskusi'],
+                              ['STORYTELLING', 'Cerita dan emosi'],
+                              ['CONTROVERSY', 'Opini tajam / debat'],
+                              ['PRODUCT_AWARENESS', 'Awareness produk'],
+                              ['LEAD_GENERATION', 'Lead / prospek'],
+                              ['RETENTION', 'Tahan penonton sampai akhir'],
+                              ['VIRALITY', 'Potensi viral tertinggi'],
+                              ['BRAND_AWARENESS', 'Bangun brand'],
+                              ['COMMUNITY_DISCUSSION', 'Pancing komunitas diskusi'],
+                              ['THOUGHT_LEADERSHIP', 'Bangun otoritas'],
+                              ['SALES_CONVERSION', 'Dorong konversi'],
+                              ['NEWS_COMMENTARY', 'Komentar isu/news'],
+                              ['AUTHORITY_BUILDING', 'Bangun kredibilitas']
+                            ].forEach(([value, label]) => { %>
+                              <option value="<%= value %>" <%= outputSummary.requestSnapshot.strategy.objective === value ? 'selected' : '' %>><%= label %></option>
                             <% }) %>
                           </select>
                         </div>
@@ -373,11 +389,34 @@
                           <label class="form-label">Hook style</label>
                           <select class="form-select" name="hook_style">
                             <option value="" <%= !outputSummary.requestSnapshot.strategy.hookStyle ? 'selected' : '' %>>Auto</option>
-                            <option value="QUESTION" <%= outputSummary.requestSnapshot.strategy.hookStyle === 'QUESTION' ? 'selected' : '' %>>Pertanyaan</option>
-                            <option value="SHOCK" <%= outputSummary.requestSnapshot.strategy.hookStyle === 'SHOCK' ? 'selected' : '' %>>Pernyataan mengejutkan</option>
-                            <option value="DIRECT_CHALLENGE" <%= outputSummary.requestSnapshot.strategy.hookStyle === 'DIRECT_CHALLENGE' ? 'selected' : '' %>>Tantangan langsung</option>
-                            <option value="STORY_OPEN" <%= outputSummary.requestSnapshot.strategy.hookStyle === 'STORY_OPEN' ? 'selected' : '' %>>Pembuka cerita</option>
-                            <option value="MYTH_BUSTING" <%= outputSummary.requestSnapshot.strategy.hookStyle === 'MYTH_BUSTING' ? 'selected' : '' %>>Bongkar mitos</option>
+                            <% [
+                              ['QUESTION', 'Pertanyaan kuat'],
+                              ['SHOCK', 'Pernyataan mengejutkan'],
+                              ['DIRECT_CHALLENGE', 'Tantangan langsung'],
+                              ['STORY_OPEN', 'Pembuka cerita'],
+                              ['MYTH_BUSTING', 'Bongkar mitos'],
+                              ['CONTRADICTION', 'Kontradiksi'],
+                              ['HOT_TAKE', 'Hot take / opini tajam'],
+                              ['PROBLEM_FIRST', 'Masalah dulu'],
+                              ['RESULT_FIRST', 'Hasil / payoff dulu'],
+                              ['WARNING', 'Warning / bahaya'],
+                              ['DATA_SURPRISE', 'Data mengejutkan'],
+                              ['BEFORE_AFTER', 'Before-after'],
+                              ['MISTAKE_TO_AVOID', 'Kesalahan yang harus dihindari'],
+                              ['PAIN_POINT', 'Pain point audience'],
+                              ['SECRET_REVEAL', 'Rahasia / hal yang jarang dibahas'],
+                              ['EXPERT_INSIGHT', 'Insight ahli'],
+                              ['DEBATE_TRIGGER', 'Pemicu debat'],
+                              ['PERSONAL_CONFESSION', 'Pengakuan personal'],
+                              ['LISTICLE', 'List / poin cepat'],
+                              ['HOW_TO', 'How-to praktis'],
+                              ['WHY_NOW', 'Kenapa sekarang penting'],
+                              ['MISCONCEPTION', 'Kesalahpahaman umum'],
+                              ['CONTROVERSIAL_QUOTE', 'Quote kontroversial'],
+                              ['CONSEQUENCE', 'Konsekuensi / akibat']
+                            ].forEach(([value, label]) => { %>
+                              <option value="<%= value %>" <%= outputSummary.requestSnapshot.strategy.hookStyle === value ? 'selected' : '' %>><%= label %></option>
+                            <% }) %>
                           </select>
                         </div>
                         <div class="col-md-3">
@@ -518,8 +557,25 @@
                             <label class="form-check-label" for="subtitle_profanity_censor_regenerate">Profanity censor</label>
                           </div>
                         </div>
+                        <div class="col-md-6 form-check d-flex align-items-end">
+                          <div>
+                            <input class="form-check-input" type="checkbox" name="subtitle_typo_correction" id="subtitle_typo_correction_regenerate" <%= outputSummary.requestSnapshot.subtitle.typoCorrection ? 'checked' : '' %>>
+                            <label class="form-check-label" for="subtitle_typo_correction_regenerate">Koreksi typo subtitle saja</label>
+                            <div class="form-text">Tidak rewrite kalimat; hanya salah eja jelas, timing dan pemenggalan tetap.</div>
+                          </div>
+                        </div>
                       </div>
                     </div>
+                  </div>
+
+                  <div class="col-12">
+                    <label class="form-check auto-clip-choice-card" for="speech_cleanup_enabled_regenerate">
+                      <input class="form-check-input" type="checkbox" name="speech_cleanup_enabled" id="speech_cleanup_enabled_regenerate" <%= outputSummary.requestSnapshot.strategy.speechCleanupEnabled ? 'checked' : '' %>>
+                      <span>
+                        <strong class="form-check-label">Rapikan ucapan otomatis</strong>
+                        <small class="d-block text-muted mt-1">Opsional. Buang hanya filler, pengulangan, noise ucapan, dan jeda panjang yang terdeteksi aman saat hasil dibuat ulang.</small>
+                      </span>
+                    </label>
                   </div>
 
                   <div class="col-12">
@@ -556,7 +612,31 @@
                           <textarea class="form-control" name="tones_text" rows="4"><%= outputSummary.requestSnapshot.strategy.tones.join(', ') %></textarea>
                           <select class="form-select mt-2" data-append-to-field="tones_text">
                             <option value="">Tambah tone preset...</option>
-                            <% ['EDUCATIONAL','SERIOUS','DIRECT','CASUAL','CONTROVERSIAL','EMOTIONAL','CONFIDENT','URGENT'].forEach((value) => { %>
+                            <% [
+                              'EDUCATIONAL',
+                              'SERIOUS',
+                              'DIRECT',
+                              'CASUAL',
+                              'CONTROVERSIAL',
+                              'EMOTIONAL',
+                              'CONFIDENT',
+                              'HUMOROUS',
+                              'CURIOUS',
+                              'DRAMATIC',
+                              'CRITICAL',
+                              'INSPIRATIONAL',
+                              'EMPATHETIC',
+                              'URGENT',
+                              'ANALYTICAL',
+                              'AUTHORITATIVE',
+                              'FRIENDLY',
+                              'CHALLENGING',
+                              'REFLECTIVE',
+                              'PRACTICAL',
+                              'SHARP',
+                              'WARM',
+                              'SUSPENSEFUL'
+                            ].forEach((value) => { %>
                               <option value="<%= value %>"><%= value %></option>
                             <% }) %>
                           </select>
@@ -634,15 +714,6 @@
                         <div class="col-md-4">
                           <label class="form-label">Subtitle font family</label>
                           <input class="form-control" name="subtitle_font_family" value="<%= outputSummary.requestSnapshot.subtitle.fontFamily ?? '' %>">
-                        </div>
-                        <div class="col-12">
-                          <label class="form-check auto-clip-choice-card">
-                            <input class="form-check-input" type="checkbox" name="speech_cleanup_enabled" id="speech_cleanup_enabled_regenerate" <%= outputSummary.requestSnapshot.strategy.speechCleanupEnabled ? 'checked' : '' %>>
-                            <span>
-                              <strong class="form-check-label">Rapikan ucapan otomatis</strong>
-                              <small class="d-block text-muted mt-1">Aktifkan untuk membuang edit ucapan yang ber-confidence tinggi. Regenerate tetap mempertahankan bagian yang berisiko mengubah makna atau membuat jump cut buruk.</small>
-                            </span>
-                          </label>
                         </div>
                         <div class="col-md-4">
                           <label class="form-label">Selection brief</label>
@@ -1130,8 +1201,18 @@
           <%
             const finalReadyCount = clipOutputs.filter((output) => output.finalAvailable).length;
             const subtitleReadyCount = clipOutputs.filter((output) => output.subtitleAvailable).length;
-            const warningCount = clipOutputs.filter((output) => output.validationWarnings.length > 0).length;
-            const playableCount = clipOutputs.filter((output) => output.outputPlayable === true).length;
+            const warningCount = clipOutputs.filter(
+              (output) =>
+                output.validationWarnings.length > 0
+                || output.finalMissing
+                || output.previewMissing
+                || output.videoStorageCheckFailed
+            ).length;
+            const playableCount = clipOutputs.filter(
+              (output) =>
+                output.outputPlayable === true
+                && (output.finalAvailable || output.previewAvailable)
+            ).length;
           %>
           <% if (clipOutputs.length) { %>
             <div class="job-summary-grid showcase-kpi-grid">
@@ -1190,6 +1271,19 @@
                         Artifact video sudah tercatat, tetapi validasi playback menandai output ini perlu review.
                         Silakan buka atau download file secara langsung untuk inspeksi, atau jalankan rerender/regenerate jika perlu.
                       </p>
+                    </div>
+                  <% } else if (output.finalMissing || output.previewMissing) { %>
+                    <div class="clip-output-warning-box mb-3">
+                      <strong>File video sudah tidak tersedia</strong>
+                      <p class="mb-0">
+                        Data hasil clip masih tersimpan, tetapi file videonya tidak ditemukan di object storage.
+                        Jalankan rerender jika source masih tersedia, atau regenerate job untuk membuat artifact baru.
+                      </p>
+                    </div>
+                  <% } else if (output.videoStorageCheckFailed) { %>
+                    <div class="clip-output-warning-box mb-3">
+                      <strong>Storage video sementara tidak dapat diperiksa</strong>
+                      <p class="mb-0">Muat ulang halaman setelah layanan object storage kembali siap.</p>
                     </div>
                   <% } %>
                 </div>

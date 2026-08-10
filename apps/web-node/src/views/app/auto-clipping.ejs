@@ -4,9 +4,9 @@
   <section class="user-page-summary-grid user-page-summary-grid--compact">
     <article class="user-page-summary-card user-page-summary-card--soft"><span>Quick mode</span><strong>Fokus ke input penting</strong><p>Cocok kalau kamu mau submit cepat tanpa membuka semua kontrol editor.</p></article>
     <article class="user-page-summary-card"><span>Advanced mode</span><strong>Brief lebih detail</strong><p>Buka field teknis hanya saat kamu memang perlu arahan yang lebih spesifik.</p></article>
-    <article class="user-page-summary-card"><span>Source workflow</span><strong>URL publik atau asset</strong><p>Source akan diproses dulu, lalu sistem menyimpan hasil clip akhir untuk review.</p></article>
+    <article class="user-page-summary-card"><span>Source workflow</span><strong>External URL saja</strong><p>Source diproses dari URL publik, lalu sistem hanya menyimpan hasil clip akhir untuk review.</p></article>
   </section>
-  <div class="alert alert-info user-inline-banner">Phase 2 analysis sudah bisa mencoba impor URL publik yang didukung ke workspace media secara otomatis sebelum analisis kandidat dimulai.</div>
+  <div class="alert alert-info user-inline-banner">Phase 2 analysis mengambil URL publik yang didukung secara otomatis sebelum analisis kandidat dimulai, lalu hanya menyimpan artifact hasil clip.</div>
   <div class="form-message"></div>
   <form id="auto-clip-form" class="wizard-panel">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -68,36 +68,19 @@
         </div>
       </div>
     </div></div></section>
-    <section class="wizard-step"><div class="step-number">1</div><div class="step-body"><h2>Source</h2><p class="user-step-lead">Tentukan video yang akan diproses. Pakai asset siap pakai atau URL publik yang benar-benar bisa diakses worker.</p>
-      <label class="form-label">Source mode</label>
-      <select class="form-select" name="source_mode">
-        <option value="MEDIA_ASSET" <%= assets.length ? '' : 'disabled' %>>Uploaded media asset</option>
-        <option value="EXTERNAL_URL" <%= assets.length ? '' : 'selected' %>>External source URL</option>
-      </select>
-      <div class="form-text">Pilih video dari asset workspace atau masukkan URL publik yang didukung. Sistem akan memproses source lalu hanya menyimpan hasil clip akhirnya.</div>
-
-      <div class="mt-3" data-source-panel="MEDIA_ASSET" <%= assets.length ? '' : 'hidden' %>>
-        <label class="form-label">Ready video asset</label>
-        <select class="form-select" name="media_asset_id">
-          <% if (!assets.length) { %>
-            <option value="">No ready assets available</option>
-          <% } %>
-          <% assets.forEach((asset) => { %>
-            <option value="<%= asset.id %>"><%= asset.displayName %> - <%= asset.createdAt.toLocaleString() %></option>
-          <% }) %>
-        </select>
-        <div class="form-text">This uses a validated asset already stored in your workspace.</div>
+    <section class="wizard-step"><div class="step-number">1</div><div class="step-body"><h2>Source</h2><p class="user-step-lead">Masukkan URL video publik yang akan diproses. Untuk flow sekarang, auto-clipping hanya menerima external source agar alurnya lebih jelas dan tidak bercampur dengan import asset manual.</p>
+      <input type="hidden" name="source_mode" value="EXTERNAL_URL">
+      <div class="border rounded-4 p-3 bg-light-subtle">
+        <span class="eyebrow">Source mode</span>
+        <strong>External source URL</strong>
+        <p>Sistem akan mengambil source dari URL, memprosesnya, lalu hanya menyimpan hasil clip akhirnya.</p>
       </div>
 
-      <div class="mt-3" data-source-panel="EXTERNAL_URL" <%= assets.length ? 'hidden' : '' %>>
-        <label class="form-label">External source URL</label><input class="form-control" type="url" name="source_url" placeholder="https://www.youtube.com/watch?v=..." <%= assets.length ? '' : 'required' %>>
-        <div class="form-text">The ingestion service validates allowed domains, rejects private/reserved network destinations, lalu mencoba mengimpor source ke workspace media secara otomatis. Jika short URL seperti <code>youtu.be</code> bermasalah, pakai URL penuh <code>youtube.com/watch?v=...</code>.</div>
+      <div class="mt-3" data-source-panel="EXTERNAL_URL">
+        <label class="form-label">External source URL</label><input class="form-control" type="url" name="source_url" placeholder="https://www.youtube.com/watch?v=..." required>
+        <div class="form-text">Gunakan URL publik yang didukung, misalnya YouTube watch URL. Jika short URL seperti <code>youtu.be</code> bermasalah, pakai URL penuh <code>youtube.com/watch?v=...</code>.</div>
         <div class="form-text mt-1" data-source-url-helper>Gunakan URL publik yang benar-benar bisa diakses worker ingestion.</div>
       </div>
-
-      <% if (!assets.length) { %>
-        <div class="alert alert-warning mt-3">No ready uploaded video assets were found in this workspace yet, so external URL mode is selected by default. Source URL yang lolos validasi akan dicoba diimpor otomatis sebelum analisis dimulai.</div>
-      <% } %>
 
       <label class="form-check mt-3"><input class="form-check-input" type="checkbox" name="rights_confirmed" required><span class="form-check-label">I own or have permission to process this content.</span></label>
     </div></section>
@@ -107,11 +90,84 @@
           <h3 class="h5 mb-3">Konten inti</h3>
           <div class="row g-3">
             <div class="col-md-6"><label class="form-label">Judul video source</label><input class="form-control" name="title" maxlength="255" placeholder="Judul asli video atau topik episode"></div>
-            <div class="col-md-6"><label class="form-label">Topik utama konten</label><input class="form-control" name="topic" maxlength="255" value="<%= formDefaults.topic %>" placeholder="Contoh: ekonomi, kesehatan, bisnis, personal finance"><div class="form-text">Ini topik utama video, bukan daftar prioritas clip.</div></div>
+            <div class="col-md-6"><label class="form-label">Topik utama konten</label><textarea class="form-control" name="topic" rows="4" maxlength="20000" placeholder="Contoh: ekonomi Indonesia, kesehatan ginjal, bisnis kreator, personal finance, isu sosial, atau daftar angle panjang yang perlu dipahami AI."><%= formDefaults.topic %></textarea><div class="form-text">Bisa isi banyak teks. Pakai untuk menjelaskan konteks besar video, istilah penting, dan sudut pandang utama.</div></div>
             <div class="col-md-3"><label class="form-label">Platform</label><select class="form-select" name="platform"><option <%= formDefaults.platform === 'YOUTUBE_SHORTS' ? 'selected' : '' %>>YOUTUBE_SHORTS</option><option <%= formDefaults.platform === 'TIKTOK' ? 'selected' : '' %>>TIKTOK</option><option <%= formDefaults.platform === 'INSTAGRAM_REELS' ? 'selected' : '' %>>INSTAGRAM_REELS</option><option <%= formDefaults.platform === 'FACEBOOK_REELS' ? 'selected' : '' %>>FACEBOOK_REELS</option></select></div>
-            <div class="col-md-3"><label class="form-label">Objective</label><select class="form-select" name="objective"><option <%= formDefaults.objective === 'EDUCATION' ? 'selected' : '' %>>EDUCATION</option><option <%= formDefaults.objective === 'ENGAGEMENT' ? 'selected' : '' %>>ENGAGEMENT</option><option <%= formDefaults.objective === 'STORYTELLING' ? 'selected' : '' %>>STORYTELLING</option><option <%= formDefaults.objective === 'CONTROVERSY' ? 'selected' : '' %>>CONTROVERSY</option></select></div>
-            <div class="col-md-3"><label class="form-label">Primary tone</label><select class="form-select" name="primary_tone"><option <%= formDefaults.primaryTone === 'EDUCATIONAL' ? 'selected' : '' %>>EDUCATIONAL</option><option <%= formDefaults.primaryTone === 'SERIOUS' ? 'selected' : '' %>>SERIOUS</option><option <%= formDefaults.primaryTone === 'DIRECT' ? 'selected' : '' %>>DIRECT</option><option <%= formDefaults.primaryTone === 'CASUAL' ? 'selected' : '' %>>CASUAL</option><option <%= formDefaults.primaryTone === 'CONTROVERSIAL' ? 'selected' : '' %>>CONTROVERSIAL</option></select></div>
-            <div class="col-md-3"><label class="form-label">Secondary tone</label><select class="form-select" name="secondary_tone"><option value="" <%= !formDefaults.secondaryTone ? 'selected' : '' %>>None</option><option <%= formDefaults.secondaryTone === 'SERIOUS' ? 'selected' : '' %>>SERIOUS</option><option <%= formDefaults.secondaryTone === 'CASUAL' ? 'selected' : '' %>>CASUAL</option><option <%= formDefaults.secondaryTone === 'EMOTIONAL' ? 'selected' : '' %>>EMOTIONAL</option><option <%= formDefaults.secondaryTone === 'CONFIDENT' ? 'selected' : '' %>>CONFIDENT</option></select></div>
+            <div class="col-md-3"><label class="form-label">Objective</label><select class="form-select" name="objective">
+              <% [
+                ['EDUCATION', 'Edukasi / insight jelas'],
+                ['ENGAGEMENT', 'Komentar dan diskusi'],
+                ['STORYTELLING', 'Cerita dan emosi'],
+                ['CONTROVERSY', 'Opini tajam / debat'],
+                ['PRODUCT_AWARENESS', 'Awareness produk'],
+                ['LEAD_GENERATION', 'Lead / prospek'],
+                ['RETENTION', 'Tahan penonton sampai akhir'],
+                ['VIRALITY', 'Potensi viral tertinggi'],
+                ['BRAND_AWARENESS', 'Bangun brand'],
+                ['COMMUNITY_DISCUSSION', 'Pancing komunitas diskusi'],
+                ['THOUGHT_LEADERSHIP', 'Bangun otoritas'],
+                ['SALES_CONVERSION', 'Dorong konversi'],
+                ['NEWS_COMMENTARY', 'Komentar isu/news'],
+                ['AUTHORITY_BUILDING', 'Bangun kredibilitas']
+              ].forEach(([value, label]) => { %>
+                <option value="<%= value %>" <%= formDefaults.objective === value ? 'selected' : '' %>><%= label %></option>
+              <% }) %>
+            </select></div>
+            <div class="col-md-3"><label class="form-label">Primary tone</label><select class="form-select" name="primary_tone">
+              <% [
+                ['EDUCATIONAL', 'Educational'],
+                ['SERIOUS', 'Serious'],
+                ['DIRECT', 'Direct'],
+                ['CASUAL', 'Casual'],
+                ['CONTROVERSIAL', 'Controversial'],
+                ['EMOTIONAL', 'Emotional'],
+                ['CONFIDENT', 'Confident'],
+                ['HUMOROUS', 'Humorous'],
+                ['CURIOUS', 'Curious'],
+                ['DRAMATIC', 'Dramatic'],
+                ['CRITICAL', 'Critical'],
+                ['INSPIRATIONAL', 'Inspirational'],
+                ['EMPATHETIC', 'Empathetic'],
+                ['URGENT', 'Urgent'],
+                ['ANALYTICAL', 'Analytical'],
+                ['AUTHORITATIVE', 'Authoritative'],
+                ['FRIENDLY', 'Friendly'],
+                ['CHALLENGING', 'Challenging'],
+                ['REFLECTIVE', 'Reflective'],
+                ['PRACTICAL', 'Practical'],
+                ['SHARP', 'Sharp'],
+                ['WARM', 'Warm'],
+                ['SUSPENSEFUL', 'Suspenseful']
+              ].forEach(([value, label]) => { %>
+                <option value="<%= value %>" <%= formDefaults.primaryTone === value ? 'selected' : '' %>><%= label %></option>
+              <% }) %>
+            </select></div>
+            <div class="col-md-3"><label class="form-label">Secondary tone</label><select class="form-select" name="secondary_tone">
+              <option value="" <%= !formDefaults.secondaryTone ? 'selected' : '' %>>None</option>
+              <% [
+                ['SERIOUS', 'Serious'],
+                ['CASUAL', 'Casual'],
+                ['EMOTIONAL', 'Emotional'],
+                ['CONFIDENT', 'Confident'],
+                ['HUMOROUS', 'Humorous'],
+                ['CURIOUS', 'Curious'],
+                ['DRAMATIC', 'Dramatic'],
+                ['CRITICAL', 'Critical'],
+                ['INSPIRATIONAL', 'Inspirational'],
+                ['EMPATHETIC', 'Empathetic'],
+                ['URGENT', 'Urgent'],
+                ['ANALYTICAL', 'Analytical'],
+                ['AUTHORITATIVE', 'Authoritative'],
+                ['FRIENDLY', 'Friendly'],
+                ['CHALLENGING', 'Challenging'],
+                ['REFLECTIVE', 'Reflective'],
+                ['PRACTICAL', 'Practical'],
+                ['SHARP', 'Sharp'],
+                ['WARM', 'Warm'],
+                ['SUSPENSEFUL', 'Suspenseful']
+              ].forEach(([value, label]) => { %>
+                <option value="<%= value %>" <%= formDefaults.secondaryTone === value ? 'selected' : '' %>><%= label %></option>
+              <% }) %>
+            </select></div>
             <div class="col-md-6"><label class="form-label">Target audience</label><input class="form-control" name="target_audience" maxlength="255" value="<%= formDefaults.targetAudience %>" placeholder="Founder, mahasiswa, creator pemula, tim marketing"></div>
             <div class="col-md-6"><label class="form-label">Brief editor utama</label><textarea class="form-control" name="content_context" rows="4" maxlength="20000" placeholder="Jelaskan momen seperti apa yang harus dipilih: hook cepat, konflik, insight, payoff, dan ending yang ingin didapat."><%= formDefaults.contentContext %></textarea><div class="form-text">Kalau hanya ingin isi satu arahan utama, cukup isi field ini.</div></div>
           </div>
@@ -124,10 +180,49 @@
             <div class="col-md-4"><label class="form-label">Jumlah clip final</label><input class="form-control" name="clip_count" type="number" min="1" max="30" value="<%= formDefaults.clipCount %>"></div>
             <div class="col-md-4"><label class="form-label">Durasi minimum</label><input class="form-control" name="min_duration" type="number" min="10" max="180" value="<%= formDefaults.minDuration %>"></div>
             <div class="col-md-4"><label class="form-label">Durasi maksimum</label><input class="form-control" name="max_duration" type="number" min="15" max="180" value="<%= formDefaults.maxDuration %>"></div>
-            <div class="col-md-4"><label class="form-label">Gaya hook</label><select class="form-select" name="hook_style"><option value="" <%= !formDefaults.hookStyle ? 'selected' : '' %>>Auto</option><option <%= formDefaults.hookStyle === 'QUESTION' ? 'selected' : '' %>>Pertanyaan</option><option <%= formDefaults.hookStyle === 'SHOCK' ? 'selected' : '' %>>Pernyataan mengejutkan</option><option <%= formDefaults.hookStyle === 'DIRECT_CHALLENGE' ? 'selected' : '' %>>Tantangan langsung</option><option <%= formDefaults.hookStyle === 'STORY_OPEN' ? 'selected' : '' %>>Pembuka cerita</option><option <%= formDefaults.hookStyle === 'MYTH_BUSTING' ? 'selected' : '' %>>Bongkar mitos</option></select></div>
+            <div class="col-md-4"><label class="form-label">Gaya hook</label><select class="form-select" name="hook_style">
+              <option value="" <%= !formDefaults.hookStyle ? 'selected' : '' %>>Auto</option>
+              <% [
+                ['QUESTION', 'Pertanyaan kuat'],
+                ['SHOCK', 'Pernyataan mengejutkan'],
+                ['DIRECT_CHALLENGE', 'Tantangan langsung'],
+                ['STORY_OPEN', 'Pembuka cerita'],
+                ['MYTH_BUSTING', 'Bongkar mitos'],
+                ['CONTRADICTION', 'Kontradiksi'],
+                ['HOT_TAKE', 'Hot take / opini tajam'],
+                ['PROBLEM_FIRST', 'Masalah dulu'],
+                ['RESULT_FIRST', 'Hasil / payoff dulu'],
+                ['WARNING', 'Warning / bahaya'],
+                ['DATA_SURPRISE', 'Data mengejutkan'],
+                ['BEFORE_AFTER', 'Before-after'],
+                ['MISTAKE_TO_AVOID', 'Kesalahan yang harus dihindari'],
+                ['PAIN_POINT', 'Pain point audience'],
+                ['SECRET_REVEAL', 'Rahasia / hal yang jarang dibahas'],
+                ['EXPERT_INSIGHT', 'Insight ahli'],
+                ['DEBATE_TRIGGER', 'Pemicu debat'],
+                ['PERSONAL_CONFESSION', 'Pengakuan personal'],
+                ['LISTICLE', 'List / poin cepat'],
+                ['HOW_TO', 'How-to praktis'],
+                ['WHY_NOW', 'Kenapa sekarang penting'],
+                ['MISCONCEPTION', 'Kesalahpahaman umum'],
+                ['CONTROVERSIAL_QUOTE', 'Quote kontroversial'],
+                ['CONSEQUENCE', 'Konsekuensi / akibat']
+              ].forEach(([value, label]) => { %>
+                <option value="<%= value %>" <%= formDefaults.hookStyle === value ? 'selected' : '' %>><%= label %></option>
+              <% }) %>
+            </select></div>
             <div class="col-md-4"><label class="form-label">Arah CTA</label><select class="form-select" name="cta_preference"><option value="" <%= !formDefaults.ctaPreference ? 'selected' : '' %>>Auto</option><option <%= formDefaults.ctaPreference === 'COMMENT' ? 'selected' : '' %>>Komentar</option><option <%= formDefaults.ctaPreference === 'SHARE' ? 'selected' : '' %>>Share</option><option <%= formDefaults.ctaPreference === 'FOLLOW' ? 'selected' : '' %>>Follow</option><option <%= formDefaults.ctaPreference === 'SAVE' ? 'selected' : '' %>>Save</option></select></div>
             <div class="col-md-4"><label class="form-label">Prioritas clip mandiri</label><select class="form-select" name="standalone_priority"><option value="REQUIRED" <%= formDefaults.standalonePriority === 'REQUIRED' ? 'selected' : '' %>>Harus mandiri</option><option value="PREFERRED" <%= formDefaults.standalonePriority === 'PREFERRED' ? 'selected' : '' %>>Diutamakan mandiri</option><option value="FLEXIBLE" <%= formDefaults.standalonePriority === 'FLEXIBLE' ? 'selected' : '' %>>Fleksibel</option></select><div class="form-text">Default terbaik untuk kebanyakan kasus: <strong>Fleksibel</strong>.</div></div>
             <div class="col-md-4"><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="require_spoken_audio" <%= formDefaults.requireSpokenAudio ? 'checked' : '' %>><span class="form-check-label">Wajib fokus ke momen dengan suara/dialog yang jelas</span></label></div>
+            <div class="col-12">
+              <label class="form-check auto-clip-choice-card" for="speech_cleanup_enabled">
+                <input class="form-check-input" type="checkbox" name="speech_cleanup_enabled" id="speech_cleanup_enabled">
+                <span>
+                  <strong class="form-check-label">Rapikan ucapan otomatis</strong>
+                  <small class="d-block text-muted mt-1">Opsional dan default nonaktif. Saat diaktifkan, sistem membuang filler, pengulangan, noise ucapan, dan jeda panjang yang terdeteksi aman tanpa mengubah makna.</small>
+                </span>
+              </label>
+            </div>
           </div>
         </div>
       </div>
@@ -201,15 +296,6 @@
                 <option value="KEY_PAYOFF">Key payoff</option>
                 <option value="OBJECT_AND_CONSEQUENCE">Object and consequence</option>
               </select>
-            </div>
-            <div class="col-12">
-              <label class="form-check auto-clip-choice-card">
-                <input class="form-check-input" type="checkbox" name="speech_cleanup_enabled">
-                <span>
-                  <strong class="form-check-label">Rapikan ucapan otomatis</strong>
-                  <small class="d-block text-muted mt-1">Hapus hanya filler, pengulangan, noise ucapan, dan jeda panjang yang terdeteksi aman. Sistem mempertahankan makna, memberi padding pada titik potong, dan melewati edit berisiko.</small>
-                </span>
-              </label>
             </div>
           </div>
         </details>
@@ -324,6 +410,13 @@
                   <input class="form-check-input" type="checkbox" name="subtitle_profanity_censor">
                   <span class="form-check-label">Profanity censor</span>
                 </label>
+              </div>
+              <div class="col-12">
+                <label class="form-check">
+                  <input class="form-check-input" type="checkbox" name="subtitle_typo_correction">
+                  <span class="form-check-label">Koreksi typo subtitle saja</span>
+                </label>
+                <div class="form-text ms-4">Opsional. Hanya memperbaiki salah eja yang jelas tanpa mengubah timestamp, pemenggalan, atau gaya bicara.</div>
               </div>
             </div>
           </div>

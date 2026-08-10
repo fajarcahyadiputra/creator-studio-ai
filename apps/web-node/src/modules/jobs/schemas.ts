@@ -31,6 +31,23 @@ function optionalText(maxLength: number) {
     .transform((value) => value || undefined);
 }
 
+const autoClipObjectives = [
+  "ENGAGEMENT",
+  "EDUCATION",
+  "CONTROVERSY",
+  "STORYTELLING",
+  "PRODUCT_AWARENESS",
+  "LEAD_GENERATION",
+  "RETENTION",
+  "VIRALITY",
+  "BRAND_AWARENESS",
+  "COMMUNITY_DISCUSSION",
+  "THOUGHT_LEADERSHIP",
+  "SALES_CONVERSION",
+  "NEWS_COMMENTARY",
+  "AUTHORITY_BUILDING"
+] as const;
+
 function optionalInteger(min: number, max: number) {
   return z.preprocess((value) => {
     if (value === undefined || value === null || value === "") return undefined;
@@ -114,7 +131,7 @@ export const autoClipJobSchema = z.object({
   content: z.object({
     title: z.string().trim().max(255).optional(),
     context: z.string().trim().max(20000).optional(),
-    topic: z.string().trim().max(255).optional(),
+    topic: z.string().trim().max(20000).optional(),
     niche: z.string().trim().max(120).optional(),
     target_audience: z.string().trim().max(255).optional(),
     source_language: z.string().trim().max(20).optional(),
@@ -124,7 +141,7 @@ export const autoClipJobSchema = z.object({
   }),
   strategy: z.object({
     target_platform: z.enum(["TIKTOK", "INSTAGRAM_REELS", "FACEBOOK_REELS", "YOUTUBE_SHORTS", "CUSTOM"]),
-    objective: z.enum(["ENGAGEMENT", "EDUCATION", "CONTROVERSY", "STORYTELLING", "PRODUCT_AWARENESS", "LEAD_GENERATION"]),
+    objective: z.enum(autoClipObjectives),
     tones: z.array(z.string().min(1).max(50)).min(1).max(5),
     desired_clip_count: z.number().int().min(1).max(30),
     candidate_pool_count: z.number().int().min(1).max(30).default(10),
@@ -171,7 +188,8 @@ export const autoClipJobSchema = z.object({
       max_lines: z.number().int().min(1).max(4).optional(),
       safe_margin_percent: z.number().min(0).max(30).optional(),
       word_highlight: z.boolean().optional(),
-      profanity_censor: z.boolean().optional()
+      profanity_censor: z.boolean().optional(),
+      typo_correction: z.boolean().optional()
     }).catchall(z.unknown()).default({ text_case: "UPPERCASE" })
   }),
   ai: z.object({
@@ -235,12 +253,12 @@ export const regenerateAutoClipJobSchema = z
   .object({
     content_title: optionalText(255),
     content_context: optionalText(20000),
-    topic: optionalText(255),
+    topic: optionalText(20000),
     source_language: optionalText(20),
     speaker_count: optionalInteger(1, 20),
     custom_vocabulary_text: optionalTextList(200, 100),
     target_platform: z.enum(["TIKTOK", "INSTAGRAM_REELS", "FACEBOOK_REELS", "YOUTUBE_SHORTS", "CUSTOM"]),
-    objective: z.enum(["ENGAGEMENT", "EDUCATION", "CONTROVERSY", "STORYTELLING", "PRODUCT_AWARENESS", "LEAD_GENERATION"]),
+    objective: z.enum(autoClipObjectives),
     tones_text: optionalTextList(5, 50),
     desired_clip_count: optionalInteger(1, 30),
     candidate_pool_count: optionalInteger(1, 30),
@@ -284,7 +302,8 @@ export const regenerateAutoClipJobSchema = z
     subtitle_text_case: z.enum(["UPPERCASE", "LOWERCASE", "ORIGINAL"]).default("UPPERCASE"),
     subtitle_max_lines: optionalInteger(1, 4),
     subtitle_safe_margin_percent: optionalNumber(0, 30),
-    subtitle_profanity_censor: booleanField(false)
+    subtitle_profanity_censor: booleanField(false),
+    subtitle_typo_correction: booleanField(false)
   })
   .refine((value) => !value.tones_text || value.tones_text.length >= 1, {
     message: "At least one tone is required.",

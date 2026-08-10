@@ -9,12 +9,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.config import get_settings
 from app.domain.auto_clip_pipeline import (
-    build_candidate_analyses,
+    build_candidate_analyses_with_audit,
     build_output_summary,
     build_pipeline_config,
-    deduplicate_and_rank,
     ensure_complete_candidate_title,
-    normalize_candidates,
+    limit_and_score_candidates_with_quality_backfill,
     PipelineConfig,
     supplement_ranked_candidates,
 )
@@ -262,42 +261,7 @@ def _limit_and_score_candidates_with_audit(
     analysis_inputs: AnalysisInputs,
     config: PipelineConfig,
 ) -> tuple[list[CandidateAnalysis], dict[str, Any]]:
-    score_rejections = sum(
-        1 for candidate in candidates if candidate.scores.get("final_viral_score", 0) < config.minimum_viral_score
-    )
-    short_rejections = sum(1 for candidate in candidates if candidate.duration_seconds < config.minimum_duration_seconds)
-    long_rejections = sum(1 for candidate in candidates if candidate.duration_seconds > config.maximum_duration_seconds)
-    filtered = [
-        candidate
-        for candidate in candidates
-        if candidate.scores.get("final_viral_score", 0) >= config.minimum_viral_score
-        and candidate.duration_seconds >= config.minimum_duration_seconds
-        and candidate.duration_seconds <= config.maximum_duration_seconds
-    ]
-    normalized = normalize_candidates(
-        filtered,
-        analysis_inputs.scenes,
-        analysis_inputs.silences,
-        analysis_inputs.transcript.segments,
-        float(config.maximum_duration_seconds),
-    )
-    ranked = deduplicate_and_rank(normalized, config.candidate_pool_count)
-    audit = {
-        "raw_candidate_count": len(candidates),
-        "accepted_before_normalization": len(filtered),
-        "normalized_candidate_count": len(normalized),
-        "accepted_after_deduplication": len(ranked),
-        "removed_by_deduplication": max(0, len(normalized) - len(ranked)),
-        "rejected_below_minimum_score": score_rejections,
-        "rejected_below_minimum_duration": short_rejections,
-        "rejected_above_maximum_duration": long_rejections,
-        "minimum_viral_score": config.minimum_viral_score,
-        "minimum_duration_seconds": config.minimum_duration_seconds,
-        "maximum_duration_seconds": config.maximum_duration_seconds,
-        "requested_candidate_pool_count": config.candidate_pool_count,
-        "required_final_clip_count": config.desired_clip_count,
-    }
-    return ranked, audit
+    return limit_and_score_candidates_with_quality_backfill(candidates, analysis_inputs, config)
 
 
 def _finalize_summary(
@@ -506,8 +470,10 @@ def _coerce_float(value: Any) -> float | None:
 
 
 def _run_heuristic_analysis(analysis_inputs: AnalysisInputs, config: PipelineConfig) -> dict[str, Any]:
-    candidates = build_candidate_analyses(analysis_inputs, config)
-    return build_output_summary(candidates)
+    candidates, candidate_audit = build_candidate_analyses_with_audit(analysis_inputs, config)
+    summary = build_output_summary(candidates)
+    summary["candidate_audit"] = candidate_audit
+    return summary
 
 
 def _supplement_openai_summary(

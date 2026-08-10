@@ -22,6 +22,7 @@ from app.domain.contracts import (
     TranscriptWord,
     TranscriptionPlan,
     TranscriptionResult,
+    TranscriptionResultReference,
 )
 from app.domain.auto_clip_stages import compute_overall_progress
 from app.infrastructure.callback_client import JobCallbackClient
@@ -80,14 +81,7 @@ async def execute_transcription(payload: dict[str, Any]) -> dict[str, Any]:
                 "cached_transcript": True,
             }
         )
-        return json.loads(
-            TranscriptionResult(
-                media_asset_id=plan.media_asset_id,
-                job_id=plan.job_id,
-                output_transcript_path=plan.output_transcript_path,
-                transcript=existing_transcript,
-            ).model_dump_json()
-        )
+        return _build_transcription_reference(plan, existing_transcript)
 
     settings = get_settings()
     transcription_task = asyncio.create_task(asyncio.to_thread(_transcribe_sync, plan, settings))
@@ -168,12 +162,6 @@ async def execute_transcription(payload: dict[str, Any]) -> dict[str, Any]:
         encoding="utf-8",
     )
 
-    result = TranscriptionResult(
-        media_asset_id=plan.media_asset_id,
-        job_id=plan.job_id,
-        output_transcript_path=plan.output_transcript_path,
-        transcript=transcript,
-    )
     activity.heartbeat(
         {
             "media_asset_id": plan.media_asset_id,
@@ -181,7 +169,7 @@ async def execute_transcription(payload: dict[str, Any]) -> dict[str, Any]:
             "language": transcript.language,
         }
     )
-    return json.loads(result.model_dump_json())
+    return _build_transcription_reference(plan, transcript)
 
 
 def _transcribe_sync(plan: TranscriptionPlan, settings: Any) -> TranscriptDocument:
@@ -217,7 +205,7 @@ def _transcribe_sync(plan: TranscriptionPlan, settings: Any) -> TranscriptDocume
 
 @activity.defn
 async def submit_transcription_result(payload: dict[str, Any]) -> None:
-    result = TranscriptionResult.model_validate(payload)
+    result = _resolve_transcription_result(payload)
     settings = get_settings()
     request = TranscriptionPersistenceRequest(
         media_asset_id=result.media_asset_id,
@@ -235,6 +223,38 @@ async def submit_transcription_result(payload: dict[str, Any]) -> None:
             "language": result.transcript.language,
         }
     )
+
+
+def _resolve_transcription_result(payload: dict[str, Any]) -> TranscriptionResult:
+    if isinstance(payload.get("transcript"), dict):
+        return TranscriptionResult.model_validate(payload)
+
+    reference = TranscriptionResultReference.model_validate(payload)
+    transcript = _load_existing_transcript(Path(reference.output_transcript_path))
+    if transcript is None:
+        raise ApplicationError(
+            "transcript file could not be loaded from the transcription result reference",
+            non_retryable=True,
+            type="TranscriptArtifactMissing",
+        )
+    return TranscriptionResult(
+        media_asset_id=reference.media_asset_id,
+        job_id=reference.job_id,
+        output_transcript_path=reference.output_transcript_path,
+        transcript=transcript,
+    )
+
+
+def _build_transcription_reference(plan: TranscriptionPlan, transcript: TranscriptDocument) -> dict[str, Any]:
+    reference = TranscriptionResultReference(
+        media_asset_id=plan.media_asset_id,
+        job_id=plan.job_id,
+        output_transcript_path=plan.output_transcript_path,
+        language=transcript.language,
+        segment_count=len(transcript.segments),
+        word_count=sum(len(segment.words) for segment in transcript.segments),
+    )
+    return json.loads(reference.model_dump_json())
 
 
 def build_transcript_document(language: str, segments: list[Any]) -> TranscriptDocument:

@@ -14,7 +14,7 @@
     "test": "npm run prisma:generate && vitest run",
     "lint": "npm run typecheck",
     "format": "prettier --write src prisma *.ts *.json",
-    "prisma:generate": "prisma generate",
+    "prisma:generate": "prisma generate && node scripts/ensure-prisma-dev-client.mjs",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed"

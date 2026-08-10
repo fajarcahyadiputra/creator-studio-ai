@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     MEDIA_PROBE_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0, le=180)
     EXTERNAL_SOURCE_MATERIALIZATION_TIMEOUT_SECONDS: float = Field(default=7200.0, gt=60, le=28800)
     YT_DLP_COOKIES_FILE: str | None = None
-    AUDIO_EXTRACTION_TIMEOUT_SECONDS: float = Field(default=120.0, gt=0, le=900)
+    AUDIO_EXTRACTION_TIMEOUT_SECONDS: float = Field(default=900.0, gt=0, le=900)
     TRANSCRIPTION_TIMEOUT_SECONDS: float = Field(default=600.0, gt=0, le=14400)
     ANALYZER_TIMEOUT_SECONDS: float = Field(default=180.0, gt=10, le=1800)
     RENDER_OUTPUT_TIMEOUT_SECONDS: float = Field(default=900.0, gt=0, le=14400)

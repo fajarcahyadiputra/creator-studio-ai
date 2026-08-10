@@ -1,7 +1,24 @@
 services:
+  migrate:
+    working_dir: /workspace/apps/web-node
+    volumes:
+      - .:/workspace
+      - web-node-modules:/workspace/node_modules
+
+  seed:
+    working_dir: /workspace/apps/web-node
+    volumes:
+      - .:/workspace
+      - web-node-modules:/workspace/node_modules
+
   web-node:
     working_dir: /workspace
-    command: ["npm", "run", "dev", "--workspace", "@creator-studio/web-node"]
+    command:
+      [
+        "sh",
+        "-c",
+        "npm run prisma:generate --workspace @creator-studio/web-node && npm run dev --workspace @creator-studio/web-node"
+      ]
     volumes:
       - .:/workspace
       - web-node-modules:/workspace/node_modules
@@ -15,7 +32,12 @@ services:
 
   web-email-worker:
     working_dir: /workspace
-    command: ["npm", "run", "dev:email-worker", "--workspace", "@creator-studio/web-node"]
+    command:
+      [
+        "sh",
+        "-c",
+        "npm run prisma:generate --workspace @creator-studio/web-node && npm run dev:email-worker --workspace @creator-studio/web-node"
+      ]
     volumes:
       - .:/workspace
       - web-node-modules:/workspace/node_modules

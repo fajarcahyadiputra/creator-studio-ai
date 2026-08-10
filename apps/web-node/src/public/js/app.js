@@ -560,12 +560,13 @@ if (autoClipForm) {
   };
 
   const syncSourceMode = () => {
-    const mode = sourceModeField?.value === "MEDIA_ASSET" ? "MEDIA_ASSET" : "EXTERNAL_URL";
+    const mode = "EXTERNAL_URL";
+    if (sourceModeField) sourceModeField.value = mode;
     for (const panel of sourcePanels) {
       panel.hidden = panel.getAttribute("data-source-panel") !== mode;
     }
-    if (sourceUrlField) sourceUrlField.required = mode === "EXTERNAL_URL";
-    if (mediaAssetField) mediaAssetField.required = mode === "MEDIA_ASSET";
+    if (sourceUrlField) sourceUrlField.required = true;
+    if (mediaAssetField) mediaAssetField.required = false;
     syncSubmitSummary();
   };
 
@@ -654,7 +655,15 @@ if (autoClipForm) {
         STORYTELLING: "Storytelling",
         CONTROVERSY: "Kontroversi",
         PRODUCT_AWARENESS: "Product awareness",
-        LEAD_GENERATION: "Lead generation"
+        LEAD_GENERATION: "Lead generation",
+        RETENTION: "Retention",
+        VIRALITY: "Potensi viral",
+        BRAND_AWARENESS: "Brand awareness",
+        COMMUNITY_DISCUSSION: "Diskusi komunitas",
+        THOUGHT_LEADERSHIP: "Thought leadership",
+        SALES_CONVERSION: "Konversi",
+        NEWS_COMMENTARY: "Komentar isu/news",
+        AUTHORITY_BUILDING: "Bangun otoritas"
       },
       cropStrategy: {
         SMART_SPEAKER: "Smart speaker (1-4 wajah)",
@@ -689,8 +698,6 @@ if (autoClipForm) {
   };
 
   const syncSubmitSummary = () => {
-    const sourceMode = sourceModeField?.value === "MEDIA_ASSET" ? "MEDIA_ASSET" : "EXTERNAL_URL";
-    const selectedAssetLabel = mediaAssetField?.selectedOptions?.[0]?.textContent?.trim() || "Belum ada media asset dipilih.";
     const sourceUrlValue = String(sourceUrlField?.value || "").trim();
     const platform = String(autoClipForm.querySelector('[name="platform"]')?.value || "YOUTUBE_SHORTS").trim();
     const objective = String(autoClipForm.querySelector('[name="objective"]')?.value || "EDUCATION").trim();
@@ -712,12 +719,10 @@ if (autoClipForm) {
     const issues = [];
 
     if (submitSummarySource) {
-      submitSummarySource.textContent = sourceMode === "MEDIA_ASSET" ? "Uploaded media asset" : "External URL";
+      submitSummarySource.textContent = "External URL";
     }
     if (submitSummarySourceDetail) {
-      submitSummarySourceDetail.textContent = sourceMode === "MEDIA_ASSET"
-        ? selectedAssetLabel
-        : (sourceUrlValue || "Belum ada external URL diisi.");
+      submitSummarySourceDetail.textContent = sourceUrlValue || "Belum ada external URL diisi.";
     }
     if (submitSummaryStrategy) {
       submitSummaryStrategy.textContent = `${humanizeAutoClipValue("platform", platform)} | ${humanizeAutoClipValue("objective", objective)}`;
@@ -744,27 +749,22 @@ if (autoClipForm) {
     }
 
     if (sourceUrlHelper) {
-      if (sourceMode === "EXTERNAL_URL" && sourceUrlValue.includes("youtu.be/")) {
+      if (sourceUrlValue.includes("youtu.be/")) {
         sourceUrlHelper.innerHTML = 'Short URL terdeteksi. Jika ingestion gagal, ganti ke format penuh <code>youtube.com/watch?v=...</code>.';
-      } else if (sourceMode === "EXTERNAL_URL" && !sourceUrlValue) {
+      } else if (!sourceUrlValue) {
         sourceUrlHelper.textContent = "Gunakan URL publik yang benar-benar bisa diakses worker ingestion.";
-      } else if (sourceMode === "EXTERNAL_URL") {
-        sourceUrlHelper.textContent = "URL siap divalidasi oleh ingestion service.";
       } else {
-        sourceUrlHelper.textContent = "Mode media asset aktif, URL eksternal tidak dipakai.";
+        sourceUrlHelper.textContent = "URL siap divalidasi oleh ingestion service.";
       }
     }
 
     renderListHelper("preferred_topics", preferredTopics, 20, 120);
     renderListHelper("topics_to_avoid", topicsToAvoid, 20, 120);
 
-    if (sourceMode === "MEDIA_ASSET" && !String(mediaAssetField?.value || "").trim()) {
-      issues.push("Pilih media asset sebelum submit.");
-    }
-    if (sourceMode === "EXTERNAL_URL" && !sourceUrlValue) {
+    if (!sourceUrlValue) {
       issues.push("Isi external source URL sebelum submit.");
     }
-    if (sourceMode === "EXTERNAL_URL" && sourceUrlValue.includes("youtu.be/")) {
+    if (sourceUrlValue.includes("youtu.be/")) {
       issues.push("Pertimbangkan pakai URL penuh youtube.com/watch agar ingestion lebih stabil.");
     }
     if (!rightsConfirmed) {
@@ -873,6 +873,7 @@ if (autoClipForm) {
     setFieldValue("subtitle_primary_format", subtitle.format);
     setCheckboxValue("subtitle_enabled", subtitle.enabled);
     setCheckboxValue("subtitle_burn_in", subtitle.burn_in);
+    setCheckboxValue("subtitle_typo_correction", subtitle.typo_correction || subtitle.typoCorrection);
     setFieldValue("subtitle_style", subtitle.style);
     setFieldValue("subtitle_text_case", subtitle.text_case || subtitle.textCase);
     setFieldValue("subtitle_font_family", subtitle.font_family);
@@ -933,17 +934,10 @@ if (autoClipForm) {
     event.preventDefault();
     clearFieldErrors();
     const data = new FormData(autoClipForm);
-    const sourceMode = String(data.get("source_mode") || "EXTERNAL_URL");
-    const source =
-      sourceMode === "MEDIA_ASSET"
-        ? compactObject({
-            type: "MEDIA_ASSET",
-            media_asset_id: String(data.get("media_asset_id") || "").trim() || undefined
-          })
-        : compactObject({
-            type: "EXTERNAL_URL",
-            url: String(data.get("source_url") || "").trim() || undefined
-          });
+    const source = compactObject({
+      type: "EXTERNAL_URL",
+      url: String(data.get("source_url") || "").trim() || undefined
+    });
     const tones = [String(data.get("primary_tone") || "EDUCATIONAL"), String(data.get("secondary_tone") || "")]
       .map((value) => value.trim())
       .filter(Boolean);
@@ -1037,7 +1031,8 @@ if (autoClipForm) {
               ? Number(data.get("subtitle_safe_margin_percent"))
               : undefined,
             word_highlight: subtitleWordHighlight,
-            profanity_censor: data.get("subtitle_profanity_censor") === "on"
+            profanity_censor: data.get("subtitle_profanity_censor") === "on",
+            typo_correction: data.get("subtitle_typo_correction") === "on"
           })
         },
         ai: { credential_mode: "PLATFORM" }
@@ -1055,11 +1050,7 @@ if (autoClipForm) {
         applyAutoClipFieldErrors(["Centang rights confirmation."]);
         throw new Error("Please confirm you have the rights to process this content.");
       }
-      if (sourceMode === "MEDIA_ASSET" && !payload.source.media_asset_id) {
-        applyAutoClipFieldErrors(["Pilih media asset sebelum submit."]);
-        throw new Error("Choose a ready media asset before creating the job.");
-      }
-      if (sourceMode === "EXTERNAL_URL" && !payload.source.url) {
+      if (!payload.source.url) {
         applyAutoClipFieldErrors(["Isi external source URL sebelum submit."]);
         throw new Error("Enter an external source URL before creating the job.");
       }

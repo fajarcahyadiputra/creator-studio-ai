@@ -1,20 +1,36 @@
-SHELL := cmd
-.SHELLFLAGS := /C
 COMPOSE := docker compose
 DEV_COMPOSE := docker compose -f docker-compose.yml -f docker-compose.dev.yml
 
-.PHONY: setup docker-check doctor-dev up up-dev watch-dev down down-dev logs logs-dev ps ps-dev migrate seed test typecheck lint format clean
+.PHONY: setup docker-check doctor-dev up up-dev watch-dev down down-dev logs logs-dev ps ps-dev migrate migrate-dev seed test typecheck lint format clean
+
+ifeq ($(OS),Windows_NT)
+SHELL := cmd
+.SHELLFLAGS := /C
+DEV_NULL := NUL
+DOCKER_CHECK := @docker info >NUL 2>&1 || (echo Docker daemon belum bisa diakses. && echo Pastikan Docker Desktop sudah running. && echo Kalau di Windows, pastikan mode-nya Linux containers. && echo Lalu coba jalankan: docker context use desktop-linux && echo Sesudah itu ulangi perintah make. && exit /B 1)
+COPY_ENV := @if not exist .env copy .env.example .env >NUL
+AI_MEDIA_PREFIX := cd /D apps\ai-media-python &&
+CLEAN_WORKSPACE := @powershell -NoProfile -Command "$$paths = @('node_modules','apps/web-node/node_modules','apps/media-ingestion-node/node_modules','packages/contracts/node_modules','apps/web-node/dist','apps/media-ingestion-node/dist','packages/contracts/dist','apps/ai-media-python/.venv','apps/ai-media-python/.pytest_cache'); foreach ($$path in $$paths) { if (Test-Path $$path) { Remove-Item -Recurse -Force $$path } }"
+else
+SHELL := /bin/sh
+.SHELLFLAGS := -c
+DEV_NULL := /dev/null
+DOCKER_CHECK := @docker info >/dev/null 2>&1 || (echo "Docker daemon belum bisa diakses."; echo "Pastikan Docker Engine atau Docker Desktop sudah running."; echo "Lalu coba ulangi perintah make."; exit 1)
+COPY_ENV := @test -f .env || cp .env.example .env
+AI_MEDIA_PREFIX := cd apps/ai-media-python &&
+CLEAN_WORKSPACE := @rm -rf node_modules apps/web-node/node_modules apps/media-ingestion-node/node_modules packages/contracts/node_modules apps/web-node/dist apps/media-ingestion-node/dist packages/contracts/dist apps/ai-media-python/.venv apps/ai-media-python/.pytest_cache
+endif
 
 docker-check:
-	@docker info >NUL 2>&1 || (echo Docker daemon belum bisa diakses. && echo Pastikan Docker Desktop sudah running. && echo Kalau di Windows, pastikan mode-nya Linux containers. && echo Lalu coba jalankan: docker context use desktop-linux && echo Sesudah itu ulangi perintah make. && exit /B 1)
+	$(DOCKER_CHECK)
 
 doctor-dev: docker-check
 	@echo Docker daemon siap.
 	@docker context show
-	@$(DEV_COMPOSE) config >NUL && echo Compose config OK.
+	@$(DEV_COMPOSE) config >$(DEV_NULL) && echo Compose config OK.
 
 setup:
-	@if not exist .env copy .env.example .env >NUL
+	$(COPY_ENV)
 	npm install
 	npm run prisma:generate
 
@@ -22,9 +38,13 @@ up: docker-check
 	$(COMPOSE) up --build
 
 up-dev: docker-check
+	$(DEV_COMPOSE) up -d postgres
+	$(DEV_COMPOSE) run --rm migrate
 	$(DEV_COMPOSE) up -d
 
 watch-dev: docker-check
+	$(DEV_COMPOSE) up -d postgres
+	$(DEV_COMPOSE) run --rm migrate
 	$(DEV_COMPOSE) watch
 
 down: docker-check
@@ -48,24 +68,28 @@ ps-dev: docker-check
 migrate: docker-check
 	$(COMPOSE) run --rm migrate
 
+migrate-dev: docker-check
+	$(DEV_COMPOSE) up -d postgres
+	$(DEV_COMPOSE) run --rm migrate
+
 seed: docker-check
 	$(COMPOSE) run --rm seed
 
 test:
 	npm test
-	cd /D apps\ai-media-python && python -m pytest
+	$(AI_MEDIA_PREFIX) python -m pytest
 
 typecheck:
 	npm run typecheck
-	cd /D apps\ai-media-python && python -m mypy app
+	$(AI_MEDIA_PREFIX) python -m mypy app
 
 lint:
 	npm run lint
-	cd /D apps\ai-media-python && python -m ruff check .
+	$(AI_MEDIA_PREFIX) python -m ruff check .
 
 format:
 	npm run format
-	cd /D apps\ai-media-python && python -m ruff format .
+	$(AI_MEDIA_PREFIX) python -m ruff format .
 
 clean:
-	@powershell -NoProfile -Command "$$paths = @('node_modules','apps/web-node/node_modules','apps/media-ingestion-node/node_modules','packages/contracts/node_modules','apps/web-node/dist','apps/media-ingestion-node/dist','packages/contracts/dist','apps/ai-media-python/.venv','apps/ai-media-python/.pytest_cache'); foreach ($$path in $$paths) { if (Test-Path $$path) { Remove-Item -Recurse -Force $$path } }"
+	$(CLEAN_WORKSPACE)

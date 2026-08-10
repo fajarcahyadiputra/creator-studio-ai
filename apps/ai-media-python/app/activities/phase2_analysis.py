@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from typing import Any
 
 from temporalio import activity
@@ -8,7 +9,15 @@ from app.activities.warning_events import emit_retry_warning
 from app.config import get_settings
 from app.application.phase2_candidate_analyzer import analyze_phase2_candidates_with_fallback
 from app.domain.boundary_detection import enrich_analysis_inputs as enrich_boundary_inputs
-from app.domain.contracts import AnalysisInputs, SceneBoundary, SilenceBoundary, TranscriptSegment, TranscriptionResult
+from app.domain.contracts import (
+    AnalysisInputs,
+    SceneBoundary,
+    SilenceBoundary,
+    TranscriptDocument,
+    TranscriptSegment,
+    TranscriptionResult,
+    TranscriptionResultReference,
+)
 
 MAX_TRANSCRIPT_SEGMENTS = 180
 MAX_SEGMENT_TEXT_CHARS = 280
@@ -38,7 +47,7 @@ async def prepare_analysis_inputs(payload: dict[str, Any]) -> dict[str, Any]:
 
 @activity.defn
 async def prepare_analysis_inputs_from_transcript(payload: dict[str, Any]) -> dict[str, Any]:
-    transcription = TranscriptionResult.model_validate(payload)
+    transcription = _resolve_transcription_result(payload)
     analysis_inputs = AnalysisInputs(
         transcript=transcription.transcript,
         scenes=[],
@@ -53,6 +62,34 @@ async def prepare_analysis_inputs_from_transcript(payload: dict[str, Any]) -> di
         }
     )
     return analysis_inputs.model_dump(mode="json")
+
+
+def _resolve_transcription_result(payload: dict[str, Any]) -> TranscriptionResult:
+    if isinstance(payload.get("transcript"), dict):
+        return TranscriptionResult.model_validate(payload)
+
+    reference = TranscriptionResultReference.model_validate(payload)
+    transcript_path = Path(reference.output_transcript_path)
+    if not transcript_path.exists() or not transcript_path.is_file():
+        raise ApplicationError(
+            "transcript file could not be loaded from the transcription result reference",
+            non_retryable=True,
+            type="TranscriptArtifactMissing",
+        )
+    try:
+        transcript = TranscriptDocument.model_validate_json(transcript_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ApplicationError(
+            "transcript file is not readable or contains invalid transcript JSON",
+            non_retryable=True,
+            type="TranscriptArtifactInvalid",
+        ) from error
+    return TranscriptionResult(
+        media_asset_id=reference.media_asset_id,
+        job_id=reference.job_id,
+        output_transcript_path=reference.output_transcript_path,
+        transcript=transcript,
+    )
 
 
 @activity.defn

@@ -52,12 +52,12 @@ export function adminJobRouter(adminJobService: AdminJobService): Router {
       await writeAudit({
         actorUserId: request.identity!.actorUserId,
         targetUserId: job.userId,
-        action: "ADMIN_JOB_CANCEL_REQUESTED",
+        action: "ADMIN_JOB_CANCELED",
         resourceType: "Job",
         resourceId: job.id,
         request
       });
-      response.json({ data: { message: "Cancel requested successfully." } });
+      response.json({ data: { message: "Job canceled successfully." } });
     })
   );
 
@@ -129,4 +129,3 @@ export function adminJobRouter(adminJobService: AdminJobService): Router {
 
   return router;
 }
-

@@ -26,6 +26,7 @@ const mockPrisma = vi.hoisted(() => ({
 
 const mockListLocalTtsModels = vi.hoisted(() => vi.fn());
 const mockCreatePublicSignedObjectReadUrl = vi.hoisted(() => vi.fn());
+const mockObjectExists = vi.hoisted(() => vi.fn());
 
 vi.mock("../../infrastructure/database/prisma.js", () => ({
   prisma: mockPrisma,
@@ -45,6 +46,7 @@ vi.mock("../tts/local-tts-model-registry.js", () => ({
 
 vi.mock("../../infrastructure/storage/s3.js", () => ({
   createPublicSignedObjectReadUrl: mockCreatePublicSignedObjectReadUrl,
+  objectExists: mockObjectExists,
 }));
 
 import { dashboardRouter } from "./routes.js";
@@ -65,6 +67,7 @@ describe("dashboard tool routes", () => {
     mockPrisma.brandKit.findMany.mockReset().mockResolvedValue([]);
     mockListLocalTtsModels.mockReset().mockResolvedValue([]);
     mockCreatePublicSignedObjectReadUrl.mockReset().mockResolvedValue("https://example.com/object.mp4");
+    mockObjectExists.mockReset().mockResolvedValue(true);
   });
 
   it("renders auto clipping page with safe defaults", async () => {
@@ -169,6 +172,10 @@ describe("dashboard tool routes", () => {
     expect(response.status).toBe(200);
     expect(response.body.data.job.id).toBe("job-1");
     expect(response.body.data.clipOutputs).toHaveLength(1);
+    expect(response.body.data.clipOutputs[0].previewAvailable).toBe(true);
+    expect(response.body.data.clipOutputs[0].finalAvailable).toBe(true);
+    expect(mockObjectExists).toHaveBeenCalledWith("preview.mp4");
+    expect(mockObjectExists).toHaveBeenCalledWith("final.mp4");
   });
 });
 

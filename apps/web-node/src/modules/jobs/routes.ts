@@ -872,13 +872,13 @@ export function jobsRouter(jobService: JobService, eventBus: JobEventBus): Route
       await writeAudit({
         actorUserId: request.identity!.actorUserId,
         targetUserId: request.identity!.effectiveUserId,
-        action: "JOB_CANCEL_REQUESTED",
+        action: "JOB_CANCELED",
         resourceType: "Job",
         resourceId: jobId,
-        metadata: { requested_status: "CANCEL_REQUESTED" },
+        metadata: { requested_status: "CANCELED" },
         request
       });
-      response.status(202).json({ data: { status: "CANCEL_REQUESTED" } });
+      response.status(202).json({ data: { status: "CANCELED" } });
     })
   );
 
