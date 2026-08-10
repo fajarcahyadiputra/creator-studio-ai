@@ -31,6 +31,17 @@ function optionalText(maxLength: number) {
     .transform((value) => value || undefined);
 }
 
+const clipLanguageField = z
+  .string()
+  .trim()
+  .min(2)
+  .max(20)
+  .transform((value) => value.toLowerCase())
+  .refine(
+    (value) => value === "id" || value === "en" || value.startsWith("id-") || value.startsWith("en-"),
+    "Language must be Indonesian (id) or English (en)."
+  );
+
 const autoClipObjectives = [
   "ENGAGEMENT",
   "EDUCATION",
@@ -134,7 +145,7 @@ export const autoClipJobSchema = z.object({
     topic: z.string().trim().max(20000).optional(),
     niche: z.string().trim().max(120).optional(),
     target_audience: z.string().trim().max(255).optional(),
-    source_language: z.string().trim().max(20).optional(),
+    source_language: clipLanguageField.optional(),
     speaker_count: z.number().int().min(1).max(20).optional(),
     custom_vocabulary: z.array(z.string().trim().min(1).max(100)).max(200).default([]),
     rights_confirmed: z.literal(true)
@@ -176,7 +187,7 @@ export const autoClipJobSchema = z.object({
   }),
   subtitle: z.object({
     enabled: z.boolean(),
-    language: z.string().max(20),
+    language: clipLanguageField,
     burn_in: z.boolean(),
     format: z.enum(["SRT", "VTT", "ASS", "JSON"]).optional(),
     export_formats: z.array(z.enum(["SRT", "VTT", "ASS", "JSON"])),
@@ -254,7 +265,7 @@ export const regenerateAutoClipJobSchema = z
     content_title: optionalText(255),
     content_context: optionalText(20000),
     topic: optionalText(20000),
-    source_language: optionalText(20),
+    source_language: clipLanguageField.optional(),
     speaker_count: optionalInteger(1, 20),
     custom_vocabulary_text: optionalTextList(200, 100),
     target_platform: z.enum(["TIKTOK", "INSTAGRAM_REELS", "FACEBOOK_REELS", "YOUTUBE_SHORTS", "CUSTOM"]),
@@ -292,7 +303,7 @@ export const regenerateAutoClipJobSchema = z
     split_on_multi_face: booleanField(true),
     split_min_face_count: optionalInteger(1, 6),
     subtitle_enabled: booleanField(true),
-    subtitle_language: z.string().trim().min(2).max(20),
+    subtitle_language: clipLanguageField,
     subtitle_burn_in: booleanField(false),
     subtitle_primary_format: z.enum(["SRT", "VTT", "ASS", "JSON"]).default("ASS"),
     subtitle_export_formats_text: optionalTextList(4, 10),

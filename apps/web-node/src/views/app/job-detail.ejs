@@ -584,8 +584,13 @@
                       <p class="text-secondary small mt-2 mb-3">Bagian ini untuk helper packaging, opsi teknis, dan arahan editorial yang lebih spesifik.</p>
                       <div class="row g-3">
                         <div class="col-md-3">
-                          <label class="form-label">Source language</label>
-                          <input class="form-control" name="source_language" value="<%= outputSummary.requestSnapshot.sourceLanguage ?? '' %>">
+                          <label class="form-label">Bahasa video &amp; analisis</label>
+                          <select class="form-select" name="source_language">
+                            <% const regenerateSourceLanguage = String(outputSummary.requestSnapshot.sourceLanguage ?? 'id').toLowerCase(); %>
+                            <option value="id" <%= regenerateSourceLanguage.startsWith('id') ? 'selected' : '' %>>Indonesia</option>
+                            <option value="en" <%= regenerateSourceLanguage.startsWith('en') ? 'selected' : '' %>>English</option>
+                          </select>
+                          <div class="form-text">Bahasa utama audio/transcript. Pilih English untuk sumber berbahasa Inggris.</div>
                         </div>
                         <div class="col-md-3">
                           <label class="form-label">Speaker count</label>
@@ -737,8 +742,13 @@
                         </div>
                         <input type="hidden" name="split_min_face_count" value="2">
                         <div class="col-md-4">
-                          <label class="form-label">Subtitle language</label>
-                          <input class="form-control" name="subtitle_language" value="<%= outputSummary.requestSnapshot.subtitle.language ?? 'id' %>" required>
+                          <label class="form-label">Bahasa subtitle</label>
+                          <% const regenerateSubtitleLanguage = String(outputSummary.requestSnapshot.subtitle.language ?? 'id').toLowerCase(); %>
+                          <select class="form-select" name="subtitle_language" required>
+                            <option value="id" <%= regenerateSubtitleLanguage.startsWith('id') ? 'selected' : '' %>>Indonesia</option>
+                            <option value="en" <%= regenerateSubtitleLanguage.startsWith('en') ? 'selected' : '' %>>English</option>
+                          </select>
+                          <div class="form-text">Bahasa teks subtitle pada output baru. Default mengikuti Indonesia.</div>
                         </div>
                         <div class="col-md-4">
                           <label class="form-label">Subtitle primary format</label>

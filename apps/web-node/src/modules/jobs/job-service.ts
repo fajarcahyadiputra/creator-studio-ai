@@ -2301,9 +2301,18 @@ export async function prepareAutoClippingInput(userId: string, input: CreateAuto
     input.ai && typeof input.ai === "object" && !Array.isArray(input.ai)
       ? { ...input.ai }
       : {};
+  const sourceLanguage = normalizeClipLanguage(input.content.source_language);
+  const subtitle =
+    input.subtitle && typeof input.subtitle === "object" && !Array.isArray(input.subtitle)
+      ? { ...input.subtitle, language: normalizeClipLanguage(input.subtitle.language as string | undefined) }
+      : input.subtitle;
 
   return {
     ...input,
+    content: {
+      ...input.content,
+      source_language: sourceLanguage
+    },
     source: {
       ...normalizedSource,
       download_quality: sourceQuality
@@ -2321,11 +2330,18 @@ export async function prepareAutoClippingInput(userId: string, input: CreateAuto
         branding
       })
     },
+    subtitle,
     ai: compactRecord({
       ...ai,
       analyzer_runtime: analyzerRuntime
     })
   } as CreateAutoClipInput;
+}
+
+function normalizeClipLanguage(value: unknown): string {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "en" || normalized.startsWith("en-")) return "en";
+  return "id";
 }
 
 async function resolveAutoClipAnalyzerRuntimeSnapshot() {

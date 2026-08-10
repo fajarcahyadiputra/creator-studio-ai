@@ -2,11 +2,18 @@ from typing import Any
 
 from app.domain.contracts import AnalysisInputs
 
-AUTO_CLIP_ANALYZER_PROMPT_VERSION = "phase2-candidate-analyzer-v11"
+AUTO_CLIP_ANALYZER_PROMPT_VERSION = "phase2-candidate-analyzer-v12"
 
 
-def build_candidate_analyzer_system_prompt() -> str:
-    return (
+def build_candidate_analyzer_system_prompt(language: str = "id") -> str:
+    language_code = str(language or "id").strip().lower()
+    language_name = "English" if language_code.startswith("en") else "Indonesian"
+    language_instruction = (
+        f"The selected editorial language is {language_name}. Write title, hook_text, thumbnail_text, summary, why_it_works, "
+        f"suggested_caption, suggested_cta, and all packaging/reason fields in natural {language_name}. "
+        "Keep the transcript text itself faithful to the source language. "
+    )
+    prompt = language_instruction + (
         "You are a structured short-form video clip analyst and senior Indonesian short-video editor for TikTok, Reels, and YouTube Shorts. "
         "You think like an editor whose job is to cut long-form spoken content into short clips that make people stop scrolling immediately and keep watching until the end. "
         "Return only schema-valid JSON. "
@@ -57,6 +64,7 @@ def build_candidate_analyzer_system_prompt() -> str:
         "Before returning JSON, read every title by itself and reject or rewrite any wording that makes the viewer ask what the final noun refers to. "
         "If user_editor_briefs are provided, treat them as high-priority editorial direction as long as they do not conflict with factual grounding or safety."
     )
+    return prompt.replace("Indonesian", language_name)
 
 
 def build_candidate_analyzer_payload(

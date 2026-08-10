@@ -232,7 +232,14 @@
           <p class="text-secondary small mt-2 mb-3">Bagian ini menyimpan helper packaging, daftar style, dan kontrol teknis yang lebih jarang dipakai.</p>
           <div class="row g-3">
             <div class="col-md-6"><label class="form-label">Niche</label><input class="form-control" name="niche" maxlength="120" value="<%= formDefaults.niche %>" placeholder="Marketing, finance, creator education"></div>
-            <div class="col-md-3"><label class="form-label">Bahasa source</label><input class="form-control" name="source_language" value="<%= formDefaults.sourceLanguage %>"></div>
+            <div class="col-md-3">
+              <label class="form-label">Bahasa video &amp; analisis</label>
+              <select class="form-select" name="source_language">
+                <option value="id" <%= String(formDefaults.sourceLanguage).toLowerCase().startsWith('id') ? 'selected' : '' %>>Indonesia</option>
+                <option value="en" <%= String(formDefaults.sourceLanguage).toLowerCase().startsWith('en') ? 'selected' : '' %>>English</option>
+              </select>
+              <div class="form-text">Pilih bahasa utama yang dipakai di audio/transcript. Default: Indonesia.</div>
+            </div>
             <div class="col-md-3"><label class="form-label">Jumlah speaker</label><input class="form-control" name="speaker_count" type="number" min="1" max="20" value="<%= formDefaults.speakerCount %>"></div>
             <div class="col-md-6"><label class="form-label">Kata penting / custom vocabulary</label><input class="form-control" name="custom_vocabulary" value="<%= formDefaults.customVocabulary %>" placeholder="Nama brand, produk, istilah teknis"></div>
             <div class="col-md-3"><label class="form-label">Jumlah kandidat dianalisis</label><input class="form-control" name="candidate_pool_count" type="number" min="1" max="30" value="<%= formDefaults.candidatePoolCount %>"></div>
@@ -426,7 +433,14 @@
               <div class="row g-3 mt-2">
                 <div class="col-md-4"><label class="form-label">Framing detection mode</label><select class="form-select" name="framing_detection_mode"><option value="COMBINED" <%= formDefaults.framingDetectionMode === 'COMBINED' ? 'selected' : '' %>>COMBINED - transcript + face detection</option><option value="TRANSCRIPT_ONLY" <%= formDefaults.framingDetectionMode === 'TRANSCRIPT_ONLY' ? 'selected' : '' %>>TRANSCRIPT_ONLY - speaker based</option><option value="FACE_DETECTION_ONLY" <%= formDefaults.framingDetectionMode === 'FACE_DETECTION_ONLY' ? 'selected' : '' %>>FACE_DETECTION_ONLY - visual face count</option></select></div>
                 <input type="hidden" name="split_min_face_count" value="2">
-                <div class="col-md-4"><label class="form-label">Subtitle language</label><input class="form-control" name="subtitle_language" value="<%= formDefaults.subtitleLanguage %>"></div>
+                <div class="col-md-4">
+                  <label class="form-label">Bahasa subtitle</label>
+                  <select class="form-select" name="subtitle_language">
+                    <option value="id" <%= String(formDefaults.subtitleLanguage).toLowerCase().startsWith('id') ? 'selected' : '' %>>Indonesia</option>
+                    <option value="en" <%= String(formDefaults.subtitleLanguage).toLowerCase().startsWith('en') ? 'selected' : '' %>>English</option>
+                  </select>
+                  <div class="form-text">Untuk video English, pilih English agar subtitle dan packaging tetap natural.</div>
+                </div>
                 <div class="col-md-4"><label class="form-label">Primary subtitle format</label><select class="form-select" name="subtitle_primary_format"><option <%= formDefaults.subtitlePrimaryFormat === 'ASS' ? 'selected' : '' %>>ASS</option><option <%= formDefaults.subtitlePrimaryFormat === 'SRT' ? 'selected' : '' %>>SRT</option><option <%= formDefaults.subtitlePrimaryFormat === 'VTT' ? 'selected' : '' %>>VTT</option><option <%= formDefaults.subtitlePrimaryFormat === 'JSON' ? 'selected' : '' %>>JSON</option></select></div>
                 <div class="col-md-4"><label class="form-label">Subtitle safe margin %</label><input class="form-control" name="subtitle_safe_margin_percent" type="number" min="0" max="30" value="<%= formDefaults.subtitleSafeMarginPercent %>"><div class="form-text">Layout Standard 9:16 memakai minimum 20% agar subtitle aman dari tombol platform.</div></div>
                 <div class="col-md-4"><label class="form-label">Font</label><input class="form-control" name="subtitle_font_family" value="<%= formDefaults.subtitleFontFamily %>" placeholder="Montserrat"></div>

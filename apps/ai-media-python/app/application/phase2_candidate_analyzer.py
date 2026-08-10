@@ -50,7 +50,9 @@ async def analyze_phase2_candidates_with_fallback(
     started = perf_counter()
     config = build_pipeline_config(input_snapshot)
     prompt_payload = build_candidate_analyzer_payload(analysis_inputs, input_snapshot)
-    system_prompt = build_candidate_analyzer_system_prompt()
+    system_prompt = build_candidate_analyzer_system_prompt(
+        str(prompt_payload.get("language") or "id")
+    )
     runtime_config = _resolve_analyzer_runtime_config(input_snapshot)
 
     provider_code = runtime_config["provider"]
