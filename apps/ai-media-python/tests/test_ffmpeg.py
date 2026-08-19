@@ -906,16 +906,20 @@ def test_active_speaker_tracking_does_not_split_multiple_idle_faces() -> None:
 
 def test_active_speaker_tracking_splits_only_stable_simultaneous_speakers() -> None:
     summary = summarize_face_samples([[], [], []])
-    active_sample = {
-        "anchor_ratio": 0.24,
-        "voice_overlap_count": 2,
-        "active_subject_anchor_ratios": [0.24, 0.76],
-        "active_subject_bounds_ratios": [
-            {"left": 0.17, "right": 0.31},
-            {"left": 0.69, "right": 0.83},
-        ],
-    }
-    projected = apply_active_speaker_tracking(summary, [active_sample, active_sample, active_sample])
+    active_samples = [
+        {
+            "offset_seconds": offset,
+            "anchor_ratio": 0.24,
+            "voice_overlap_count": 2,
+            "active_subject_anchor_ratios": [0.24, 0.76],
+            "active_subject_bounds_ratios": [
+                {"left": 0.17, "right": 0.31},
+                {"left": 0.69, "right": 0.83},
+            ],
+        }
+        for offset in (0.0, 0.4, 0.8)
+    ]
+    projected = apply_active_speaker_tracking(summary, active_samples)
 
     assert projected["max_active_speaker_count"] == 2
     assert projected["supports_split_frame"] is True
@@ -991,7 +995,7 @@ def test_fast_confirmed_speaker_change_enables_two_person_layout_temporarily() -
     assert annotated[1]["active_subject_anchor_ratios"] == [0.25, 0.75]
 
 
-def test_strong_reaction_layout_is_capped_at_twelve_hundred_milliseconds() -> None:
+def test_strong_listener_reaction_does_not_enable_split_layout() -> None:
     samples = [
         {
             "offset_seconds": offset,
@@ -1006,6 +1010,25 @@ def test_strong_reaction_layout_is_capped_at_twelve_hundred_milliseconds() -> No
 
     annotated = _annotate_conversation_layout_samples(samples, conversation_windows=[])
 
-    assert annotated[0]["reaction_layout"] is True
-    assert annotated[2]["reaction_layout"] is True
-    assert annotated[3].get("reaction_layout") is not True
+    assert all(sample.get("reaction_layout") is not True for sample in annotated)
+    projected = apply_active_speaker_tracking(summarize_face_samples([[], [], []]), annotated)
+    assert projected["supports_split_frame"] is False
+    assert projected["adaptive_panel_count"] == 1
+
+
+def test_short_multi_speaker_burst_does_not_enable_split_layout() -> None:
+    summary = summarize_face_samples([[], [], []])
+    samples = [
+        {
+            "offset_seconds": offset,
+            "voice_overlap_count": 2,
+            "active_subject_anchor_ratios": [0.24, 0.76],
+            "active_subject_bounds_ratios": [],
+        }
+        for offset in (0.0, 0.25, 0.5)
+    ]
+
+    projected = apply_active_speaker_tracking(summary, samples)
+
+    assert projected["supports_split_frame"] is False
+    assert projected["max_active_speaker_count"] == 1

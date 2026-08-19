@@ -7,7 +7,8 @@ import {
   createInternalSignedObjectReadUrl,
   createInternalSignedObjectWriteUrl,
   createPublicSignedObjectReadUrl,
-  deleteObjectKeys
+  deleteObjectKeys,
+  objectExists
 } from "../../infrastructure/storage/s3.js";
 import {
   buildClipOutputArtifactBasePath,
@@ -177,7 +178,14 @@ export function internalRouter(projection: JobProjectionService): Router {
     requireInternalService,
     validateBody(progressSchema),
     asyncHandler(async (request, response) => {
-      const event = await projection.record(routeParam(request.params.jobId, "jobId"), request.validatedBody as never);
+      const jobId = routeParam(request.params.jobId, "jobId");
+      const body = request.validatedBody as z.infer<typeof progressSchema>;
+      const event = await projection.record(jobId, body as never);
+      if (body.status === "COMPLETED" || body.status === "PARTIALLY_COMPLETED") {
+        await cleanupAutoClipSourceMediaForJobIfEligible(jobId).catch((error: unknown) => {
+          request.log.warn({ err: error, jobId }, "Deferred source cleanup verification failed");
+        });
+      }
       response.status(201).json({ data: { id: event.id, sequence: event.sequence.toString() } });
     })
   );
@@ -1422,8 +1430,12 @@ async function cleanupAutoClipSourceMediaIfEligible(clipOutputId: string) {
   });
   if (!clipOutput) return;
 
+  await cleanupAutoClipSourceMediaForJobIfEligible(clipOutput.jobId);
+}
+
+async function cleanupAutoClipSourceMediaForJobIfEligible(jobId: string) {
   const job = await prisma.job.findUnique({
-    where: { id: clipOutput.jobId },
+    where: { id: jobId },
     select: {
       id: true,
       type: true,
@@ -1440,7 +1452,8 @@ async function cleanupAutoClipSourceMediaIfEligible(clipOutputId: string) {
         select: {
           id: true,
           finalObjectKey: true,
-          qualityStatus: true
+          qualityStatus: true,
+          qualityReport: true
         }
       },
       sourceMediaAsset: {
@@ -1462,15 +1475,27 @@ async function cleanupAutoClipSourceMediaIfEligible(clipOutputId: string) {
     }
   });
   if (!job || job.type !== "AUTO_CLIPPING") return;
-  if (!["COMPLETED", "PARTIALLY_COMPLETED"].includes(job.status)) return;
+  if (job.status !== "COMPLETED") return;
   if (!job.sourceMediaAssetId || !job.sourceMediaAsset) return;
   if (job.sourceMediaAsset.sourceJobs.length > 1) return;
   if (job.clipOutputs.length === 0) return;
 
-  const allClipOutputsReady = job.clipOutputs.every(
-    (item) => typeof item.finalObjectKey === "string" && item.finalObjectKey.trim().length > 0
-  );
+  const allClipOutputsReady = job.clipOutputs.every((item) => {
+    const report = asRecord(item.qualityReport);
+    const validation = asRecord(report?.validation);
+    const checks = asRecord(validation?.checks);
+    return item.qualityStatus === "PASSED"
+      && typeof item.finalObjectKey === "string"
+      && item.finalObjectKey.trim().length > 0
+      && checks?.playable === true;
+  });
   if (!allClipOutputsReady) return;
+
+  const finalObjectKeys = job.clipOutputs
+    .map((item) => item.finalObjectKey)
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  const finalArtifactsExist = await Promise.all(finalObjectKeys.map((objectKey) => objectExists(objectKey)));
+  if (finalArtifactsExist.some((exists) => !exists)) return;
 
   const sourceMediaAssetId = job.sourceMediaAssetId;
   const objectKeysToDelete = [
@@ -1504,6 +1529,12 @@ async function cleanupAutoClipSourceMediaIfEligible(clipOutputId: string) {
   });
 
   await deleteObjectKeys([...new Set(objectKeysToDelete)]);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function buildClipTranscriptWindow(input: {

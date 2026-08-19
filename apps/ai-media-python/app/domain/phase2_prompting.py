@@ -106,6 +106,8 @@ def build_candidate_analyzer_payload(
             "custom_vocabulary": content_payload.get("custom_vocabulary"),
         },
         "strategy": {
+            "configuration_mode": strategy_payload.get("configuration_mode", "MANUAL"),
+            "auto_resolved": strategy_payload.get("auto_resolved", False),
             "target_platform": strategy_payload.get("target_platform"),
             "objective": strategy_payload.get("objective"),
             "tones": strategy_payload.get("tones"),

@@ -25,9 +25,10 @@ const standalonePriorityField = z.preprocess((value) => {
 
 function optionalText(maxLength: number) {
   return z
-    .string()
-    .trim()
-    .max(maxLength)
+    .preprocess(
+      (value) => value === null || value === "" ? undefined : value,
+      z.string().trim().max(maxLength).optional()
+    )
     .transform((value) => value || undefined);
 }
 
@@ -41,6 +42,11 @@ const clipLanguageField = z
     (value) => value === "id" || value === "en" || value.startsWith("id-") || value.startsWith("en-"),
     "Language must be Indonesian (id) or English (en)."
   );
+
+const optionalClipLanguageField = z.preprocess(
+  (value) => value === null || value === "" ? undefined : value,
+  clipLanguageField.optional()
+);
 
 const autoClipObjectives = [
   "ENGAGEMENT",
@@ -145,19 +151,20 @@ export const autoClipJobSchema = z.object({
     topic: z.string().trim().max(20000).optional(),
     niche: z.string().trim().max(120).optional(),
     target_audience: z.string().trim().max(255).optional(),
-    source_language: clipLanguageField.optional(),
+    source_language: optionalClipLanguageField,
     speaker_count: z.number().int().min(1).max(20).optional(),
     custom_vocabulary: z.array(z.string().trim().min(1).max(100)).max(200).default([]),
     rights_confirmed: z.literal(true)
   }),
   strategy: z.object({
+    configuration_mode: z.enum(["AUTO", "MANUAL"]).default("MANUAL"),
     target_platform: z.enum(["TIKTOK", "INSTAGRAM_REELS", "FACEBOOK_REELS", "YOUTUBE_SHORTS", "CUSTOM"]),
     objective: z.enum(autoClipObjectives),
     tones: z.array(z.string().min(1).max(50)).min(1).max(5),
-    desired_clip_count: z.number().int().min(1).max(30),
+    desired_clip_count: z.number().int().min(1).max(10),
     candidate_pool_count: z.number().int().min(1).max(30).default(10),
     minimum_duration_seconds: z.number().int().min(10).max(180),
-    maximum_duration_seconds: z.number().int().min(15).max(180),
+    maximum_duration_seconds: z.number().int().min(15).max(180).default(60),
     minimum_viral_score: z.number().min(0).max(10).default(7),
     preferred_topics: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
     topics_to_avoid: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
@@ -262,16 +269,19 @@ export const clipCandidateSelectionSchema = z.object({
 
 export const regenerateAutoClipJobSchema = z
   .object({
+    configuration_mode: z.enum(["AUTO", "MANUAL"]).default("MANUAL"),
     content_title: optionalText(255),
     content_context: optionalText(20000),
     topic: optionalText(20000),
-    source_language: clipLanguageField.optional(),
+    niche: optionalText(120),
+    target_audience: optionalText(255),
+    source_language: optionalClipLanguageField,
     speaker_count: optionalInteger(1, 20),
     custom_vocabulary_text: optionalTextList(200, 100),
     target_platform: z.enum(["TIKTOK", "INSTAGRAM_REELS", "FACEBOOK_REELS", "YOUTUBE_SHORTS", "CUSTOM"]),
     objective: z.enum(autoClipObjectives),
     tones_text: optionalTextList(5, 50),
-    desired_clip_count: optionalInteger(1, 30),
+    desired_clip_count: optionalInteger(1, 10),
     candidate_pool_count: optionalInteger(1, 30),
     minimum_duration_seconds: optionalInteger(10, 180),
     maximum_duration_seconds: optionalInteger(15, 180),

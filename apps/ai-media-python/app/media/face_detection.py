@@ -515,7 +515,7 @@ def _qualify_face_candidates(sample: list[dict[str, Any]]) -> list[dict[str, Any
 
 
 def _confirm_temporal_split_samples(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Enable split only when neighbouring samples confirm the same subjects."""
+    """Enable split only for a stable active-speaker run of at least 700 ms."""
     confirmed: list[dict[str, Any]] = []
     for index, source_sample in enumerate(samples):
         sample = dict(source_sample)
@@ -538,7 +538,33 @@ def _confirm_temporal_split_samples(samples: list[dict[str, Any]]) -> list[dict[
         sample["face_count"] = split_count if split_count >= 2 else min(1, raw_count)
         sample["split_qualified"] = split_count >= 2
         confirmed.append(sample)
+
+    run_start = 0
+    while run_start < len(confirmed):
+        if confirmed[run_start].get("split_qualified") is not True:
+            run_start += 1
+            continue
+        run_end = run_start
+        while (
+            run_end + 1 < len(confirmed)
+            and confirmed[run_end + 1].get("split_qualified") is True
+        ):
+            run_end += 1
+        start_seconds = _sample_offset_seconds(confirmed[run_start], run_start)
+        end_seconds = _sample_offset_seconds(confirmed[run_end], run_end)
+        if end_seconds - start_seconds < 0.7:
+            for index in range(run_start, run_end + 1):
+                anchors = confirmed[index].get("subject_anchor_ratios")
+                raw_count = len(anchors) if isinstance(anchors, list) else 0
+                confirmed[index]["face_count"] = min(1, raw_count)
+                confirmed[index]["split_qualified"] = False
+        run_start = run_end + 1
     return confirmed
+
+
+def _sample_offset_seconds(sample: dict[str, Any], index: int) -> float:
+    value = sample.get("offset_seconds")
+    return float(value) if isinstance(value, (int, float)) else index * 0.33
 
 
 def _matching_anchor_count(current: list[Any], candidate: Any) -> int:
@@ -817,8 +843,8 @@ def _annotate_conversation_layout_samples(
 
     A second visible face never enables split screen by itself. Split becomes
     eligible only after diarization reports a fast exchange or visual mouth
-    tracking confirms a stable speaker change. A strong listener reaction may
-    briefly use the two-person layout, but is capped at 1.2 seconds.
+    tracking confirms a stable speaker change. Listener motion and reaction
+    shots are deliberately excluded because they do not prove speech activity.
     """
     if not samples:
         return samples
@@ -845,40 +871,16 @@ def _annotate_conversation_layout_samples(
             previous_switch_seconds = offset
             previous_anchor = normalized_anchor
 
-    reaction_until = -1.0
     for sample in samples:
         offset = float(sample.get("offset_seconds") or 0.0)
         visible_anchors = sample.get("visible_subject_anchor_ratios")
         visible_bounds = sample.get("visible_subject_bounds_ratios")
-        motion_scores = sample.get("visible_subject_motion_scores")
-        current_anchor = sample.get("anchor_ratio")
         if not isinstance(visible_anchors, list) or len(visible_anchors) < 2:
             continue
 
         explicit_conversation = _window_is_active(conversation_windows, offset)
         visual_conversation = any(start <= offset <= end for start, end in visual_windows)
-        reaction_active = offset <= reaction_until
-        if (
-            not explicit_conversation
-            and not visual_conversation
-            and isinstance(motion_scores, list)
-            and isinstance(current_anchor, (int, float))
-        ):
-            alternate_motion = max(
-                (
-                    float(score)
-                    for anchor, score in zip(visible_anchors, motion_scores, strict=False)
-                    if isinstance(anchor, (int, float))
-                    and isinstance(score, (int, float))
-                    and abs(float(anchor) - float(current_anchor)) >= 0.18
-                ),
-                default=0.0,
-            )
-            if alternate_motion >= 4.0:
-                reaction_until = offset + 1.2
-                reaction_active = True
-
-        if not (explicit_conversation or visual_conversation or reaction_active):
+        if not (explicit_conversation or visual_conversation):
             continue
 
         selected_anchors = _select_evenly_spaced_anchors(
@@ -893,7 +895,7 @@ def _annotate_conversation_layout_samples(
         )
         sample["active_speaker_count"] = len(selected_anchors)
         sample["conversation_layout"] = explicit_conversation or visual_conversation
-        sample["reaction_layout"] = reaction_active and not (explicit_conversation or visual_conversation)
+        sample["reaction_layout"] = False
 
     return samples
 
@@ -949,7 +951,7 @@ def apply_active_speaker_tracking(
             if isinstance(anchor, (int, float))
         ]
         voice_overlap_count = int(sample.get("voice_overlap_count") or 0)
-        multi_speaker_layout = bool(sample.get("conversation_layout") or sample.get("reaction_layout"))
+        multi_speaker_layout = bool(sample.get("conversation_layout"))
         if voice_overlap_count < 2 and not multi_speaker_layout and len(normalized_anchors) > 1:
             normalized_anchors = normalized_anchors[:1]
         normalized_bounds = bounds[: len(normalized_anchors)] if isinstance(bounds, list) else []
@@ -959,7 +961,7 @@ def apply_active_speaker_tracking(
                 "offset_seconds": sample.get("offset_seconds"),
                 "voice_overlap_count": voice_overlap_count,
                 "conversation_layout": bool(sample.get("conversation_layout")),
-                "reaction_layout": bool(sample.get("reaction_layout")),
+                "reaction_layout": False,
                 "face_count": len(normalized_anchors),
                 "raw_face_count": len(normalized_anchors),
                 "active_speaker_count": len(normalized_anchors),
@@ -1045,8 +1047,6 @@ def apply_active_speaker_tracking(
                 if any(int(pair.get("voice_overlap_count") or 0) >= 2 for pair in active_pairs)
                 else "speaker_turn_taking"
                 if any(pair.get("conversation_layout") is True for pair in active_pairs)
-                else "strong_reaction"
-                if any(pair.get("reaction_layout") is True for pair in active_pairs)
                 else "transcript_vad_face_association"
             ),
         }

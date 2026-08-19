@@ -36,6 +36,7 @@ function createAutoClipPayload() {
 
 function createRegeneratePayload() {
   return {
+    configuration_mode: "MANUAL",
     content_title: "",
     content_context: "",
     topic: "",
@@ -103,5 +104,73 @@ describe("speech cleanup request schemas", () => {
 
     expect(enabled.speech_cleanup_enabled).toBe(true);
     expect(disabled.speech_cleanup_enabled).toBe(false);
+  });
+
+  it("accepts the current compact regenerate form without legacy brief fields", () => {
+    const payload = createRegeneratePayload();
+    delete payload.selection_brief;
+    delete payload.avoidance_brief;
+    delete payload.packaging_brief;
+
+    const parsed = regenerateAutoClipJobSchema.parse(payload);
+
+    expect(parsed.selection_brief).toBeUndefined();
+    expect(parsed.avoidance_brief).toBeUndefined();
+    expect(parsed.packaging_brief).toBeUndefined();
+  });
+
+  it("normalizes omitted, null, and empty legacy briefs for compact clients", () => {
+    const parsed = regenerateAutoClipJobSchema.parse({
+      ...createRegeneratePayload(),
+      selection_brief: undefined,
+      avoidance_brief: null,
+      packaging_brief: ""
+    });
+
+    expect(parsed.selection_brief).toBeUndefined();
+    expect(parsed.avoidance_brief).toBeUndefined();
+    expect(parsed.packaging_brief).toBeUndefined();
+  });
+
+  it("accepts the latest regenerate content fields", () => {
+    const parsed = regenerateAutoClipJobSchema.parse({
+      ...createRegeneratePayload(),
+      niche: "Creator education",
+      target_audience: "Beginner creators and social media teams"
+    });
+
+    expect(parsed.niche).toBe("Creator education");
+    expect(parsed.target_audience).toBe("Beginner creators and social media teams");
+  });
+
+  it("accepts auto regenerate without manual candidate controls", () => {
+    const payload = createRegeneratePayload();
+    payload.configuration_mode = "AUTO";
+    delete payload.desired_clip_count;
+    delete payload.candidate_pool_count;
+    delete payload.minimum_duration_seconds;
+    delete payload.selection_brief;
+    delete payload.avoidance_brief;
+    delete payload.packaging_brief;
+
+    const parsed = regenerateAutoClipJobSchema.parse(payload);
+
+    expect(parsed.configuration_mode).toBe("AUTO");
+    expect(parsed.desired_clip_count).toBeUndefined();
+    expect(parsed.minimum_duration_seconds).toBeUndefined();
+    expect(parsed.maximum_duration_seconds).toBe(45);
+  });
+
+  it("rejects more than ten final clips for create and regenerate", () => {
+    const createPayload = createAutoClipPayload();
+    createPayload.strategy.desired_clip_count = 11;
+    const regeneratePayload = {
+      ...createRegeneratePayload(),
+      desired_clip_count: "11",
+      candidate_pool_count: "30"
+    };
+
+    expect(autoClipJobSchema.safeParse(createPayload).success).toBe(false);
+    expect(regenerateAutoClipJobSchema.safeParse(regeneratePayload).success).toBe(false);
   });
 });

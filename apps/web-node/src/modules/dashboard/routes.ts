@@ -428,6 +428,8 @@ dashboardRouter.get(
     const visualConfig = toJsonRecord(job.autoClipRequest?.visualConfig);
     const subtitleConfig = toJsonRecord(job.autoClipRequest?.subtitleConfig);
     const providerConfig = toJsonRecord(job.autoClipRequest?.providerConfigSnapshot);
+    const autoClipInputSnapshot = toJsonRecord(job.inputSnapshot);
+    const autoClipContentSnapshot = toJsonRecord(autoClipInputSnapshot.content);
     const ttsOutputConfig = toJsonRecord(job.ttsRequest?.outputConfig);
     const ttsInputSnapshot = toJsonRecord(job.inputSnapshot);
     const ttsSummary =
@@ -855,6 +857,12 @@ dashboardRouter.get(
             !Array.isArray(analyzer.provider_candidate_audit)
               ? (analyzer.provider_candidate_audit as Record<string, unknown>)
               : {};
+          const effectiveConfiguration =
+            analyzer.effective_configuration &&
+            typeof analyzer.effective_configuration === "object" &&
+            !Array.isArray(analyzer.effective_configuration)
+              ? (analyzer.effective_configuration as Record<string, unknown>)
+              : {};
 
           return {
             analysisMode,
@@ -873,6 +881,29 @@ dashboardRouter.get(
             latencyMs: typeof analyzer.latency_ms === "number" ? analyzer.latency_ms : null,
             fallbackReason: typeof analyzer.fallback_reason === "string" ? analyzer.fallback_reason : null,
             fallbackTrigger: typeof analyzer.fallback_trigger === "string" ? analyzer.fallback_trigger : null,
+            effectiveConfiguration: {
+              mode: typeof effectiveConfiguration.mode === "string" ? effectiveConfiguration.mode : null,
+              desiredClipCount:
+                typeof effectiveConfiguration.desired_clip_count === "number"
+                  ? effectiveConfiguration.desired_clip_count
+                  : null,
+              candidatePoolCount:
+                typeof effectiveConfiguration.candidate_pool_count === "number"
+                  ? effectiveConfiguration.candidate_pool_count
+                  : null,
+              minimumDurationSeconds:
+                typeof effectiveConfiguration.minimum_duration_seconds === "number"
+                  ? effectiveConfiguration.minimum_duration_seconds
+                  : null,
+              maximumDurationSeconds:
+                typeof effectiveConfiguration.maximum_duration_seconds === "number"
+                  ? effectiveConfiguration.maximum_duration_seconds
+                  : null,
+              minimumViralScore:
+                typeof effectiveConfiguration.minimum_viral_score === "number"
+                  ? effectiveConfiguration.minimum_viral_score
+                  : null
+            },
             openaiCandidateCount:
               typeof candidateSourceCounts.openai === "number" ? candidateSourceCounts.openai : null,
             heuristicCandidateCount:
@@ -1024,7 +1055,10 @@ dashboardRouter.get(
               contentTitle: job.autoClipRequest.contentTitle ?? null,
               contentContext: job.autoClipRequest.contentContext ?? null,
               customVocabulary: toStringArray(job.autoClipRequest.customVocabulary),
+              niche: toOptionalString(autoClipContentSnapshot.niche),
+              targetAudience: toOptionalString(autoClipContentSnapshot.target_audience),
               strategy: {
+                configurationMode: toOptionalString(strategyConfig.configuration_mode) ?? "MANUAL",
                 targetPlatform: toOptionalString(strategyConfig.target_platform),
                 objective: toOptionalString(strategyConfig.objective),
                 tones: toStringArray(strategyConfig.tones),
@@ -1278,7 +1312,7 @@ dashboardRouter.get(
   requireAuth,
   asyncHandler(async (request, response) => {
     const userId = request.identity!.effectiveUserId;
-    const [assets, user, clippingPresets, brandKits] = await Promise.all([
+    const [assets, user] = await Promise.all([
       prisma.mediaAsset.findMany({
         where: { userId, status: "READY", deletedAt: null, type: "VIDEO" },
         orderBy: { createdAt: "desc" },
@@ -1295,72 +1329,25 @@ dashboardRouter.get(
             }
           }
         }
-      }),
-      loadOptionalAutoClipPresets(userId),
-      loadOptionalBrandKits(userId)
+      })
     ]);
     const userPreferences = toJsonRecord(user?.setting?.preferences);
-    const preferredBrandKitId = toStringValue(userPreferences.preferred_brand_kit_id) ?? "";
-    const selectedPreset = clippingPresets.find((preset) => preset.isDefault) ?? clippingPresets[0] ?? null;
-    const selectedBrandKit =
-      brandKits.find((brandKit) => brandKit.id === preferredBrandKitId)
-      ?? brandKits.find((brandKit) => brandKit.isDefault)
-      ?? brandKits[0]
-      ?? null;
     const formDefaults = mergeAutoClipDefaults(
       buildAutoClipFormDefaults(
         user?.setting?.defaultContentNiche,
         user?.setting?.defaultAudience,
         toStringValue(userPreferences.channel_name),
         toStringValue(userPreferences.channel_tagline)
-      ),
-      selectedPreset?.config,
-      selectedBrandKit
-        ? {
-            fontConfig: selectedBrandKit.fontConfig,
-            safeMarginConfig: selectedBrandKit.safeMarginConfig,
-            subtitlePreset: selectedBrandKit.subtitlePreset
-          }
-        : null
+      )
     );
     response.render("app/auto-clipping", {
       title: "Auto Clipping",
       assets,
       formDefaults,
-      clippingPresets: clippingPresets.map((preset) => ({
-        id: preset.id,
-        name: preset.name,
-        description: preset.description,
-        isDefault: preset.isDefault,
-        config: toJsonRecord(preset.config)
-      })),
-      brandKits: brandKits.map((brandKit) => ({
-        id: brandKit.id,
-        name: brandKit.name,
-        isDefault: brandKit.isDefault,
-        fontConfig: toJsonRecord(brandKit.fontConfig),
-        colorConfig: toJsonRecord(brandKit.colorConfig),
-        safeMarginConfig: toJsonRecord(brandKit.safeMarginConfig),
-        subtitlePreset: toJsonRecord(brandKit.subtitlePreset)
-      })),
-      selectedPresetId: selectedPreset?.id ?? "",
-      selectedBrandKitId: selectedBrandKit?.id ?? "",
       csrfToken: request.session.csrfToken
     });
   })
 );
-
-async function loadOptionalAutoClipPresets(userId: string) {
-  try {
-    return await prisma.preset.findMany({
-      where: { userId, type: "CLIPPING", deletedAt: null },
-      orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }]
-    });
-  } catch (error) {
-    logger.warn({ userId, err: error }, "Failed to load clipping presets for auto-clipping page; falling back to defaults");
-    return [];
-  }
-}
 
 async function loadOptionalTtsPresets(userId: string) {
   try {
@@ -1379,18 +1366,6 @@ async function loadOptionalLocalTtsModels() {
     return (await listLocalTtsModels()).filter(isValidLocalTtsModel);
   } catch (error) {
     logger.warn({ err: error }, "Failed to load local TTS models; continuing with empty model list");
-    return [];
-  }
-}
-
-async function loadOptionalBrandKits(userId: string) {
-  try {
-    return await prisma.brandKit.findMany({
-      where: { userId, deletedAt: null },
-      orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }]
-    });
-  } catch (error) {
-    logger.warn({ userId, err: error }, "Failed to load brand kits for auto-clipping page; continuing without brand kits");
     return [];
   }
 }
@@ -1500,7 +1475,10 @@ function buildAutoClipFormDefaults(
     clipCount: 5,
     candidatePoolCount: 10,
     minDuration: 30,
-    maxDuration: 55,
+    // One minute is the default upper bound for a short-form clip. Auto mode
+    // may choose a shorter natural ending, but must never exceed this value
+    // unless the user explicitly changes it.
+    maxDuration: 60,
     minimumViralScore: 7.5,
     hookStyle: "",
     ctaPreference: "",

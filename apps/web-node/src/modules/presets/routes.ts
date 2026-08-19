@@ -10,19 +10,6 @@ import { brandKitSchema, presetSchema } from "./schemas.js";
 export function presetsRouter(presetService: PresetService): Router {
   const router = Router();
 
-  router.get(
-    "/app/presets",
-    requireAuth,
-    asyncHandler(async (request, response) => {
-      const page = await presetService.getPresetsPageData(request.identity!.effectiveUserId);
-      response.render("app/presets", {
-        title: "Presets",
-        ...page,
-        csrfToken: request.session.csrfToken
-      });
-    })
-  );
-
   router.post(
     "/api/v1/presets",
     requireAuth,
@@ -105,4 +92,3 @@ export function presetsRouter(presetService: PresetService): Router {
 
   return router;
 }
-

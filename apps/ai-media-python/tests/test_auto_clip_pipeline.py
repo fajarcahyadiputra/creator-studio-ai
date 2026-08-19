@@ -7,7 +7,10 @@ from app.application.phase2_candidate_analyzer import (
     load_clip_analyzer_schema,
 )
 from app.domain.auto_clip_pipeline import (
+    AUTO_MAX_CLIP_COUNT,
+    MAX_CANDIDATE_POOL_COUNT,
     _apply_natural_tail_padding,
+    _candidate_has_complete_semantic_boundaries,
     build_candidate_analyses,
     build_candidate_analyses_with_audit,
     build_output_summary,
@@ -16,6 +19,7 @@ from app.domain.auto_clip_pipeline import (
     ensure_complete_candidate_title,
     limit_and_score_candidates_with_quality_backfill,
     normalize_candidates,
+    resolve_auto_strategy,
 )
 from app.domain.auto_clip_stages import compute_overall_progress
 from app.domain.contracts import AnalysisInputs, CandidateAnalysis, TranscriptSegment
@@ -47,6 +51,48 @@ def test_natural_tail_padding_uses_silence_without_leaking_next_topic() -> None:
     )
 
     assert padded_end == 8.35
+
+
+def test_semantic_boundary_rejects_unanswered_question() -> None:
+    candidate = candidate_analysis("question", start_seconds=0.0, score=8.0).model_copy(
+        update={"end_seconds": 5.0, "duration_seconds": 5.0, "ending_text": "Kenapa ini penting?"}
+    )
+    segments = [
+        TranscriptSegment(
+            segment_id="question",
+            start_seconds=0.0,
+            end_seconds=5.0,
+            text="Kenapa ini penting?",
+        )
+    ]
+
+    assert not _candidate_has_complete_semantic_boundaries(candidate, segments)
+
+
+def test_semantic_boundary_accepts_question_with_complete_answer() -> None:
+    candidate = candidate_analysis("answer", start_seconds=0.0, score=8.0).model_copy(
+        update={
+            "end_seconds": 9.0,
+            "duration_seconds": 9.0,
+            "ending_text": "Karena dampaknya langsung terasa.",
+        }
+    )
+    segments = [
+        TranscriptSegment(
+            segment_id="question",
+            start_seconds=0.0,
+            end_seconds=3.0,
+            text="Kenapa ini penting?",
+        ),
+        TranscriptSegment(
+            segment_id="answer",
+            start_seconds=3.0,
+            end_seconds=9.0,
+            text="Karena dampaknya langsung terasa.",
+        ),
+    ]
+
+    assert _candidate_has_complete_semantic_boundaries(candidate, segments)
 
 
 def analysis_inputs() -> AnalysisInputs:
@@ -172,6 +218,44 @@ def test_pipeline_builds_ranked_candidates() -> None:
     assert candidates[0].retention_level in {"very_high", "high", "medium", "low"}
     assert candidates[0].punchline_second <= candidates[0].duration_seconds
     assert candidates[0].duration_seconds >= 15
+
+
+def test_auto_strategy_does_not_inherit_five_clip_default_and_preserves_max_duration() -> None:
+    resolved = resolve_auto_strategy(
+        {
+            "strategy": {
+                "configuration_mode": "AUTO",
+                "desired_clip_count": 5,
+                "candidate_pool_count": 10,
+                "minimum_duration_seconds": 30,
+                "maximum_duration_seconds": 120,
+            }
+        },
+        analysis_inputs(),
+    )
+
+    strategy = resolved["strategy"]
+    assert isinstance(strategy, dict)
+    assert strategy["desired_clip_count"] == AUTO_MAX_CLIP_COUNT
+    assert strategy["candidate_pool_count"] == MAX_CANDIDATE_POOL_COUNT
+    assert strategy["maximum_duration_seconds"] == 120
+
+
+def test_pipeline_clamps_legacy_manual_clip_count_to_ten() -> None:
+    config = build_pipeline_config(
+        {
+            "strategy": {
+                "configuration_mode": "MANUAL",
+                "desired_clip_count": 30,
+                "candidate_pool_count": 30,
+                "minimum_duration_seconds": 15,
+                "maximum_duration_seconds": 60,
+            }
+        }
+    )
+
+    assert config.desired_clip_count == AUTO_MAX_CLIP_COUNT
+    assert config.candidate_pool_count == MAX_CANDIDATE_POOL_COUNT
 
 
 def test_pipeline_backfills_when_minimum_score_is_too_strict_for_requested_count() -> None:
@@ -585,11 +669,11 @@ class FakeOpenAIProvider(StructuredOutputProvider):
                     {
                         "candidate_id": "candidate-openai-01",
                         "start_seconds": 12.0,
-                        "end_seconds": 31.0,
-                        "duration_seconds": 19.0,
+                        "end_seconds": 46.0,
+                        "duration_seconds": 34.0,
                         "title": "OpenAI picked this hook",
                         "hook_text": "Kebanyakan orang salah memahami strategi konten ini.",
-                        "ending_text": "Padahal justru bagian pembuka yang menentukan retention paling besar.",
+                        "ending_text": "Kalau hook-nya lambat, penonton sudah pergi sebelum insight utamanya muncul.",
                         "summary": "OpenAI structured candidate summary.",
                         "why_it_works": ["Strong opening claim."],
                         "content_category": "insight",
@@ -627,12 +711,12 @@ class FakeOpenAIProvider(StructuredOutputProvider):
                     },
                     {
                         "candidate_id": "candidate-openai-02",
-                        "start_seconds": 13.0,
-                        "end_seconds": 31.5,
-                        "duration_seconds": 18.5,
+                        "start_seconds": 12.0,
+                        "end_seconds": 46.0,
+                        "duration_seconds": 34.0,
                         "title": "OpenAI picked a nearly identical hook",
                         "hook_text": "Kebanyakan orang salah memahami strategi konten ini.",
-                        "ending_text": "Padahal justru bagian pembuka yang menentukan retention paling besar.",
+                        "ending_text": "Kalau hook-nya lambat, penonton sudah pergi sebelum insight utamanya muncul.",
                         "summary": "OpenAI structured candidate summary.",
                         "why_it_works": ["Strong opening claim."],
                         "content_category": "insight",
@@ -687,6 +771,62 @@ class FailingProvider(StructuredOutputProvider):
         raise RuntimeError("simulated provider failure")
 
 
+class PartiallyMalformedOpenAIProvider(FakeOpenAIProvider):
+    async def generate_structured(
+        self,
+        *,
+        context: ProviderRequestContext,
+        system_prompt: str,
+        input_payload: dict[str, Any],
+        schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = await super().generate_structured(
+            context=context,
+            system_prompt=system_prompt,
+            input_payload=input_payload,
+            schema=schema,
+        )
+        malformed = dict(result["output"]["candidates"][0])
+        malformed["punchline_second"] = malformed["duration_seconds"] + 0.25
+        result["output"] = {
+            **result["output"],
+            "candidate_count": 3,
+            "candidates": [*result["output"]["candidates"], malformed],
+        }
+        return result
+
+
+class PartiallyInvalidOpenAIProvider(FakeOpenAIProvider):
+    async def generate_structured(
+        self,
+        *,
+        context: ProviderRequestContext,
+        system_prompt: str,
+        input_payload: dict[str, Any],
+        schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = await super().generate_structured(
+            context=context,
+            system_prompt=system_prompt,
+            input_payload=input_payload,
+            schema=schema,
+        )
+        result["output"] = {
+            **result["output"],
+            "candidate_count": 3,
+            "candidates": [
+                *result["output"]["candidates"],
+                {
+                    "candidate_id": "candidate-openai-invalid",
+                    "start_seconds": 46.0,
+                    "end_seconds": 64.0,
+                    "duration_seconds": 18.0,
+                },
+            ],
+        }
+        return result
+
+
 @pytest.mark.asyncio
 async def test_phase2_analyzer_uses_openai_provider_when_available() -> None:
     summary = await analyze_phase2_candidates_with_fallback(
@@ -708,12 +848,61 @@ async def test_phase2_analyzer_uses_openai_provider_when_available() -> None:
     assert summary["candidate_count"] == 1
     analyzer = summary["analyzer"]
     assert analyzer["analysis_mode"] == "openai"
-    assert analyzer["prompt_version"] == "phase2-candidate-analyzer-v11"
+    assert analyzer["prompt_version"] == "phase2-candidate-analyzer-v12"
     assert analyzer["provider"] == "openai"
     assert analyzer["provider_request_id"] == "req_openai_123"
     assert analyzer["token_usage"]["total_tokens"] == 1480
     assert isinstance(analyzer["request_id"], str)
     assert analyzer["request_id"]
+
+
+@pytest.mark.asyncio
+async def test_phase2_analyzer_keeps_valid_openai_candidates_when_one_marker_is_invalid() -> None:
+    summary = await analyze_phase2_candidates_with_fallback(
+        analysis_inputs=analysis_inputs(),
+        input_snapshot={
+            "strategy": {
+                "desired_clip_count": 2,
+                "minimum_duration_seconds": 15,
+                "maximum_duration_seconds": 45,
+                "minimum_viral_score": 6.5,
+                "target_platform": "YOUTUBE_SHORTS",
+                "objective": "EDUCATION",
+            }
+        },
+        provider=PartiallyMalformedOpenAIProvider(),
+    )
+
+    analyzer = summary["analyzer"]
+    assert analyzer["analysis_mode"] == "openai"
+    assert analyzer["provider"] == "openai"
+    assert analyzer["candidate_source_counts"]["openai"] >= 1
+    assert len(analyzer["provider_candidate_audit"]["provider_invalid_candidates"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_phase2_analyzer_keeps_valid_openai_candidates_when_one_candidate_is_invalid() -> None:
+    summary = await analyze_phase2_candidates_with_fallback(
+        analysis_inputs=analysis_inputs(),
+        input_snapshot={
+            "strategy": {
+                "desired_clip_count": 2,
+                "minimum_duration_seconds": 15,
+                "maximum_duration_seconds": 45,
+                "minimum_viral_score": 6.5,
+                "target_platform": "YOUTUBE_SHORTS",
+                "objective": "EDUCATION",
+            }
+        },
+        provider=PartiallyInvalidOpenAIProvider(),
+    )
+
+    analyzer = summary["analyzer"]
+    assert analyzer["analysis_mode"] == "openai"
+    assert analyzer["candidate_source_counts"]["openai"] >= 1
+    invalid_candidates = analyzer["provider_candidate_audit"]["provider_invalid_candidates"]
+    assert len(invalid_candidates) == 1
+    assert invalid_candidates[0]["candidate_id"] == "candidate-openai-invalid"
 
 
 @pytest.mark.asyncio

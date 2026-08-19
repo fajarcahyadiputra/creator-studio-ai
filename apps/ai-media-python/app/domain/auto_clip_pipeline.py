@@ -16,6 +16,11 @@ from app.domain.contracts import (
 )
 
 
+AUTO_MAX_CLIP_COUNT = 10
+MAX_CANDIDATE_POOL_COUNT = 30
+DEFAULT_MAXIMUM_DURATION_SECONDS = 60
+
+
 @dataclass(frozen=True, slots=True)
 class PipelineConfig:
     desired_clip_count: int
@@ -31,17 +36,72 @@ class PipelineConfig:
     cta_preference: str | None
     standalone_priority: str | None
     require_spoken_audio: bool
+    configuration_mode: str = "MANUAL"
 
 
-def build_pipeline_config(input_snapshot: dict[str, object]) -> PipelineConfig:
+def resolve_auto_strategy(
+    input_snapshot: dict[str, object],
+    analysis_inputs: AnalysisInputs | None = None,
+) -> dict[str, object]:
+    """Resolve editorial knobs while preserving user-owned source and visual settings."""
     strategy = input_snapshot.get("strategy")
     if not isinstance(strategy, dict):
         raise ValueError("strategy is required")
-    desired_clip_count = int(strategy.get("desired_clip_count", 3))
-    candidate_pool_count = int(strategy.get("candidate_pool_count", max(desired_clip_count, min(desired_clip_count * 2, 10))))
+    if str(strategy.get("configuration_mode", "MANUAL")).upper() != "AUTO":
+        return input_snapshot
+
+    duration = analysis_inputs.transcript.duration_seconds if analysis_inputs is not None else 0.0
+    duration = max(float(duration), 1.0)
+    minimum = 15 if duration >= 90 else 10
+    # AUTO must not inherit the manual form default of five clips. Use the
+    # system ceiling as the requested pool and let duration validation,
+    # scoring, context checks, and deduplication determine the actual count.
+    # Short videos naturally return fewer candidates because no valid windows
+    # can be fabricated just to satisfy a quantity.
+    desired = AUTO_MAX_CLIP_COUNT
+    configured_maximum = int(
+        strategy.get("maximum_duration_seconds", DEFAULT_MAXIMUM_DURATION_SECONDS)
+        or DEFAULT_MAXIMUM_DURATION_SECONDS
+    )
+    # The form value is an upper bound, not a suggestion. Previously AUTO
+    # silently replaced it with 45/60 seconds, which made longer user-selected
+    # clips impossible and made regenerate behave differently from create.
+    maximum = min(180, max(minimum, configured_maximum))
+    effective = dict(strategy)
+    effective.update(
+        {
+            "desired_clip_count": desired,
+            "candidate_pool_count": MAX_CANDIDATE_POOL_COUNT,
+            "minimum_duration_seconds": minimum,
+            "maximum_duration_seconds": maximum,
+            "minimum_viral_score": max(6.5, min(float(strategy.get("minimum_viral_score", 7)), 9.0)),
+            "auto_resolved": True,
+            "auto_source_duration_seconds": round(duration, 2),
+        }
+    )
+    resolved = dict(input_snapshot)
+    resolved["strategy"] = effective
+    return resolved
+
+
+def build_pipeline_config(
+    input_snapshot: dict[str, object],
+    analysis_inputs: AnalysisInputs | None = None,
+) -> PipelineConfig:
+    input_snapshot = resolve_auto_strategy(input_snapshot, analysis_inputs)
+    strategy = input_snapshot.get("strategy")
+    if not isinstance(strategy, dict):
+        raise ValueError("strategy is required")
+    desired_clip_count = max(1, min(int(strategy.get("desired_clip_count", 3)), AUTO_MAX_CLIP_COUNT))
+    candidate_pool_count = int(
+        strategy.get(
+            "candidate_pool_count",
+            max(desired_clip_count, min(desired_clip_count * 2, MAX_CANDIDATE_POOL_COUNT)),
+        )
+    )
     return PipelineConfig(
         desired_clip_count=desired_clip_count,
-        candidate_pool_count=max(desired_clip_count, min(candidate_pool_count, 30)),
+        candidate_pool_count=max(desired_clip_count, min(candidate_pool_count, MAX_CANDIDATE_POOL_COUNT)),
         minimum_duration_seconds=int(strategy.get("minimum_duration_seconds", 15)),
         maximum_duration_seconds=int(strategy.get("maximum_duration_seconds", 60)),
         minimum_viral_score=float(strategy.get("minimum_viral_score", 7)),
@@ -53,6 +113,7 @@ def build_pipeline_config(input_snapshot: dict[str, object]) -> PipelineConfig:
         cta_preference=_normalize_optional_text(strategy.get("cta_preference")),
         standalone_priority=_normalize_optional_text(strategy.get("standalone_priority")),
         require_spoken_audio=bool(strategy.get("require_spoken_audio", True)),
+        configuration_mode=str(strategy.get("configuration_mode", "MANUAL")).upper(),
     )
 
 
@@ -94,15 +155,20 @@ def limit_and_score_candidates_with_quality_backfill(
     config: PipelineConfig,
 ) -> tuple[list[CandidateAnalysis], dict[str, object]]:
     duration_valid_candidates = [candidate for candidate in candidates if _candidate_duration_is_valid(candidate, config)]
-    strict_candidates = [
+    semantic_candidates = [
         candidate
         for candidate in duration_valid_candidates
+        if _candidate_has_complete_semantic_boundaries(candidate, analysis_inputs.transcript.segments)
+    ]
+    strict_candidates = [
+        candidate
+        for candidate in semantic_candidates
         if _candidate_final_score(candidate) >= config.minimum_viral_score
     ]
     relaxed_floor = _quality_backfill_floor(config)
     relaxed_candidates = [
         candidate
-        for candidate in duration_valid_candidates
+        for candidate in semantic_candidates
         if _candidate_final_score(candidate) >= relaxed_floor
     ]
 
@@ -115,7 +181,7 @@ def limit_and_score_candidates_with_quality_backfill(
     )
     ranked = deduplicate_and_rank(normalized, config.candidate_pool_count)
     strict_ranked_count = len(ranked)
-    required_count = min(config.desired_clip_count, config.candidate_pool_count)
+    required_count = min(config.desired_clip_count, AUTO_MAX_CLIP_COUNT)
 
     if len(ranked) < required_count:
         normalized_backfill = normalize_candidates(
@@ -133,7 +199,7 @@ def limit_and_score_candidates_with_quality_backfill(
 
     if len(ranked) < required_count:
         normalized_quantity_backfill = normalize_candidates(
-            duration_valid_candidates,
+            semantic_candidates,
             analysis_inputs.scenes,
             analysis_inputs.silences,
             analysis_inputs.transcript.segments,
@@ -145,14 +211,19 @@ def limit_and_score_candidates_with_quality_backfill(
             desired_count=required_count,
         )
 
+    final_candidates = ranked[:required_count]
     audit = {
         "raw_candidate_count": len(candidates),
         "duration_valid_candidate_count": len(duration_valid_candidates),
+        "semantic_valid_candidate_count": len(semantic_candidates),
+        "rejected_incomplete_semantic_boundary": len(duration_valid_candidates) - len(semantic_candidates),
         "accepted_before_normalization": len(strict_candidates),
         "normalized_candidate_count": len(normalized),
         "accepted_after_deduplication": strict_ranked_count,
         "accepted_after_quality_backfill": after_quality_backfill_count,
         "accepted_after_quantity_backfill": len(ranked),
+        "selected_final_clip_count": len(final_candidates),
+        "maximum_final_clip_count": AUTO_MAX_CLIP_COUNT,
         "quality_backfill_count": quality_backfilled_count,
         "quantity_backfill_count": max(0, len(ranked) - after_quality_backfill_count),
         "quantity_backfill_ignores_text_similarity": len(ranked) > after_quality_backfill_count,
@@ -176,7 +247,7 @@ def limit_and_score_candidates_with_quality_backfill(
         "requested_candidate_pool_count": config.candidate_pool_count,
         "required_final_clip_count": config.desired_clip_count,
     }
-    return ranked, audit
+    return final_candidates, audit
 
 
 def _candidate_duration_is_valid(candidate: CandidateAnalysis, config: PipelineConfig) -> bool:
@@ -232,8 +303,7 @@ def normalize_candidates(
             punchline_second=candidate.punchline_second + beat_offset,
             duration_seconds=duration_seconds,
         )
-        normalized.append(
-            candidate.model_copy(
+        normalized_candidate = candidate.model_copy(
                 update={
                     "start_seconds": round(start_seconds, 2),
                     "end_seconds": round(end_seconds, 2),
@@ -243,8 +313,13 @@ def normalize_candidates(
                     "main_point_second": main_point_second,
                     "punchline_second": punchline_second,
                 }
-            )
         )
+        if transcript_segments and not _candidate_has_complete_semantic_boundaries(
+            normalized_candidate,
+            transcript_segments,
+        ):
+            continue
+        normalized.append(_with_editorial_quality_scores(normalized_candidate, transcript_segments or []))
     return normalized
 
 
@@ -261,7 +336,20 @@ def deduplicate_and_rank(candidates: list[CandidateAnalysis], desired_count: int
         reverse=True,
     )
     selected: list[CandidateAnalysis] = []
+    deferred_for_diversity: list[CandidateAnalysis] = []
     for candidate in ranked:
+        if len(selected) >= desired_count:
+            break
+        if any(
+            _overlap_ratio(candidate, existing) > 0.6 or _text_similarity(candidate, existing) >= 0.82
+            for existing in selected
+        ):
+            continue
+        if any(_temporally_too_close(candidate, existing) for existing in selected):
+            deferred_for_diversity.append(candidate)
+            continue
+        selected.append(candidate)
+    for candidate in deferred_for_diversity:
         if len(selected) >= desired_count:
             break
         if any(
@@ -271,6 +359,78 @@ def deduplicate_and_rank(candidates: list[CandidateAnalysis], desired_count: int
             continue
         selected.append(candidate)
     return selected
+
+
+def _temporally_too_close(candidate: CandidateAnalysis, existing: CandidateAnalysis) -> bool:
+    candidate_midpoint = (candidate.start_seconds + candidate.end_seconds) / 2
+    existing_midpoint = (existing.start_seconds + existing.end_seconds) / 2
+    separation = max(12.0, min(35.0, max(candidate.duration_seconds, existing.duration_seconds) * 0.7))
+    return abs(candidate_midpoint - existing_midpoint) < separation
+
+
+def _candidate_has_complete_semantic_boundaries(
+    candidate: CandidateAnalysis,
+    transcript_segments: list[TranscriptSegment],
+) -> bool:
+    intersecting = [
+        segment
+        for segment in transcript_segments
+        if segment.end_seconds > candidate.start_seconds and segment.start_seconds < candidate.end_seconds
+    ]
+    if not intersecting:
+        return False
+    if candidate.start_seconds > intersecting[0].start_seconds + 0.35:
+        return False
+    if candidate.end_seconds < intersecting[-1].end_seconds - 0.35:
+        return False
+    opening = intersecting[0].text.strip()
+    ending = intersecting[-1].text.strip()
+    if (
+        _looks_like_filler_opening(opening)
+        or _looks_like_promotional_opening(opening)
+        or _segment_starts_topic_reset(opening)
+    ):
+        return False
+    if _starts_with_continuation_connector(opening) and candidate.requires_context:
+        return False
+    if not _ending_is_semantically_complete(ending):
+        return False
+    if not _candidate_questions_are_resolved(intersecting):
+        return False
+    if candidate.requires_context and not candidate.can_standalone:
+        return False
+    return True
+
+
+def _with_editorial_quality_scores(
+    candidate: CandidateAnalysis,
+    transcript_segments: list[TranscriptSegment],
+) -> CandidateAnalysis:
+    intersecting = [
+        segment
+        for segment in transcript_segments
+        if segment.end_seconds > candidate.start_seconds and segment.start_seconds < candidate.end_seconds
+    ]
+    confidences = [segment.confidence for segment in intersecting if segment.confidence is not None]
+    subtitle_confidence = 7.0 if not confidences else round(5.0 + (sum(confidences) / len(confidences) * 5.0), 2)
+    clarity = 9.0 if candidate.context_complete and not candidate.requires_context else 6.0
+    standalone = 9.2 if candidate.can_standalone else 5.5
+    payoff = 9.0 if not _ending_needs_extension(candidate.ending_text) else 4.5
+    visual_framing = 8.2 if len(candidate.scene_ids) <= 4 else 7.2
+    scores = dict(candidate.scores)
+    scores.update(
+        {
+            "clarity": clarity,
+            "standalone": standalone,
+            "payoff": payoff,
+            "visual_framing": visual_framing,
+            "subtitle_confidence": subtitle_confidence,
+        }
+    )
+    editorial_average = (clarity + standalone + payoff + visual_framing + subtitle_confidence) / 5
+    existing_final = float(scores.get("final_viral_score", 0.0))
+    scores["final_viral_score"] = round((existing_final * 0.72) + (editorial_average * 0.28), 2)
+    return candidate.model_copy(update={"scores": scores})
 
 
 def supplement_ranked_candidates(
@@ -947,6 +1107,18 @@ def _ending_needs_extension(text: str) -> bool:
     return False
 
 
+def _ending_is_semantically_complete(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped or not _is_natural_ending_segment(stripped):
+        return False
+    lowered = stripped.lower()
+    if stripped.endswith("...") or _ends_with_dangling_connector(lowered):
+        return False
+    if stripped.endswith("?") and not _is_audience_cta_question(lowered):
+        return False
+    return True
+
+
 def _is_audience_cta_question(text: str) -> bool:
     return any(
         phrase in text
@@ -983,7 +1155,7 @@ def _apply_natural_tail_padding(
         (
             segment
             for segment in transcript_segments
-            if segment.start_seconds >= end_seconds + 0.08
+            if segment.end_seconds > end_seconds and segment.start_seconds >= end_seconds - 0.02
         ),
         None,
     )
@@ -1122,6 +1294,38 @@ def _looks_like_filler_opening(text: str) -> bool:
             "di video ini",
         )
     )
+
+
+def _looks_like_promotional_opening(text: str) -> bool:
+    normalized = " ".join(text.strip().lower().split())
+    return any(
+        phrase in normalized
+        for phrase in (
+            "video ini disponsori",
+            "konten ini disponsori",
+            "didukung oleh sponsor",
+            "terima kasih kepada sponsor",
+            "jangan lupa subscribe",
+            "jangan lupa follow",
+            "like dan subscribe",
+            "klik link di bio",
+        )
+    )
+
+
+def _candidate_questions_are_resolved(segments: list[TranscriptSegment]) -> bool:
+    """Reject an unanswered editorial question while allowing a closing audience CTA."""
+    combined = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
+    if "?" not in combined:
+        return True
+
+    trailing_text = combined.rsplit("?", 1)[1].strip()
+    if trailing_text:
+        trailing_words = trailing_text.strip(" -,:;.!?\"'()[]{}").split()
+        return len(trailing_words) >= 4 and _is_natural_ending_segment(trailing_text)
+
+    final_question = segments[-1].text.strip().lower()
+    return _is_audience_cta_question(final_question)
 
 
 def _window_should_be_rejected(segments: list[TranscriptSegment]) -> bool:

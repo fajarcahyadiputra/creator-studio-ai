@@ -20,7 +20,6 @@
         <a class="<%= topbarPath.startsWith('/app/tools/auto-clipping') ? 'active' : '' %>" href="/app/tools/auto-clipping">Auto Clipping</a>
         <a class="<%= topbarPath.startsWith('/app/tools/text-to-speech') ? 'active' : '' %>" href="/app/tools/text-to-speech">Narration TTS</a>
         <a class="workspace-mobile-nav__section-start <%= topbarPath.startsWith('/app/jobs') ? 'active' : '' %>" href="/app/jobs">Jobs & Results</a>
-        <a class="<%= topbarPath.startsWith('/app/presets') ? 'active' : '' %>" href="/app/presets">Templates</a>
         <a class="<%= topbarPath.startsWith('/app/settings') ? 'active' : '' %>" href="/app/settings">Settings</a>
         <% if (identity?.permissions?.has('admin.dashboard.view')) { %>
           <a class="workspace-mobile-nav__admin <%= topbarPath.startsWith('/admin') ? 'active' : '' %>" href="/admin/dashboard">Admin Console</a>
@@ -42,7 +41,6 @@
         </div>
       </details>
       <a class="workspace-nav__link <%= topbarPath.startsWith('/app/jobs') ? 'active' : '' %>" href="/app/jobs">Hasil Clipping</a>
-      <a class="workspace-nav__link <%= topbarPath.startsWith('/app/presets') ? 'active' : '' %>" href="/app/presets">Templates</a>
       <a class="workspace-nav__link <%= topbarPath.startsWith('/app/settings') ? 'active' : '' %>" href="/app/settings">Settings</a>
       <% if (identity?.permissions?.has('admin.dashboard.view')) { %>
         <a class="workspace-nav__link workspace-nav__link--admin <%= topbarPath.startsWith('/admin') ? 'active' : '' %>" href="/admin/dashboard">Admin</a>

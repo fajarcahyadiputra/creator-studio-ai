@@ -25,18 +25,10 @@ describe("presets routes", () => {
     writeAudit.mockReset();
   });
 
-  it("renders presets page", async () => {
-    const service = {
-      getPresetsPageData: vi.fn().mockResolvedValue({
-        presets: [],
-        brandKits: []
-      })
-    };
+  it("does not expose the removed user templates page", async () => {
+    const response = await request(buildApp({})).get("/app/presets");
 
-    const response = await request(buildApp(service)).get("/app/presets");
-
-    expect(response.status).toBe(200);
-    expect(service.getPresetsPageData).toHaveBeenCalledWith("user-1");
+    expect(response.status).toBe(404);
   });
 
   it("creates a preset and writes an audit entry", async () => {
@@ -51,7 +43,8 @@ describe("presets routes", () => {
         description: "Fast hook",
         type: "CLIPPING",
         is_default: true,
-        config_json: "{}"
+        analysis_brief: "Select a clear standalone moment.",
+        config_json: { strategy: "standalone" }
       });
 
     expect(response.status).toBe(201);
@@ -107,4 +100,3 @@ function buildApp(service: Record<string, ReturnType<typeof vi.fn>>) {
   });
   return app;
 }
-

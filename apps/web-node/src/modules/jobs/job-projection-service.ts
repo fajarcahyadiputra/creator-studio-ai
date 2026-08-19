@@ -317,7 +317,14 @@ export class JobProjectionService {
         typeof strategySnapshot.desired_clip_count === "number" && Number.isFinite(strategySnapshot.desired_clip_count)
           ? strategySnapshot.desired_clip_count
           : 0;
-      const persistedCandidates = resolvePersistableCandidates(input.metadata, desiredClipCount);
+      const isAutoConfiguration = String(strategySnapshot.configuration_mode ?? "MANUAL").toUpperCase() === "AUTO";
+      // AUTO is intentionally open-ended: the Python analyzer returns every
+      // valid, distinct candidate up to its system ceiling. Do not apply the
+      // original form default (usually five) when projecting candidates.
+      const persistedCandidates = resolvePersistableCandidates(
+        input.metadata,
+        isAutoConfiguration ? 0 : desiredClipCount
+      );
       const serverOverallProgress = computeServerOverallProgress({
         existingStages,
         input

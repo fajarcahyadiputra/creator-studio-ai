@@ -12,6 +12,7 @@ from app.domain.auto_clip_pipeline import (
     build_candidate_analyses_with_audit,
     build_output_summary,
     build_pipeline_config,
+    resolve_auto_strategy,
     ensure_complete_candidate_title,
     limit_and_score_candidates_with_quality_backfill,
     PipelineConfig,
@@ -36,7 +37,9 @@ class CandidateBatchOutput(BaseModel):
     source_summary: str = Field(min_length=1, max_length=2000)
     candidate_count: int = Field(ge=0, le=30)
     analyzer: dict[str, Any] = Field(default_factory=dict)
-    candidates: list[CandidateAnalysis] = Field(default_factory=list, max_length=30)
+    # Provider output is validated per candidate below so one malformed item
+    # cannot discard the complete OpenAI batch.
+    candidates: list[Any] = Field(default_factory=list, max_length=30)
 
 
 async def analyze_phase2_candidates_with_fallback(
@@ -48,8 +51,9 @@ async def analyze_phase2_candidates_with_fallback(
     settings = get_settings()
     request_id = str(uuid4())
     started = perf_counter()
-    config = build_pipeline_config(input_snapshot)
-    prompt_payload = build_candidate_analyzer_payload(analysis_inputs, input_snapshot)
+    effective_snapshot = resolve_auto_strategy(input_snapshot, analysis_inputs)
+    config = build_pipeline_config(effective_snapshot, analysis_inputs)
+    prompt_payload = build_candidate_analyzer_payload(analysis_inputs, effective_snapshot)
     system_prompt = build_candidate_analyzer_system_prompt(
         str(prompt_payload.get("language") or "id")
     )
@@ -80,6 +84,36 @@ async def analyze_phase2_candidates_with_fallback(
             )
             accepted, rejection_reason = _should_accept_summary(openai_summary, config)
             if accepted:
+                if config.configuration_mode == "AUTO":
+                    heuristic_summary = _run_heuristic_analysis(analysis_inputs, config)
+                    summary, supplemental_count = _supplement_openai_summary(
+                        openai_summary=openai_summary,
+                        heuristic_summary=heuristic_summary,
+                        config=config,
+                    )
+                    return _finalize_summary(
+                        summary=summary,
+                        analysis_mode="hybrid" if supplemental_count > 0 else "openai",
+                        configured_mode=configured_mode,
+                        prompt_version=AUTO_CLIP_ANALYZER_PROMPT_VERSION,
+                        provider=provider_code,
+                        model=model_identifier,
+                        attempted_provider=provider_code,
+                        attempted_model=model_identifier,
+                        request_id=request_id,
+                        provider_request_id=provider_request_id,
+                        usage=usage,
+                        latency_ms=round((perf_counter() - started) * 1000, 2),
+                        analysis_inputs=analysis_inputs,
+                        effective_config=config,
+                        fallback_reason=None,
+                        fallback_trigger=None,
+                        candidate_source_counts={
+                            "openai": int(openai_summary["candidate_count"]),
+                            "heuristic": supplemental_count,
+                        },
+                        provider_candidate_audit=provider_candidate_audit,
+                    )
                 return _finalize_summary(
                     summary=openai_summary,
                     analysis_mode="openai",
@@ -94,6 +128,7 @@ async def analyze_phase2_candidates_with_fallback(
                     usage=usage,
                     latency_ms=round((perf_counter() - started) * 1000, 2),
                     analysis_inputs=analysis_inputs,
+                    effective_config=config,
                     fallback_reason=None,
                     fallback_trigger=None,
                     candidate_source_counts={"openai": int(openai_summary["candidate_count"]), "heuristic": 0},
@@ -137,6 +172,7 @@ async def analyze_phase2_candidates_with_fallback(
                 usage=usage,
                 latency_ms=round((perf_counter() - started) * 1000, 2),
                 analysis_inputs=analysis_inputs,
+                effective_config=config,
                 fallback_reason=None,
                 fallback_trigger=fallback_trigger,
                 candidate_source_counts={
@@ -161,6 +197,7 @@ async def analyze_phase2_candidates_with_fallback(
             usage=usage,
             latency_ms=round((perf_counter() - started) * 1000, 2),
             analysis_inputs=analysis_inputs,
+            effective_config=config,
             fallback_reason=fallback_reason,
             fallback_trigger=fallback_trigger,
             candidate_source_counts={"openai": 0, "heuristic": int(summary["candidate_count"])},
@@ -195,6 +232,7 @@ async def analyze_phase2_candidates_with_fallback(
                 usage=usage,
                 latency_ms=round((perf_counter() - started) * 1000, 2),
                 analysis_inputs=analysis_inputs,
+                effective_config=config,
                 fallback_reason=None,
                 fallback_trigger=fallback_trigger,
                 candidate_source_counts={"openai": int(summary["candidate_count"]), "heuristic": 0},
@@ -227,6 +265,7 @@ async def analyze_phase2_candidates_with_fallback(
         usage=usage,
         latency_ms=round((perf_counter() - started) * 1000, 2),
         analysis_inputs=analysis_inputs,
+        effective_config=config,
         fallback_reason=fallback_reason,
         fallback_trigger=fallback_trigger,
         candidate_source_counts={"openai": 0, "heuristic": int(summary["candidate_count"])},
@@ -281,6 +320,7 @@ def _finalize_summary(
     usage: dict[str, Any] | None,
     latency_ms: float,
     analysis_inputs: AnalysisInputs,
+    effective_config: PipelineConfig,
     fallback_reason: str | None,
     fallback_trigger: str | None,
     candidate_source_counts: dict[str, int] | None = None,
@@ -306,6 +346,14 @@ def _finalize_summary(
         "fallback_trigger": fallback_trigger,
         "candidate_source_counts": candidate_source_counts or {},
         "provider_candidate_audit": provider_candidate_audit or {},
+        "effective_configuration": {
+            "mode": effective_config.configuration_mode if effective_config else "MANUAL",
+            "desired_clip_count": effective_config.desired_clip_count if effective_config else None,
+            "candidate_pool_count": effective_config.candidate_pool_count if effective_config else None,
+            "minimum_duration_seconds": effective_config.minimum_duration_seconds if effective_config else None,
+            "maximum_duration_seconds": effective_config.maximum_duration_seconds if effective_config else None,
+            "minimum_viral_score": effective_config.minimum_viral_score if effective_config else None,
+        },
     }
     summary["analysis_version"] = "2.4"
     summary["analyzer"] = analyzer_metadata
@@ -388,9 +436,32 @@ async def _run_openai_analysis(
         schema_name="auto_clip_candidate_batch",
     )
     normalized_output = _normalize_provider_batch_output(provider_result["output"])
-    batch = CandidateBatchOutput.model_validate(normalized_output)
-    candidates, candidate_audit = _limit_and_score_candidates_with_audit(batch.candidates, analysis_inputs, config)
+    batch, batch_normalization_audit = _parse_provider_batch_tolerantly(normalized_output)
+    valid_candidates: list[CandidateAnalysis] = []
+    invalid_candidates: list[dict[str, Any]] = []
+    for index, raw_candidate in enumerate(batch.candidates):
+        try:
+            valid_candidates.append(CandidateAnalysis.model_validate(raw_candidate))
+        except ValidationError as error:
+            invalid_candidates.append({
+                "index": index,
+                "candidate_id": (
+                    str(raw_candidate.get("candidate_id"))
+                    if isinstance(raw_candidate, dict) and raw_candidate.get("candidate_id") is not None
+                    else None
+                ),
+                "errors": error.errors(include_url=False),
+            })
+
+    candidates, candidate_audit = _limit_and_score_candidates_with_audit(
+        valid_candidates,
+        analysis_inputs,
+        config,
+    )
+    candidate_audit["provider_invalid_candidates"] = invalid_candidates
+    candidate_audit["provider_valid_candidate_count"] = len(valid_candidates)
     candidate_audit["provider_declared_candidate_count"] = batch.candidate_count
+    candidate_audit["provider_batch_normalization"] = batch_normalization_audit
     summary = build_output_summary(candidates, source_summary=batch.source_summary)
     usage = provider_result.get("usage") if isinstance(provider_result.get("usage"), dict) else None
     provider_request_id = (
@@ -399,6 +470,42 @@ async def _run_openai_analysis(
         else None
     )
     return summary, usage, provider_request_id, candidate_audit
+
+
+def _parse_provider_batch_tolerantly(output: Any) -> tuple[CandidateBatchOutput, dict[str, Any]]:
+    """Validate batch metadata without sacrificing individually valid candidates."""
+    if not isinstance(output, dict):
+        raise ValueError("OpenAI candidate batch must be an object")
+
+    raw_candidates = output.get("candidates")
+    candidates = raw_candidates[:30] if isinstance(raw_candidates, list) else []
+    source_summary = str(output.get("source_summary") or "").strip()
+    repaired_fields: list[str] = []
+    if not source_summary:
+        source_summary = "Candidate moments selected from the source transcript."
+        repaired_fields.append("source_summary")
+
+    analysis_version = str(output.get("analysis_version") or "1.0").strip() or "1.0"
+    analyzer = output.get("analyzer") if isinstance(output.get("analyzer"), dict) else {}
+    declared_count = output.get("candidate_count")
+    if not isinstance(declared_count, int) or declared_count < 0 or declared_count > 30:
+        declared_count = len(candidates)
+        repaired_fields.append("candidate_count")
+
+    batch = CandidateBatchOutput.model_validate(
+        {
+            "analysis_version": analysis_version[:40],
+            "source_summary": source_summary[:2000],
+            "candidate_count": declared_count,
+            "analyzer": analyzer,
+            "candidates": candidates,
+        }
+    )
+    return batch, {
+        "repaired_fields": repaired_fields,
+        "received_candidate_count": len(raw_candidates) if isinstance(raw_candidates, list) else 0,
+        "retained_candidate_count": len(candidates),
+    }
 
 
 def _normalize_provider_batch_output(output: Any) -> Any:
@@ -449,15 +556,32 @@ def _normalize_candidate_time_markers(candidate: dict[str, Any]) -> dict[str, An
     if start_seconds is None or end_seconds is None or duration_seconds is None or end_seconds <= start_seconds:
         return normalized
 
+    # Models occasionally return an endpoint with a tiny rounding overflow,
+    # or mix absolute and relative timestamps. Normalize before Pydantic
+    # validation so a single bad beat does not reject the whole provider batch.
+    actual_duration = max(0.01, end_seconds - start_seconds)
+    normalized["duration_seconds"] = round(actual_duration, 3)
+
+    marker_values: dict[str, float] = {}
     for key in ("hook_second", "main_point_second", "punchline_second"):
         marker_value = _coerce_float(candidate.get(key))
         if marker_value is None:
             continue
 
-        if marker_value > duration_seconds and start_seconds <= marker_value <= end_seconds:
-            normalized[key] = round(marker_value - start_seconds, 3)
+        if marker_value > actual_duration and start_seconds <= marker_value <= end_seconds:
+            marker_value -= start_seconds
         elif marker_value < 0:
-            normalized[key] = 0.0
+            marker_value = 0.0
+        marker_values[key] = max(0.0, min(marker_value, actual_duration))
+
+    hook_second = marker_values.get("hook_second", 0.0)
+    main_point_second = max(hook_second, marker_values.get("main_point_second", hook_second))
+    punchline_second = max(main_point_second, marker_values.get("punchline_second", main_point_second))
+    normalized.update({
+        "hook_second": round(hook_second, 3),
+        "main_point_second": round(main_point_second, 3),
+        "punchline_second": round(min(punchline_second, actual_duration), 3),
+    })
 
     return normalized
 
@@ -489,7 +613,7 @@ def _supplement_openai_summary(
     merged = supplement_ranked_candidates(
         openai_candidates,
         heuristic_candidates,
-        config.candidate_pool_count,
+        config.desired_clip_count,
     )
     supplemental_count = max(0, len(merged) - len(openai_candidates))
     return build_output_summary(merged, source_summary=str(openai_summary.get("source_summary") or "")), supplemental_count
@@ -499,6 +623,8 @@ def _should_accept_summary(summary: dict[str, Any], config: PipelineConfig) -> t
     candidate_count = int(summary.get("candidate_count", 0))
     if candidate_count <= 0:
         return False, "no_candidates"
+    if config.configuration_mode == "AUTO":
+        return True, None
     if candidate_count < max(1, config.desired_clip_count):
         return False, "insufficient_candidates"
     return True, None

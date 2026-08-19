@@ -35,6 +35,8 @@ interface CreateAutoClipInput {
     title?: string;
     context?: string;
     topic?: string;
+    niche?: string;
+    target_audience?: string;
     source_language?: string;
     speaker_count?: number;
     custom_vocabulary: string[];
@@ -69,9 +71,12 @@ interface CreateTtsInput {
 }
 
 interface RegenerateAutoClipInput {
+  configuration_mode: "AUTO" | "MANUAL";
   content_title?: string;
   content_context?: string;
   topic?: string;
+  niche?: string;
+  target_audience?: string;
   source_language?: string;
   speaker_count?: number;
   custom_vocabulary_text: string[];
@@ -1877,6 +1882,12 @@ function buildRegeneratedAutoClippingInput(
     input.subtitle_export_formats_text,
     input.subtitle_primary_format
   );
+  const autoMode = input.configuration_mode === "AUTO";
+  const strategyValue = <T>(value: T | undefined, currentValue: unknown, fallback: T): T => {
+    if (value !== undefined) return value;
+    if (currentValue !== undefined && currentValue !== null) return currentValue as T;
+    return fallback;
+  };
 
   return {
     project_id: currentSnapshot.project_id,
@@ -1891,21 +1902,38 @@ function buildRegeneratedAutoClippingInput(
       title: input.content_title,
       context: input.content_context,
       topic: input.topic,
+      niche: input.niche,
+      target_audience: input.target_audience,
       source_language: input.source_language,
       speaker_count: input.speaker_count,
       custom_vocabulary: input.custom_vocabulary_text,
       rights_confirmed: true
     },
-    strategy: {
+    strategy: compactRecord({
       ...currentStrategy,
+      configuration_mode: input.configuration_mode,
       target_platform: input.target_platform,
       objective: input.objective,
-      tones: input.tones_text.length > 0 ? input.tones_text : ["educational"],
-      desired_clip_count: input.desired_clip_count ?? 3,
-      candidate_pool_count: input.candidate_pool_count ?? Math.max(input.desired_clip_count ?? 3, 6),
-      minimum_duration_seconds: input.minimum_duration_seconds ?? 20,
-      maximum_duration_seconds: input.maximum_duration_seconds ?? 45,
-      minimum_viral_score: input.minimum_viral_score ?? 7,
+      tones: input.tones_text.length > 0
+        ? input.tones_text
+        : strategyValue(undefined, currentStrategy.tones, ["educational"]),
+      desired_clip_count: autoMode
+        ? undefined
+        : Math.min(10, strategyValue(input.desired_clip_count, currentStrategy.desired_clip_count, 3)),
+      candidate_pool_count: autoMode
+        ? undefined
+        : strategyValue(
+            input.candidate_pool_count,
+            currentStrategy.candidate_pool_count,
+            Math.max(input.desired_clip_count ?? 3, 6)
+          ),
+      minimum_duration_seconds: autoMode
+        ? undefined
+        : strategyValue(input.minimum_duration_seconds, currentStrategy.minimum_duration_seconds, 20),
+      maximum_duration_seconds: input.maximum_duration_seconds ?? 60,
+      minimum_viral_score: autoMode
+        ? undefined
+        : strategyValue(input.minimum_viral_score, currentStrategy.minimum_viral_score, 7),
       preferred_topics: input.preferred_topics_text,
       topics_to_avoid: input.topics_to_avoid_text,
       sensitive_topics: input.sensitive_topics_text,
@@ -1914,15 +1942,15 @@ function buildRegeneratedAutoClippingInput(
       selection_brief: input.selection_brief,
       avoidance_brief: input.avoidance_brief,
       packaging_brief: input.packaging_brief,
-      hook_style: input.hook_style,
-      cta_preference: input.cta_preference,
-      standalone_priority: input.standalone_priority,
-      require_spoken_audio: input.require_spoken_audio,
+      hook_style: autoMode ? undefined : input.hook_style,
+      cta_preference: autoMode ? undefined : input.cta_preference,
+      standalone_priority: autoMode ? undefined : input.standalone_priority,
+      require_spoken_audio: autoMode ? undefined : input.require_spoken_audio,
       profanity_handling: input.profanity_handling,
       speech_cleanup_enabled: input.speech_cleanup_enabled,
       remove_long_silence: input.speech_cleanup_enabled,
       remove_filler_words: input.speech_cleanup_enabled
-    },
+    }),
     visual: {
       ...currentVisual,
       aspect_ratio: input.aspect_ratio,
@@ -1956,7 +1984,7 @@ function buildRegeneratedAutoClippingInput(
         safe_margin_percent: input.subtitle_safe_margin_percent,
         word_highlight: subtitleStyleUsesWordHighlight(input.subtitle_style),
         profanity_censor: input.subtitle_profanity_censor,
-        typo_correction: input.subtitle_typo_correction
+        typo_correction: true
       })
     },
     ai:
@@ -2194,10 +2222,9 @@ function shouldDeleteJobSourceMediaAsset(job: {
 }
 
 function normalizeLayoutTemplate(layoutTemplate: string | undefined, aspectRatio: string | undefined): string {
-  if (aspectRatio !== "9:16") {
-    return "STANDARD";
-  }
-  return layoutTemplate === "PODCAST_SPOTLIGHT_9X16" ? "PODCAST_SPOTLIGHT_9X16" : "STANDARD";
+  // The user-facing template selector was removed; keep one stable branded
+  // layout for every new and regenerated clipping job.
+  return "STANDARD";
 }
 
 async function resolveAutoClipBrandingContext(userId: string, visualSettings: Record<string, unknown>) {
@@ -2571,6 +2598,12 @@ export function serializeJob<T extends { eventSequence?: bigint }>(job: T): Reco
   const model = typeof analyzer.model === "string" ? analyzer.model : null;
   const attemptedProvider = typeof analyzer.attempted_provider === "string" ? analyzer.attempted_provider : null;
   const attemptedModel = typeof analyzer.attempted_model === "string" ? analyzer.attempted_model : null;
+  const effectiveConfiguration =
+    analyzer.effective_configuration &&
+    typeof analyzer.effective_configuration === "object" &&
+    !Array.isArray(analyzer.effective_configuration)
+      ? (analyzer.effective_configuration as Record<string, unknown>)
+      : {};
 
   return {
     ...base,
@@ -2582,7 +2615,30 @@ export function serializeJob<T extends { eventSequence?: bigint }>(job: T): Reco
         provider_label: normalizeAnalyzerProviderLabel(provider, analysisMode),
         model_label: normalizeAnalyzerModelLabel(model, analysisMode),
         attempted_provider_label: normalizeAnalyzerProviderLabel(attemptedProvider, null),
-        attempted_model_label: normalizeAnalyzerModelLabel(attemptedModel, null)
+        attempted_model_label: normalizeAnalyzerModelLabel(attemptedModel, null),
+        effective_configuration: {
+          mode: typeof effectiveConfiguration.mode === "string" ? effectiveConfiguration.mode : null,
+          desired_clip_count:
+            typeof effectiveConfiguration.desired_clip_count === "number"
+              ? effectiveConfiguration.desired_clip_count
+              : null,
+          candidate_pool_count:
+            typeof effectiveConfiguration.candidate_pool_count === "number"
+              ? effectiveConfiguration.candidate_pool_count
+              : null,
+          minimum_duration_seconds:
+            typeof effectiveConfiguration.minimum_duration_seconds === "number"
+              ? effectiveConfiguration.minimum_duration_seconds
+              : null,
+          maximum_duration_seconds:
+            typeof effectiveConfiguration.maximum_duration_seconds === "number"
+              ? effectiveConfiguration.maximum_duration_seconds
+              : null,
+          minimum_viral_score:
+            typeof effectiveConfiguration.minimum_viral_score === "number"
+              ? effectiveConfiguration.minimum_viral_score
+              : null
+        }
       }
     }
   };

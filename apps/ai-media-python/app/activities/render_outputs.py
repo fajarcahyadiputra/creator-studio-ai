@@ -849,12 +849,10 @@ def _resolve_subtitle_word_highlight(render_settings: dict[str, Any]) -> bool:
 
 
 def _resolve_subtitle_typo_correction(render_settings: dict[str, Any]) -> bool:
-    settings = _resolve_subtitle_settings(render_settings)
-    for key in ("typo_correction", "correct_typos", "spellcheck"):
-        value = settings.get(key)
-        if isinstance(value, bool):
-            return value
-    return False
+    # Subtitle typo correction is a platform-wide quality pass. It preserves
+    # timing, line breaks, wording, and punctuation; only known spelling fixes
+    # are applied. Keep it enabled for legacy snapshots too.
+    return True
 
 
 def _resolve_subtitle_typo_corrections(render_settings: dict[str, Any]) -> dict[str, str]:

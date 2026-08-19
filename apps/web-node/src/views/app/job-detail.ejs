@@ -267,7 +267,7 @@
               <% } %>
 
               <% if (job.type === 'AUTO_CLIPPING' && outputSummary.requestSnapshot) { %>
-                <form class="row g-3 mt-2" data-api-form data-idempotency-key="true" data-packaging-helper="true" action="/api/v1/auto-clipping/jobs/<%= job.id %>/regenerate" method="post">
+                <form class="row g-3 mt-2" data-api-form data-idempotency-key="true" data-packaging-helper="true" data-auto-clip-regenerate-form action="/api/v1/auto-clipping/jobs/<%= job.id %>/regenerate" method="post">
                   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                   <div class="col-12">
                     <div class="candidate-caption-box">
@@ -278,6 +278,29 @@
                         <% if (job.sourceMediaAsset?.displayName) { %> Asset: <%= job.sourceMediaAsset.displayName %>.<% } %>
                       </p>
                     </div>
+                  </div>
+
+                  <div class="col-12">
+                    <div class="user-form-toolbar d-flex justify-content-between align-items-center gap-3">
+                      <div>
+                        <span class="eyebrow">Mode form</span>
+                        <p class="mb-0 text-secondary">Quick menampilkan input penting. Advanced membuka kontrol editorial dan format teknis.</p>
+                      </div>
+                      <label class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" name="advanced_mode" data-regenerate-advanced-toggle>
+                        <span class="form-check-label">Advanced Mode</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="col-12">
+                    <label class="form-label">Cara menentukan konfigurasi clipping</label>
+                    <select class="form-select" name="configuration_mode" data-regenerate-configuration-mode>
+                      <option value="MANUAL" <%= outputSummary.requestSnapshot.strategy.configurationMode !== 'AUTO' ? 'selected' : '' %>>Manual - pakai parameter yang saya isi</option>
+                      <option value="AUTO" <%= outputSummary.requestSnapshot.strategy.configurationMode === 'AUTO' ? 'selected' : '' %>>Auto - sistem menyesuaikan dari video</option>
+                    </select>
+                    <div class="form-text">Input wajib tetap dipakai. Auto hanya menyesuaikan jumlah clip, durasi, kandidat, dan prioritas editorial sebelum render.</div>
+                    <div class="alert alert-info mt-2 mb-0" data-regenerate-auto-notice hidden>Mode Auto memilih jumlah clip, durasi minimum, pool kandidat, hook, dan prioritas editorial. Batas durasi maksimum, bahasa, platform, visual, dan subtitle tetap mengikuti pilihan kamu.</div>
                   </div>
 
                   <div class="col-12">
@@ -304,11 +327,11 @@
                     <div class="border rounded-4 p-3 bg-light-subtle">
                       <h3 class="h5 mb-3">Konten inti</h3>
                       <div class="row g-3">
-                        <div class="col-md-6">
+                        <div class="col-md-6" data-regenerate-auto-hide>
                           <label class="form-label">Content title</label>
                           <input class="form-control" name="content_title" value="<%= outputSummary.requestSnapshot.contentTitle ?? '' %>" placeholder="Judul video source atau episode">
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-6" data-regenerate-auto-hide>
                           <label class="form-label">Topic</label>
                           <textarea class="form-control" name="topic" rows="4" maxlength="20000" placeholder="Topik utama, konteks panjang, istilah penting, atau daftar angle yang perlu dipahami AI."><%= outputSummary.requestSnapshot.topic ?? '' %></textarea>
                           <div class="form-text">Bisa isi banyak teks. Dipakai untuk membantu AI memahami konteks besar video.</div>
@@ -319,6 +342,22 @@
                             <% ['TIKTOK','INSTAGRAM_REELS','FACEBOOK_REELS','YOUTUBE_SHORTS','CUSTOM'].forEach((value) => { %>
                               <option value="<%= value %>" <%= outputSummary.requestSnapshot.strategy.targetPlatform === value ? 'selected' : '' %>><%= value %></option>
                             <% }) %>
+                          </select>
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label">Bahasa video &amp; transkrip</label>
+                          <% const regenerateSourceLanguage = String(outputSummary.requestSnapshot.sourceLanguage ?? 'id').toLowerCase(); %>
+                          <select class="form-select" name="source_language" required>
+                            <option value="id" <%= regenerateSourceLanguage.startsWith('id') ? 'selected' : '' %>>Indonesia</option>
+                            <option value="en" <%= regenerateSourceLanguage.startsWith('en') ? 'selected' : '' %>>English</option>
+                          </select>
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label">Bahasa subtitle &amp; hasil</label>
+                          <% const regenerateSubtitleLanguage = String(outputSummary.requestSnapshot.subtitle.language ?? 'id').toLowerCase(); %>
+                          <select class="form-select" name="subtitle_language" required>
+                            <option value="id" <%= regenerateSubtitleLanguage.startsWith('id') ? 'selected' : '' %>>Indonesia</option>
+                            <option value="en" <%= regenerateSubtitleLanguage.startsWith('en') ? 'selected' : '' %>>English</option>
                           </select>
                         </div>
                         <div class="col-md-3">
@@ -345,6 +384,24 @@
                           </select>
                         </div>
                         <div class="col-md-3">
+                          <label class="form-label">Primary tone</label>
+                          <select class="form-select" name="tones_text">
+                            <% const regenerateTones = outputSummary.requestSnapshot.strategy.tones; %>
+                            <% ['EDUCATIONAL','SERIOUS','DIRECT','CASUAL','CONTROVERSIAL','EMOTIONAL','CONFIDENT','HUMOROUS','CURIOUS','DRAMATIC','CRITICAL','INSPIRATIONAL','EMPATHETIC','URGENT','ANALYTICAL','AUTHORITATIVE','FRIENDLY','CHALLENGING','REFLECTIVE','PRACTICAL','SHARP','WARM','SUSPENSEFUL'].forEach((value) => { %>
+                              <option value="<%= value %>" <%= String(regenerateTones[0] ?? 'EDUCATIONAL').toUpperCase() === value ? 'selected' : '' %>><%= value %></option>
+                            <% }) %>
+                          </select>
+                        </div>
+                        <div class="col-md-3">
+                          <label class="form-label">Secondary tone</label>
+                          <select class="form-select" name="secondary_tone">
+                            <option value="">None</option>
+                            <% ['SERIOUS','DIRECT','CASUAL','CONTROVERSIAL','EMOTIONAL','CONFIDENT','HUMOROUS','CURIOUS','DRAMATIC','CRITICAL','INSPIRATIONAL','EMPATHETIC','URGENT','ANALYTICAL','AUTHORITATIVE','FRIENDLY','CHALLENGING','REFLECTIVE','PRACTICAL','SHARP','WARM','SUSPENSEFUL'].forEach((value) => { %>
+                              <option value="<%= value %>" <%= String(regenerateTones[1] ?? '').toUpperCase() === value ? 'selected' : '' %>><%= value %></option>
+                            <% }) %>
+                          </select>
+                        </div>
+                        <div class="col-md-3" data-regenerate-auto-hide>
                           <label class="form-label">Standalone priority</label>
                           <select class="form-select" name="standalone_priority">
                             <% ['REQUIRED','PREFERRED','FLEXIBLE'].forEach((value) => { %>
@@ -352,11 +409,11 @@
                             <% }) %>
                           </select>
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-6" data-regenerate-auto-hide>
                           <label class="form-label">Target audience</label>
                           <input class="form-control" name="target_audience" value="<%= outputSummary.requestSnapshot.targetAudience ?? '' %>" placeholder="Founder, mahasiswa, creator pemula, tim marketing">
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-6" data-regenerate-auto-hide>
                           <label class="form-label">Main editor brief</label>
                           <textarea class="form-control" name="content_context" rows="4" placeholder="Arahkan jenis hook, angle judul, pacing, payoff, dan kualitas clip yang ingin diprioritaskan."><%= outputSummary.requestSnapshot.contentContext ?? '' %></textarea>
                           <div class="form-text">Kalau ingin cepat, cukup ubah brief ini dan biarkan sisanya ikut default terbaik.</div>
@@ -369,11 +426,12 @@
                     <div class="border rounded-4 p-3">
                       <h3 class="h5 mb-3">Target clip</h3>
                       <div class="row g-3">
-                        <div class="col-md-3">
+                        <div class="col-md-3" data-regenerate-auto-hide>
                           <label class="form-label">Desired clip count</label>
-                          <input class="form-control" name="desired_clip_count" type="number" min="1" max="30" step="1" value="<%= outputSummary.requestSnapshot.strategy.desiredClipCount ?? '' %>">
+                          <input class="form-control" name="desired_clip_count" type="number" min="1" max="10" step="1" value="<%= Math.min(Number(outputSummary.requestSnapshot.strategy.desiredClipCount) || 3, 10) %>">
+                          <div class="form-text">Maksimal 10 clip per regenerate.</div>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-3" data-regenerate-auto-hide>
                           <label class="form-label">Min duration</label>
                           <input class="form-control" name="minimum_duration_seconds" type="number" min="10" max="180" step="1" value="<%= outputSummary.requestSnapshot.strategy.minimumDurationSeconds ?? '' %>">
                         </div>
@@ -381,11 +439,11 @@
                           <label class="form-label">Max duration</label>
                           <input class="form-control" name="maximum_duration_seconds" type="number" min="15" max="180" step="1" value="<%= outputSummary.requestSnapshot.strategy.maximumDurationSeconds ?? '' %>">
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-3" data-regenerate-auto-hide>
                           <label class="form-label">Minimum viral score</label>
                           <input class="form-control" name="minimum_viral_score" type="number" min="0" max="10" step="0.1" value="<%= outputSummary.requestSnapshot.strategy.minimumViralScore ?? '' %>">
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-3" data-regenerate-auto-hide>
                           <label class="form-label">Hook style</label>
                           <select class="form-select" name="hook_style">
                             <option value="" <%= !outputSummary.requestSnapshot.strategy.hookStyle ? 'selected' : '' %>>Auto</option>
@@ -419,7 +477,7 @@
                             <% }) %>
                           </select>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-3" data-regenerate-auto-hide>
                           <label class="form-label">CTA preference</label>
                           <select class="form-select" name="cta_preference">
                             <option value="" <%= !outputSummary.requestSnapshot.strategy.ctaPreference ? 'selected' : '' %>>Auto</option>
@@ -429,7 +487,7 @@
                             <option value="SAVE" <%= outputSummary.requestSnapshot.strategy.ctaPreference === 'SAVE' ? 'selected' : '' %>>Save</option>
                           </select>
                         </div>
-                        <div class="col-md-3 form-check d-flex align-items-end">
+                        <div class="col-md-3 form-check d-flex align-items-end" data-regenerate-auto-hide>
                           <div>
                             <input class="form-check-input" type="checkbox" name="require_spoken_audio" id="require_spoken_audio_regenerate" <%= outputSummary.requestSnapshot.strategy.requireSpokenAudio !== false ? 'checked' : '' %>>
                             <label class="form-check-label" for="require_spoken_audio_regenerate">Require spoken audio</label>
@@ -461,29 +519,7 @@
                             <option value="SPEAKER_AND_SCREEN" <%= outputSummary.requestSnapshot.visual.cropStrategy === 'SPEAKER_AND_SCREEN' ? 'selected' : '' %>>Speaker and screen</option>
                           </select>
                         </div>
-                        <div class="col-md-3">
-                          <label class="form-label">Layout template</label>
-                          <select class="form-select" name="layout_template">
-                            <% ['STANDARD','PODCAST_SPOTLIGHT_9X16'].forEach((value) => { %>
-                              <option value="<%= value %>" <%= outputSummary.requestSnapshot.visual.layoutTemplate === value ? 'selected' : '' %>><%= value %></option>
-                            <% }) %>
-                          </select>
-                        </div>
-                        <div class="col-md-3" data-regenerate-podcast-spotlight>
-                          <input type="hidden" name="podcast_source_enabled" value="false">
-                          <div class="form-check pt-4">
-                            <input class="form-check-input" type="checkbox" name="podcast_source_enabled" value="true" id="podcast_source_enabled_regenerate" <%= outputSummary.requestSnapshot.visual.podcastSourceEnabled !== false ? 'checked' : '' %>>
-                            <label class="form-check-label" for="podcast_source_enabled_regenerate">Tampilkan source channel</label>
-                          </div>
-                          <div class="form-text">Nama source diambil dari channel YouTube, bukan nama branding user.</div>
-                        </div>
-                        <div class="col-md-3" data-regenerate-podcast-spotlight>
-                          <label class="form-label">Podcast Spotlight style</label>
-                          <select class="form-select" name="podcast_spotlight_style">
-                            <option value="EDITORIAL_GOLD" <%= outputSummary.requestSnapshot.visual.podcastSpotlightStyle !== 'VIDEO_FIRST' ? 'selected' : '' %>>Editorial Gold</option>
-                            <option value="VIDEO_FIRST" <%= outputSummary.requestSnapshot.visual.podcastSpotlightStyle === 'VIDEO_FIRST' ? 'selected' : '' %>>Video First</option>
-                          </select>
-                        </div>
+                        <input type="hidden" name="layout_template" value="STANDARD">
                         <div class="col-md-3 form-check d-flex align-items-end" data-regenerate-standard-headline>
                           <div>
                             <input type="hidden" name="headline_overlay_enabled" value="false">
@@ -557,13 +593,6 @@
                             <label class="form-check-label" for="subtitle_profanity_censor_regenerate">Profanity censor</label>
                           </div>
                         </div>
-                        <div class="col-md-6 form-check d-flex align-items-end">
-                          <div>
-                            <input class="form-check-input" type="checkbox" name="subtitle_typo_correction" id="subtitle_typo_correction_regenerate" <%= outputSummary.requestSnapshot.subtitle.typoCorrection ? 'checked' : '' %>>
-                            <label class="form-check-label" for="subtitle_typo_correction_regenerate">Koreksi typo subtitle saja</label>
-                            <div class="form-text">Tidak rewrite kalimat; hanya salah eja jelas, timing dan pemenggalan tetap.</div>
-                          </div>
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -579,19 +608,11 @@
                   </div>
 
                   <div class="col-12">
-                    <details class="border rounded-4 p-3">
+                    <details class="border rounded-4 p-3" data-regenerate-advanced-panel hidden>
                       <summary class="fw-semibold">Advanced controls</summary>
                       <p class="text-secondary small mt-2 mb-3">Bagian ini untuk helper packaging, opsi teknis, dan arahan editorial yang lebih spesifik.</p>
                       <div class="row g-3">
-                        <div class="col-md-3">
-                          <label class="form-label">Bahasa video &amp; analisis</label>
-                          <select class="form-select" name="source_language">
-                            <% const regenerateSourceLanguage = String(outputSummary.requestSnapshot.sourceLanguage ?? 'id').toLowerCase(); %>
-                            <option value="id" <%= regenerateSourceLanguage.startsWith('id') ? 'selected' : '' %>>Indonesia</option>
-                            <option value="en" <%= regenerateSourceLanguage.startsWith('en') ? 'selected' : '' %>>English</option>
-                          </select>
-                          <div class="form-text">Bahasa utama audio/transcript. Pilih English untuk sumber berbahasa Inggris.</div>
-                        </div>
+                        <div class="col-md-3"><label class="form-label">Niche</label><input class="form-control" name="niche" maxlength="120" value="<%= outputSummary.requestSnapshot.niche ?? '' %>" placeholder="Finance, health, creator education"></div>
                         <div class="col-md-3">
                           <label class="form-label">Speaker count</label>
                           <input class="form-control" name="speaker_count" type="number" min="1" max="20" step="1" value="<%= outputSummary.requestSnapshot.speakerCount ?? '' %>">
@@ -612,40 +633,9 @@
                           <label class="form-label">Custom vocabulary</label>
                           <textarea class="form-control" name="custom_vocabulary_text" rows="4"><%= outputSummary.requestSnapshot.customVocabulary.join(', ') %></textarea>
                         </div>
-                        <div class="col-md-6">
-                          <label class="form-label">Tones</label>
-                          <textarea class="form-control" name="tones_text" rows="4"><%= outputSummary.requestSnapshot.strategy.tones.join(', ') %></textarea>
-                          <select class="form-select mt-2" data-append-to-field="tones_text">
-                            <option value="">Tambah tone preset...</option>
-                            <% [
-                              'EDUCATIONAL',
-                              'SERIOUS',
-                              'DIRECT',
-                              'CASUAL',
-                              'CONTROVERSIAL',
-                              'EMOTIONAL',
-                              'CONFIDENT',
-                              'HUMOROUS',
-                              'CURIOUS',
-                              'DRAMATIC',
-                              'CRITICAL',
-                              'INSPIRATIONAL',
-                              'EMPATHETIC',
-                              'URGENT',
-                              'ANALYTICAL',
-                              'AUTHORITATIVE',
-                              'FRIENDLY',
-                              'CHALLENGING',
-                              'REFLECTIVE',
-                              'PRACTICAL',
-                              'SHARP',
-                              'WARM',
-                              'SUSPENSEFUL'
-                            ].forEach((value) => { %>
-                              <option value="<%= value %>"><%= value %></option>
-                            <% }) %>
-                          </select>
-                        </div>
+                        <div class="col-12"><label class="form-label">Selection brief</label><textarea class="form-control" name="selection_brief" rows="4" maxlength="12000"><%= outputSummary.requestSnapshot.strategy.selectionBrief ?? '' %></textarea></div>
+                        <div class="col-12"><label class="form-label">Avoidance brief</label><textarea class="form-control" name="avoidance_brief" rows="3" maxlength="12000"><%= outputSummary.requestSnapshot.strategy.avoidanceBrief ?? '' %></textarea></div>
+                        <div class="col-12"><label class="form-label">Packaging brief</label><textarea class="form-control" name="packaging_brief" rows="3" maxlength="12000"><%= outputSummary.requestSnapshot.strategy.packagingBrief ?? '' %></textarea></div>
                         <div class="col-md-4">
                           <label class="form-label">Preferred topics</label>
                           <textarea class="form-control" name="preferred_topics_text" rows="3"><%= outputSummary.requestSnapshot.strategy.preferredTopics.join(', ') %></textarea>
@@ -721,18 +711,6 @@
                           <input class="form-control" name="subtitle_font_family" value="<%= outputSummary.requestSnapshot.subtitle.fontFamily ?? '' %>">
                         </div>
                         <div class="col-md-4">
-                          <label class="form-label">Selection brief</label>
-                          <textarea class="form-control" name="selection_brief" rows="3"><%= outputSummary.requestSnapshot.strategy.selectionBrief ?? '' %></textarea>
-                        </div>
-                        <div class="col-md-4">
-                          <label class="form-label">Avoidance brief</label>
-                          <textarea class="form-control" name="avoidance_brief" rows="3"><%= outputSummary.requestSnapshot.strategy.avoidanceBrief ?? '' %></textarea>
-                        </div>
-                        <div class="col-md-4">
-                          <label class="form-label">Packaging brief</label>
-                          <textarea class="form-control" name="packaging_brief" rows="3"><%= outputSummary.requestSnapshot.strategy.packagingBrief ?? '' %></textarea>
-                        </div>
-                        <div class="col-md-4">
                           <label class="form-label">Framing detection mode</label>
                           <select class="form-select" name="framing_detection_mode">
                             <% ['COMBINED','TRANSCRIPT_ONLY','FACE_DETECTION_ONLY'].forEach((value) => { %>
@@ -741,15 +719,6 @@
                           </select>
                         </div>
                         <input type="hidden" name="split_min_face_count" value="2">
-                        <div class="col-md-4">
-                          <label class="form-label">Bahasa subtitle</label>
-                          <% const regenerateSubtitleLanguage = String(outputSummary.requestSnapshot.subtitle.language ?? 'id').toLowerCase(); %>
-                          <select class="form-select" name="subtitle_language" required>
-                            <option value="id" <%= regenerateSubtitleLanguage.startsWith('id') ? 'selected' : '' %>>Indonesia</option>
-                            <option value="en" <%= regenerateSubtitleLanguage.startsWith('en') ? 'selected' : '' %>>English</option>
-                          </select>
-                          <div class="form-text">Bahasa teks subtitle pada output baru. Default mengikuti Indonesia.</div>
-                        </div>
                         <div class="col-md-4">
                           <label class="form-label">Subtitle primary format</label>
                           <select class="form-select" name="subtitle_primary_format">
@@ -1053,6 +1022,24 @@
           <article class="analyzer-card"><span>Candidate sources</span><strong><%= outputSummary.analyzer?.openaiCandidateCount ?? 0 %> OpenAI</strong><p><%= outputSummary.analyzer?.heuristicCandidateCount ?? 0 %> tambahan Python heuristic</p></article>
           <article class="analyzer-card"><span>Attempted AI path</span><strong><%= outputSummary.analyzer?.attemptedProviderLabel ?? '-' %></strong><p><%= outputSummary.analyzer?.attemptedModelLabel ?? 'Tidak ada percobaan provider eksternal.' %></p></article>
         </div>
+        <% const effectiveConfiguration = outputSummary.analyzer?.effectiveConfiguration; %>
+        <% if (effectiveConfiguration?.mode) { %>
+          <div class="candidate-caption-box mt-3">
+            <strong>Konfigurasi clipping yang dipakai</strong>
+            <p>
+              Mode <strong><%= effectiveConfiguration.mode === 'AUTO' ? 'Auto' : 'Manual' %></strong> ·
+              <%= effectiveConfiguration.desiredClipCount ?? '-' %> clip ·
+              durasi <%= effectiveConfiguration.minimumDurationSeconds ?? '-' %>-<%= effectiveConfiguration.maximumDurationSeconds ?? '-' %> detik ·
+              pool kandidat <%= effectiveConfiguration.candidatePoolCount ?? '-' %> ·
+              skor minimum <%= effectiveConfiguration.minimumViralScore ?? '-' %>.
+              <% if (effectiveConfiguration.mode === 'AUTO') { %>
+                Nilai editorial ini dihitung sistem dari durasi dan isi video; input wajib dan pilihan visual tetap mengikuti form kamu.
+              <% } else { %>
+                Nilai ini berasal dari pengaturan manual saat job dibuat.
+              <% } %>
+            </p>
+          </div>
+        <% } %>
         <% const providerAudit = outputSummary.analyzer?.providerCandidateAudit; %>
         <% if (providerAudit?.rawCandidateCount !== null && providerAudit?.rawCandidateCount !== undefined) { %>
           <div class="candidate-caption-box mt-3">
@@ -1124,13 +1111,6 @@
               </div>
             <% } %>
 
-            <% if (requestSnapshot.contentContext) { %>
-              <div class="candidate-caption-box mb-3">
-                <strong>Analysis brief</strong>
-                <p><%= requestSnapshot.contentContext %></p>
-              </div>
-            <% } %>
-
             <div class="clip-output-review-grid">
               <article class="clip-output-review-card">
                 <span>Preferred topics</span>
@@ -1169,25 +1149,6 @@
                 </p>
               </article>
             </div>
-
-            <% if (snapshotStrategy.selectionBrief) { %>
-              <div class="candidate-caption-box mt-3">
-                <strong>Selection brief</strong>
-                <p><%= snapshotStrategy.selectionBrief %></p>
-              </div>
-            <% } %>
-            <% if (snapshotStrategy.avoidanceBrief) { %>
-              <div class="candidate-caption-box mt-3">
-                <strong>Avoidance brief</strong>
-                <p><%= snapshotStrategy.avoidanceBrief %></p>
-              </div>
-            <% } %>
-            <% if (snapshotStrategy.packagingBrief) { %>
-              <div class="candidate-caption-box mt-3">
-                <strong>Packaging brief</strong>
-                <p><%= snapshotStrategy.packagingBrief %></p>
-              </div>
-            <% } %>
 
             <% if (snapshotCustomVocabulary.length) { %>
               <div class="candidate-tags mt-3">
@@ -1536,33 +1497,6 @@
             </article>
           <% }) %>
         </div>
-      </section>
-
-      <section class="panel mt-4">
-        <div class="panel-heading">
-          <div><h2>Technical stages</h2><p>Detail teknis pipeline disembunyikan default supaya halaman user lebih ringkas.</p></div>
-        </div>
-        <details>
-          <summary>Lihat fase pipeline</summary>
-          <div class="table-responsive mt-3">
-            <table class="table align-middle mobile-card-table technical-stage-table">
-              <thead><tr><th>Phase</th><th>Status</th><th>Progress</th><th>Weight</th></tr></thead>
-              <tbody>
-                <% if (!groupedStages.length) { %>
-                  <tr><td colspan="4" class="empty-cell">No stage projection yet.</td></tr>
-                <% } %>
-                <% groupedStages.forEach((stage) => { %>
-                  <tr data-stage-row="<%= stage.key %>">
-                    <td data-label="Phase"><strong><%= stage.label %></strong></td>
-                    <td data-label="Status"><span class="status status-<%= stage.status.toLowerCase() %>" data-stage-status><%= stage.status %></span></td>
-                    <td data-label="Progress" data-stage-progress><%= stage.progressPercent %>%</td>
-                    <td data-label="Weight"><%= Number(stage.progressWeight).toString() %></td>
-                  </tr>
-                <% }) %>
-              </tbody>
-            </table>
-          </div>
-        </details>
       </section>
 
     <% } %>

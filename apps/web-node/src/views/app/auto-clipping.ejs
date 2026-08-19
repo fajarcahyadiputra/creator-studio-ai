@@ -10,8 +10,6 @@
   <div class="form-message"></div>
   <form id="auto-clip-form" class="wizard-panel">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <script type="application/json" id="auto-clip-presets-json"><%- JSON.stringify(clippingPresets) %></script>
-    <script type="application/json" id="auto-clip-brand-kits-json"><%- JSON.stringify(brandKits) %></script>
     <div class="user-form-toolbar d-flex justify-content-between align-items-center mb-4 gap-3">
       <div>
         <span class="eyebrow">Mode</span>
@@ -22,49 +20,16 @@
         <span class="form-check-label">Advanced Mode</span>
       </label>
     </div>
-    <section class="wizard-step"><div class="step-number">0</div><div class="step-body"><h2>Preset and brand kit</h2><p class="user-step-lead">Pilih template strategi dan visual default supaya form baru langsung terisi arah yang paling sering kamu pakai.</p><div class="row g-3">
-      <div class="col-md-6">
-        <label class="form-label">Clipping preset</label>
-        <select class="form-select" name="clipping_preset_id" data-auto-clip-preset-selector>
-          <option value="">Manual defaults</option>
-          <% clippingPresets.forEach((preset) => { %>
-            <option value="<%= preset.id %>" <%= selectedPresetId === preset.id ? 'selected' : '' %>><%= preset.name %><%= preset.isDefault ? ' (default)' : '' %></option>
-          <% }) %>
-        </select>
-        <div class="form-text">Preset akan mengisi strategi inti dan style default agar form tidak perlu diisi dari nol.</div>
-      </div>
-      <div class="col-md-6">
-        <label class="form-label">Brand kit</label>
-        <select class="form-select" name="brand_kit_id" data-auto-clip-brand-kit-selector>
-          <option value="">No brand kit</option>
-          <% brandKits.forEach((brandKit) => { %>
-            <option value="<%= brandKit.id %>" <%= selectedBrandKitId === brandKit.id ? 'selected' : '' %>><%= brandKit.name %><%= brandKit.isDefault ? ' (default)' : '' %></option>
-          <% }) %>
-        </select>
-        <div class="form-text">Brand kit akan mengisi font subtitle, posisi, jumlah baris, dan safe margin.</div>
-      </div>
+    <section class="wizard-step"><div class="step-number">0</div><div class="step-body"><h2>Mode konfigurasi</h2><p class="user-step-lead">Pilih apakah sistem mengikuti input manual atau memilih parameter editorial terbaik dari video.</p><div class="row g-3">
       <div class="col-12">
-        <div class="auto-clip-preset-preview-grid">
-          <article class="auto-clip-preview-card">
-            <span class="eyebrow">Preset aktif</span>
-            <h3 data-auto-clip-preset-name>Manual defaults</h3>
-            <p data-auto-clip-preset-description>Gunakan default bawaan untuk mulai cepat, atau pilih preset agar strategi clipping langsung terisi.</p>
-            <div class="auto-clip-preview-tags" data-auto-clip-preset-tags>
-              <span>Platform flexible</span>
-              <span>Durasi manual</span>
-              <span>Hook auto</span>
-            </div>
-          </article>
-          <article class="auto-clip-preview-card auto-clip-preview-card--brand">
-            <span class="eyebrow">Brand kit aktif</span>
-            <h3 data-auto-clip-brand-name>No brand kit</h3>
-            <p data-auto-clip-brand-description>Pilih brand kit untuk subtitle style yang konsisten saat render pipeline final sudah aktif.</p>
-            <div class="auto-clip-preview-tags" data-auto-clip-brand-tags>
-              <span>Font default</span>
-              <span>Position manual</span>
-              <span>Safe margin default</span>
-            </div>
-          </article>
+        <label class="form-label">Cara menentukan konfigurasi clipping</label>
+        <select class="form-select" name="configuration_mode" data-auto-clip-configuration-mode>
+          <option value="MANUAL" selected>Manual - saya atur parameter clipping</option>
+          <option value="AUTO">Auto - sistem memilih konfigurasi terbaik dari video</option>
+        </select>
+        <div class="form-text">Auto hanya menentukan parameter editorial seperti jumlah clip, durasi, pool kandidat, dan hook. Sumber, hak penggunaan, bahasa, tujuan, layout, crop, dan subtitle tetap mengikuti input kamu.</div>
+        <div class="alert alert-info mt-2 mb-0" data-auto-clip-configuration-preview hidden>
+          Sistem akan memakai nilai di form sebagai batas aman/fallback, lalu menampilkan konfigurasi efektif pada hasil analisis untuk direview.
         </div>
       </div>
     </div></div></section>
@@ -84,14 +49,16 @@
 
       <label class="form-check mt-3"><input class="form-check-input" type="checkbox" name="rights_confirmed" required><span class="form-check-label">I own or have permission to process this content.</span></label>
     </div></section>
-    <section class="wizard-step"><div class="step-number">2</div><div class="step-body"><h2>Clip strategy</h2><p class="user-step-lead">Fokus ke target clip yang benar-benar penting. Opsi editorial detail tetap tersedia di panel lanjutan kalau memang dibutuhkan.</p><div class="row g-3">
+    <section class="wizard-step"><div class="step-number">2</div><div class="step-body"><h2>Clip strategy</h2><p class="user-step-lead">Fokus ke target clip yang benar-benar penting. Opsi editorial detail tetap tersedia di panel lanjutan kalau memang dibutuhkan.</p><div class="alert alert-info" data-auto-mode-strategy-notice hidden>Mode <strong>Auto</strong> aktif. Sistem akan memilih momen, jumlah clip, durasi, hook, dan ending terbaik dari video. Kamu tetap dapat mengatur platform, tujuan, tone, visual, subtitle, serta rapikan ucapan.</div><div class="row g-3">
       <div class="col-12">
         <div class="border rounded-4 p-3 bg-light-subtle">
           <h3 class="h5 mb-3">Konten inti</h3>
           <div class="row g-3">
-            <div class="col-md-6"><label class="form-label">Judul video source</label><input class="form-control" name="title" maxlength="255" placeholder="Judul asli video atau topik episode"></div>
-            <div class="col-md-6"><label class="form-label">Topik utama konten</label><textarea class="form-control" name="topic" rows="4" maxlength="20000" placeholder="Contoh: ekonomi Indonesia, kesehatan ginjal, bisnis kreator, personal finance, isu sosial, atau daftar angle panjang yang perlu dipahami AI."><%= formDefaults.topic %></textarea><div class="form-text">Bisa isi banyak teks. Pakai untuk menjelaskan konteks besar video, istilah penting, dan sudut pandang utama.</div></div>
+            <div class="col-md-6" data-auto-mode-hide><label class="form-label">Judul video source</label><input class="form-control" name="title" maxlength="255" placeholder="Judul asli video atau topik episode"></div>
+            <div class="col-md-6" data-auto-mode-hide><label class="form-label">Topik utama konten</label><textarea class="form-control" name="topic" rows="4" maxlength="20000" placeholder="Contoh: ekonomi Indonesia, kesehatan ginjal, bisnis kreator, personal finance, isu sosial, atau daftar angle panjang yang perlu dipahami AI."><%= formDefaults.topic %></textarea><div class="form-text">Bisa isi banyak teks. Pakai untuk menjelaskan konteks besar video, istilah penting, dan sudut pandang utama.</div></div>
             <div class="col-md-3"><label class="form-label">Platform</label><select class="form-select" name="platform"><option <%= formDefaults.platform === 'YOUTUBE_SHORTS' ? 'selected' : '' %>>YOUTUBE_SHORTS</option><option <%= formDefaults.platform === 'TIKTOK' ? 'selected' : '' %>>TIKTOK</option><option <%= formDefaults.platform === 'INSTAGRAM_REELS' ? 'selected' : '' %>>INSTAGRAM_REELS</option><option <%= formDefaults.platform === 'FACEBOOK_REELS' ? 'selected' : '' %>>FACEBOOK_REELS</option></select></div>
+            <div class="col-md-3"><label class="form-label">Bahasa video &amp; transkrip</label><select class="form-select" name="source_language" required><option value="id" <%= String(formDefaults.sourceLanguage).toLowerCase().startsWith('id') ? 'selected' : '' %>>Indonesia</option><option value="en" <%= String(formDefaults.sourceLanguage).toLowerCase().startsWith('en') ? 'selected' : '' %>>English</option></select><div class="form-text">Pilih sesuai bahasa yang diucapkan di video.</div></div>
+            <div class="col-md-3"><label class="form-label">Bahasa subtitle &amp; hasil</label><select class="form-select" name="subtitle_language" required><option value="id" <%= String(formDefaults.subtitleLanguage).toLowerCase().startsWith('id') ? 'selected' : '' %>>Indonesia</option><option value="en" <%= String(formDefaults.subtitleLanguage).toLowerCase().startsWith('en') ? 'selected' : '' %>>English</option></select><div class="form-text">Untuk video English, pilih English agar subtitle dan title natural.</div></div>
             <div class="col-md-3"><label class="form-label">Objective</label><select class="form-select" name="objective">
               <% [
                 ['EDUCATION', 'Edukasi / insight jelas'],
@@ -168,8 +135,8 @@
                 <option value="<%= value %>" <%= formDefaults.secondaryTone === value ? 'selected' : '' %>><%= label %></option>
               <% }) %>
             </select></div>
-            <div class="col-md-6"><label class="form-label">Target audience</label><input class="form-control" name="target_audience" maxlength="255" value="<%= formDefaults.targetAudience %>" placeholder="Founder, mahasiswa, creator pemula, tim marketing"></div>
-            <div class="col-md-6"><label class="form-label">Brief editor utama</label><textarea class="form-control" name="content_context" rows="4" maxlength="20000" placeholder="Jelaskan momen seperti apa yang harus dipilih: hook cepat, konflik, insight, payoff, dan ending yang ingin didapat."><%= formDefaults.contentContext %></textarea><div class="form-text">Kalau hanya ingin isi satu arahan utama, cukup isi field ini.</div></div>
+            <div class="col-md-6" data-auto-mode-hide><label class="form-label">Target audience</label><input class="form-control" name="target_audience" maxlength="255" value="<%= formDefaults.targetAudience %>" placeholder="Founder, mahasiswa, creator pemula, tim marketing"></div>
+            <div class="col-md-6" data-auto-mode-hide><label class="form-label">Brief editor utama</label><textarea class="form-control" name="content_context" rows="4" maxlength="20000" placeholder="Jelaskan momen seperti apa yang harus dipilih: hook cepat, konflik, insight, payoff, dan ending yang ingin didapat."><%= formDefaults.contentContext %></textarea><div class="form-text">Kalau hanya ingin isi satu arahan utama, cukup isi field ini.</div></div>
           </div>
         </div>
       </div>
@@ -177,10 +144,10 @@
         <div class="border rounded-4 p-3">
           <h3 class="h5 mb-3">Target clip</h3>
           <div class="row g-3">
-            <div class="col-md-4"><label class="form-label">Jumlah clip final</label><input class="form-control" name="clip_count" type="number" min="1" max="30" value="<%= formDefaults.clipCount %>"></div>
-            <div class="col-md-4"><label class="form-label">Durasi minimum</label><input class="form-control" name="min_duration" type="number" min="10" max="180" value="<%= formDefaults.minDuration %>"></div>
-            <div class="col-md-4"><label class="form-label">Durasi maksimum</label><input class="form-control" name="max_duration" type="number" min="15" max="180" value="<%= formDefaults.maxDuration %>"></div>
-            <div class="col-md-4"><label class="form-label">Gaya hook</label><select class="form-select" name="hook_style">
+            <div class="col-md-4" data-auto-mode-hide><label class="form-label">Jumlah clip final</label><input class="form-control" name="clip_count" type="number" min="1" max="10" value="<%= Math.min(Number(formDefaults.clipCount) || 5, 10) %>"><div class="form-text">Maksimal 10 clip per job.</div></div>
+            <div class="col-md-4" data-auto-mode-hide><label class="form-label">Durasi minimum</label><input class="form-control" name="min_duration" type="number" min="10" max="180" value="<%= formDefaults.minDuration %>"></div>
+            <div class="col-md-4"><label class="form-label">Durasi maksimum</label><input class="form-control" name="max_duration" type="number" min="15" max="180" value="<%= formDefaults.maxDuration %>"><div class="form-text">Batas atas clip. Mode Auto tetap tidak akan melewati nilai ini.</div></div>
+            <div class="col-md-4" data-auto-mode-hide><label class="form-label">Gaya hook</label><select class="form-select" name="hook_style">
               <option value="" <%= !formDefaults.hookStyle ? 'selected' : '' %>>Auto</option>
               <% [
                 ['QUESTION', 'Pertanyaan kuat'],
@@ -211,9 +178,9 @@
                 <option value="<%= value %>" <%= formDefaults.hookStyle === value ? 'selected' : '' %>><%= label %></option>
               <% }) %>
             </select></div>
-            <div class="col-md-4"><label class="form-label">Arah CTA</label><select class="form-select" name="cta_preference"><option value="" <%= !formDefaults.ctaPreference ? 'selected' : '' %>>Auto</option><option <%= formDefaults.ctaPreference === 'COMMENT' ? 'selected' : '' %>>Komentar</option><option <%= formDefaults.ctaPreference === 'SHARE' ? 'selected' : '' %>>Share</option><option <%= formDefaults.ctaPreference === 'FOLLOW' ? 'selected' : '' %>>Follow</option><option <%= formDefaults.ctaPreference === 'SAVE' ? 'selected' : '' %>>Save</option></select></div>
-            <div class="col-md-4"><label class="form-label">Prioritas clip mandiri</label><select class="form-select" name="standalone_priority"><option value="REQUIRED" <%= formDefaults.standalonePriority === 'REQUIRED' ? 'selected' : '' %>>Harus mandiri</option><option value="PREFERRED" <%= formDefaults.standalonePriority === 'PREFERRED' ? 'selected' : '' %>>Diutamakan mandiri</option><option value="FLEXIBLE" <%= formDefaults.standalonePriority === 'FLEXIBLE' ? 'selected' : '' %>>Fleksibel</option></select><div class="form-text">Default terbaik untuk kebanyakan kasus: <strong>Fleksibel</strong>.</div></div>
-            <div class="col-md-4"><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="require_spoken_audio" <%= formDefaults.requireSpokenAudio ? 'checked' : '' %>><span class="form-check-label">Wajib fokus ke momen dengan suara/dialog yang jelas</span></label></div>
+            <div class="col-md-4" data-auto-mode-hide><label class="form-label">Arah CTA</label><select class="form-select" name="cta_preference"><option value="" <%= !formDefaults.ctaPreference ? 'selected' : '' %>>Auto</option><option <%= formDefaults.ctaPreference === 'COMMENT' ? 'selected' : '' %>>Komentar</option><option <%= formDefaults.ctaPreference === 'SHARE' ? 'selected' : '' %>>Share</option><option <%= formDefaults.ctaPreference === 'FOLLOW' ? 'selected' : '' %>>Follow</option><option <%= formDefaults.ctaPreference === 'SAVE' ? 'selected' : '' %>>Save</option></select></div>
+            <div class="col-md-4" data-auto-mode-hide><label class="form-label">Prioritas clip mandiri</label><select class="form-select" name="standalone_priority"><option value="REQUIRED" <%= formDefaults.standalonePriority === 'REQUIRED' ? 'selected' : '' %>>Harus mandiri</option><option value="PREFERRED" <%= formDefaults.standalonePriority === 'PREFERRED' ? 'selected' : '' %>>Diutamakan mandiri</option><option value="FLEXIBLE" <%= formDefaults.standalonePriority === 'FLEXIBLE' ? 'selected' : '' %>>Fleksibel</option></select><div class="form-text">Default terbaik untuk kebanyakan kasus: <strong>Fleksibel</strong>.</div></div>
+            <div class="col-md-4" data-auto-mode-hide><label class="form-check mt-4"><input class="form-check-input" type="checkbox" name="require_spoken_audio" <%= formDefaults.requireSpokenAudio ? 'checked' : '' %>><span class="form-check-label">Wajib fokus ke momen dengan suara/dialog yang jelas</span></label></div>
             <div class="col-12">
               <label class="form-check auto-clip-choice-card" for="speech_cleanup_enabled">
                 <input class="form-check-input" type="checkbox" name="speech_cleanup_enabled" id="speech_cleanup_enabled">
@@ -226,20 +193,12 @@
           </div>
         </div>
       </div>
-      <div class="col-12" data-advanced-field hidden>
+      <div class="col-12" data-advanced-field data-auto-mode-hide hidden>
         <details class="border rounded-4 p-3">
           <summary class="fw-semibold">Advanced editor controls</summary>
           <p class="text-secondary small mt-2 mb-3">Bagian ini menyimpan helper packaging, daftar style, dan kontrol teknis yang lebih jarang dipakai.</p>
           <div class="row g-3">
             <div class="col-md-6"><label class="form-label">Niche</label><input class="form-control" name="niche" maxlength="120" value="<%= formDefaults.niche %>" placeholder="Marketing, finance, creator education"></div>
-            <div class="col-md-3">
-              <label class="form-label">Bahasa video &amp; analisis</label>
-              <select class="form-select" name="source_language">
-                <option value="id" <%= String(formDefaults.sourceLanguage).toLowerCase().startsWith('id') ? 'selected' : '' %>>Indonesia</option>
-                <option value="en" <%= String(formDefaults.sourceLanguage).toLowerCase().startsWith('en') ? 'selected' : '' %>>English</option>
-              </select>
-              <div class="form-text">Pilih bahasa utama yang dipakai di audio/transcript. Default: Indonesia.</div>
-            </div>
             <div class="col-md-3"><label class="form-label">Jumlah speaker</label><input class="form-control" name="speaker_count" type="number" min="1" max="20" value="<%= formDefaults.speakerCount %>"></div>
             <div class="col-md-6"><label class="form-label">Kata penting / custom vocabulary</label><input class="form-control" name="custom_vocabulary" value="<%= formDefaults.customVocabulary %>" placeholder="Nama brand, produk, istilah teknis"></div>
             <div class="col-md-3"><label class="form-label">Jumlah kandidat dianalisis</label><input class="form-control" name="candidate_pool_count" type="number" min="1" max="30" value="<%= formDefaults.candidatePoolCount %>"></div>
@@ -320,24 +279,8 @@
         <div class="row g-3">
           <div class="col-md-4"><label class="form-label">Aspect ratio</label><select class="form-select" name="aspect_ratio"><option <%= formDefaults.aspectRatio === '9:16' ? 'selected' : '' %>>9:16</option><option <%= formDefaults.aspectRatio === '1:1' ? 'selected' : '' %>>1:1</option><option <%= formDefaults.aspectRatio === '4:5' ? 'selected' : '' %>>4:5</option><option <%= formDefaults.aspectRatio === '16:9' ? 'selected' : '' %>>16:9</option></select></div>
           <div class="col-md-4" data-crop-strategy-panel><label class="form-label">Crop dan speaker</label><select class="form-select" name="crop_strategy"><option value="SMART_SPEAKER" <%= ['SMART_SPEAKER','ACTIVE_SPEAKER','SPLIT_SCREEN'].includes(formDefaults.cropStrategy) ? 'selected' : '' %>>Smart speaker - adaptif 1-4 wajah</option><option value="AUTO_REFRAME" <%= formDefaults.cropStrategy === 'AUTO_REFRAME' ? 'selected' : '' %>>Auto reframe umum</option><option value="FACE_TRACKING" <%= formDefaults.cropStrategy === 'FACE_TRACKING' ? 'selected' : '' %>>Tracking satu wajah</option><option value="CENTER" <%= formDefaults.cropStrategy === 'CENTER' ? 'selected' : '' %>>Center crop</option><option value="SPEAKER_AND_SCREEN" <%= formDefaults.cropStrategy === 'SPEAKER_AND_SCREEN' ? 'selected' : '' %>>Speaker dan screen share</option></select><div class="form-text">Satu pembicara memenuhi layar. Saat 2-4 wajah terlihat stabil, layout otomatis berubah menjadi split yang rapi tanpa menduplikasi orang yang sama.</div></div>
-          <div class="col-md-6" data-layout-panel="9:16"><label class="form-label">9:16 layout template</label><select class="form-select" name="layout_template"><option value="STANDARD" <%= formDefaults.layoutTemplate === 'STANDARD' ? 'selected' : '' %>>Standard - video memenuhi canvas</option><option value="PODCAST_SPOTLIGHT_9X16" <%= formDefaults.layoutTemplate === 'PODCAST_SPOTLIGHT_9X16' ? 'selected' : '' %>>Podcast spotlight - branded frame</option></select><div class="form-text">Standard mendukung headline overlay opsional. Podcast spotlight memakai layout branding lengkap.</div></div>
+          <input type="hidden" name="layout_template" value="STANDARD">
           <div class="col-md-6" data-layout-panel="9:16"><label class="form-label">Branding header</label><div class="form-control bg-light d-flex align-items-center"><span><strong><%= formDefaults.channelName || 'Display name user' %></strong><%= formDefaults.channelTagline ? ` - ${formDefaults.channelTagline}` : '' %></span></div><div class="form-text">Nama dan logo header mengikuti Settings user. Label source di bagian bawah memakai nama channel YouTube dari video.</div></div>
-          <div class="col-12" data-layout-panel="9:16" data-podcast-spotlight-panel>
-            <div class="auto-clip-inline-options">
-              <label class="form-check mb-0">
-                <input class="form-check-input" type="checkbox" name="podcast_source_enabled" <%= formDefaults.podcastSourceEnabled !== false ? 'checked' : '' %>>
-                <span class="form-check-label">Tampilkan source channel</span>
-              </label>
-              <div>
-                <label class="form-label" for="podcast_spotlight_style">Style Podcast Spotlight</label>
-                <select class="form-select" id="podcast_spotlight_style" name="podcast_spotlight_style">
-                  <option value="EDITORIAL_GOLD" <%= formDefaults.podcastSpotlightStyle !== 'VIDEO_FIRST' ? 'selected' : '' %>>Editorial Gold - headline dominan</option>
-                  <option value="VIDEO_FIRST" <%= formDefaults.podcastSpotlightStyle === 'VIDEO_FIRST' ? 'selected' : '' %>>Video First - panel video lebih besar</option>
-                </select>
-              </div>
-              <p class="form-text mb-0">Source otomatis membaca nama channel YouTube. Untuk file upload, sistem memakai nama channel dari Settings sebagai fallback.</p>
-            </div>
-          </div>
           <div class="col-12" data-layout-panel="9:16" data-standard-headline-panel>
             <div class="auto-clip-inline-options">
               <label class="form-check mb-0">
@@ -418,13 +361,6 @@
                   <span class="form-check-label">Profanity censor</span>
                 </label>
               </div>
-              <div class="col-12">
-                <label class="form-check">
-                  <input class="form-check-input" type="checkbox" name="subtitle_typo_correction">
-                  <span class="form-check-label">Koreksi typo subtitle saja</span>
-                </label>
-                <div class="form-text ms-4">Opsional. Hanya memperbaiki salah eja yang jelas tanpa mengubah timestamp, pemenggalan, atau gaya bicara.</div>
-              </div>
             </div>
           </div>
           <div class="col-12" data-advanced-field hidden>
@@ -433,14 +369,6 @@
               <div class="row g-3 mt-2">
                 <div class="col-md-4"><label class="form-label">Framing detection mode</label><select class="form-select" name="framing_detection_mode"><option value="COMBINED" <%= formDefaults.framingDetectionMode === 'COMBINED' ? 'selected' : '' %>>COMBINED - transcript + face detection</option><option value="TRANSCRIPT_ONLY" <%= formDefaults.framingDetectionMode === 'TRANSCRIPT_ONLY' ? 'selected' : '' %>>TRANSCRIPT_ONLY - speaker based</option><option value="FACE_DETECTION_ONLY" <%= formDefaults.framingDetectionMode === 'FACE_DETECTION_ONLY' ? 'selected' : '' %>>FACE_DETECTION_ONLY - visual face count</option></select></div>
                 <input type="hidden" name="split_min_face_count" value="2">
-                <div class="col-md-4">
-                  <label class="form-label">Bahasa subtitle</label>
-                  <select class="form-select" name="subtitle_language">
-                    <option value="id" <%= String(formDefaults.subtitleLanguage).toLowerCase().startsWith('id') ? 'selected' : '' %>>Indonesia</option>
-                    <option value="en" <%= String(formDefaults.subtitleLanguage).toLowerCase().startsWith('en') ? 'selected' : '' %>>English</option>
-                  </select>
-                  <div class="form-text">Untuk video English, pilih English agar subtitle dan packaging tetap natural.</div>
-                </div>
                 <div class="col-md-4"><label class="form-label">Primary subtitle format</label><select class="form-select" name="subtitle_primary_format"><option <%= formDefaults.subtitlePrimaryFormat === 'ASS' ? 'selected' : '' %>>ASS</option><option <%= formDefaults.subtitlePrimaryFormat === 'SRT' ? 'selected' : '' %>>SRT</option><option <%= formDefaults.subtitlePrimaryFormat === 'VTT' ? 'selected' : '' %>>VTT</option><option <%= formDefaults.subtitlePrimaryFormat === 'JSON' ? 'selected' : '' %>>JSON</option></select></div>
                 <div class="col-md-4"><label class="form-label">Subtitle safe margin %</label><input class="form-control" name="subtitle_safe_margin_percent" type="number" min="0" max="30" value="<%= formDefaults.subtitleSafeMarginPercent %>"><div class="form-text">Layout Standard 9:16 memakai minimum 20% agar subtitle aman dari tombol platform.</div></div>
                 <div class="col-md-4"><label class="form-label">Font</label><input class="form-control" name="subtitle_font_family" value="<%= formDefaults.subtitleFontFamily %>" placeholder="Montserrat"></div>

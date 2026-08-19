@@ -33,7 +33,9 @@ vi.mock("../../infrastructure/database/prisma.js", () => ({
 
 vi.mock("../../infrastructure/storage/s3.js", () => ({
   createInternalSignedObjectReadUrl: vi.fn().mockResolvedValue("http://minio:9000/signed-read-url"),
-  createInternalSignedObjectWriteUrl: vi.fn().mockImplementation(async (objectKey: string) => `http://minio:9000/upload/${objectKey}`)
+  createInternalSignedObjectWriteUrl: vi.fn().mockImplementation(async (objectKey: string) => `http://minio:9000/upload/${objectKey}`),
+  deleteObjectKeys: vi.fn().mockResolvedValue(undefined),
+  objectExists: vi.fn().mockResolvedValue(true)
 }));
 
 describe("internal clip output routes", () => {

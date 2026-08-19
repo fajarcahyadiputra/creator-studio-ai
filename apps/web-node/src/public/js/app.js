@@ -39,6 +39,47 @@ function showMessage(container, message, type = "danger") {
   container.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
 }
 
+function normalizeRegenerateAutoClipPayload(form, payload) {
+  if (!form.matches('form[action^="/api/v1/auto-clipping/jobs/"][action$="/regenerate"]')) {
+    return payload;
+  }
+
+  delete payload.advanced_mode;
+  const secondaryTone = typeof payload.secondary_tone === "string" ? payload.secondary_tone.trim() : "";
+  if (secondaryTone) {
+    payload.tones_text = [payload.tones_text, secondaryTone].filter(Boolean).join(",");
+  }
+  delete payload.secondary_tone;
+  if (payload.configuration_mode !== "AUTO") return payload;
+
+  for (const key of [
+    "content_title",
+    "content_context",
+    "topic",
+    "niche",
+    "target_audience",
+    "desired_clip_count",
+    "candidate_pool_count",
+    "minimum_duration_seconds",
+    "minimum_viral_score",
+    "preferred_topics_text",
+    "topics_to_avoid_text",
+    "sensitive_topics_text",
+    "clip_style_tags_text",
+    "virality_priorities_text",
+    "selection_brief",
+    "avoidance_brief",
+    "packaging_brief",
+    "hook_style",
+    "cta_preference",
+    "standalone_priority",
+    "require_spoken_audio"
+  ]) {
+    delete payload[key];
+  }
+  return payload;
+}
+
 function splitCsv(value) {
   return String(value || "")
     .split(/[\n,;]+/)
@@ -317,7 +358,7 @@ for (const form of document.querySelectorAll("[data-api-form]")) {
           "x-csrf-token": csrf,
           ...(form.dataset.idempotencyKey === "true" ? { "idempotency-key": crypto.randomUUID() } : {})
         },
-        body: JSON.stringify(objectFromForm(form, formData))
+        body: JSON.stringify(normalizeRegenerateAutoClipPayload(form, objectFromForm(form, formData)))
       });
       const payload = response.status === 204 ? {} : await response.json();
       if (!response.ok) throw new Error(payload?.error?.message ?? "The request failed.");
@@ -444,6 +485,10 @@ for (const button of document.querySelectorAll("[data-api-action]")) {
 const autoClipForm = document.querySelector("#auto-clip-form");
 if (autoClipForm) {
   const advancedModeField = autoClipForm.querySelector('[name="advanced_mode"]');
+  const configurationModeField = autoClipForm.querySelector('[name="configuration_mode"]');
+  const configurationPreview = autoClipForm.querySelector('[data-auto-clip-configuration-preview]');
+  const autoModeHiddenFields = autoClipForm.querySelectorAll("[data-auto-mode-hide]");
+  const autoModeStrategyNotice = autoClipForm.querySelector("[data-auto-mode-strategy-notice]");
   const sourceModeField = autoClipForm.querySelector('[name="source_mode"]');
   const sourceUrlField = autoClipForm.querySelector('[name="source_url"]');
   const mediaAssetField = autoClipForm.querySelector('[name="media_asset_id"]');
@@ -556,6 +601,16 @@ if (autoClipForm) {
     const enabled = advancedModeField?.checked === true;
     for (const field of advancedFields) {
       field.hidden = !enabled;
+    }
+  };
+
+  const syncConfigurationMode = () => {
+    const isAuto = String(configurationModeField?.value || "MANUAL").toUpperCase() === "AUTO";
+    for (const field of autoModeHiddenFields) {
+      field.hidden = isAuto;
+    }
+    if (autoModeStrategyNotice) {
+      autoModeStrategyNotice.hidden = !isAuto;
     }
   };
 
@@ -714,6 +769,7 @@ if (autoClipForm) {
       : String(autoClipForm.querySelector('[name="crop_strategy"]')?.value || "AUTO_REFRAME").trim();
     const rightsConfirmed = autoClipForm.querySelector('[name="rights_confirmed"]')?.checked === true;
     const advancedMode = advancedModeField?.checked === true;
+    const configurationMode = String(configurationModeField?.value || "MANUAL").toUpperCase();
     const preferredTopics = splitCsv(autoClipForm.querySelector('[name="preferred_topics"]')?.value || "");
     const topicsToAvoid = splitCsv(autoClipForm.querySelector('[name="topics_to_avoid"]')?.value || "");
     const issues = [];
@@ -740,8 +796,12 @@ if (autoClipForm) {
         : `${aspectRatio || "-"} | ${humanizeAutoClipValue("cropStrategy", cropStrategy)} | ${humanizeAutoClipValue("layoutTemplate", layoutTemplate || "STANDARD")}`;
     }
     if (submitSummaryMode) {
-      submitSummaryMode.textContent = advancedMode ? "Advanced Mode" : "Quick Mode";
+      submitSummaryMode.textContent = `${configurationMode === "AUTO" ? "Auto" : "Manual"} | ${advancedMode ? "Advanced" : "Quick"}`;
     }
+    if (configurationPreview) {
+      configurationPreview.hidden = configurationMode !== "AUTO";
+    }
+    syncConfigurationMode();
     if (submitSummaryRights) {
       submitSummaryRights.textContent = rightsConfirmed
         ? "Rights confirmation sudah aman."
@@ -873,7 +933,6 @@ if (autoClipForm) {
     setFieldValue("subtitle_primary_format", subtitle.format);
     setCheckboxValue("subtitle_enabled", subtitle.enabled);
     setCheckboxValue("subtitle_burn_in", subtitle.burn_in);
-    setCheckboxValue("subtitle_typo_correction", subtitle.typo_correction || subtitle.typoCorrection);
     setFieldValue("subtitle_style", subtitle.style);
     setFieldValue("subtitle_text_case", subtitle.text_case || subtitle.textCase);
     setFieldValue("subtitle_font_family", subtitle.font_family);
@@ -913,6 +972,7 @@ if (autoClipForm) {
   if (brandKitSelector?.value) applyBrandKit(brandKitSelector.value);
   advancedModeField?.addEventListener("change", syncAdvancedMode);
   advancedModeField?.addEventListener("change", syncSubmitSummary);
+  configurationModeField?.addEventListener("change", syncSubmitSummary);
   sourceModeField?.addEventListener("change", syncSourceMode);
   autoClipForm.querySelector('[name="aspect_ratio"]')?.addEventListener("change", syncLayoutMode);
   autoClipForm.querySelector('[name="layout_template"]')?.addEventListener("change", syncLayoutMode);
@@ -968,6 +1028,7 @@ if (autoClipForm) {
         rights_confirmed: data.get("rights_confirmed") === "on"
       }),
       strategy: compactObject({
+        configuration_mode: String(data.get("configuration_mode") || "MANUAL").trim().toUpperCase(),
         target_platform: String(data.get("platform")),
         objective: String(data.get("objective")),
         tones,
@@ -1005,7 +1066,6 @@ if (autoClipForm) {
           podcast_spotlight_style: String(data.get("podcast_spotlight_style") || "EDITORIAL_GOLD").trim(),
           headline_overlay_enabled: data.get("headline_overlay_enabled") === "on",
           headline_overlay_position: String(data.get("headline_overlay_position") || "BOTTOM").trim(),
-          brand_kit_id: String(data.get("brand_kit_id") || "").trim() || undefined,
           framing_detection_mode: framingDetectionMode,
           split_on_multi_face: data.get("split_on_multi_face") === "on",
           split_min_face_count: data.get("split_min_face_count")
@@ -1032,7 +1092,7 @@ if (autoClipForm) {
               : undefined,
             word_highlight: subtitleWordHighlight,
             profanity_censor: data.get("subtitle_profanity_censor") === "on",
-            typo_correction: data.get("subtitle_typo_correction") === "on"
+            typo_correction: true
           })
         },
         ai: { credential_mode: "PLATFORM" }
@@ -1374,12 +1434,27 @@ for (const form of document.querySelectorAll('form[action^="/api/v1/tts/jobs/"][
 }
 
 for (const form of document.querySelectorAll('form[action^="/api/v1/auto-clipping/jobs/"][action$="/regenerate"]')) {
+  const configurationModeField = form.querySelector('[data-regenerate-configuration-mode]');
+  const autoHiddenFields = form.querySelectorAll('[data-regenerate-auto-hide]');
+  const autoNotice = form.querySelector('[data-regenerate-auto-notice]');
+  const advancedToggle = form.querySelector('[data-regenerate-advanced-toggle]');
+  const advancedPanel = form.querySelector('[data-regenerate-advanced-panel]');
   const layoutField = form.querySelector('[name="layout_template"]');
   const aspectRatioField = form.querySelector('[name="aspect_ratio"]');
   const panels = form.querySelectorAll("[data-regenerate-standard-headline]");
   const podcastPanels = form.querySelectorAll("[data-regenerate-podcast-spotlight]");
   const cropStrategyPanel = form.querySelector("[data-regenerate-crop-strategy]");
   const cropStrategyField = form.querySelector('[name="crop_strategy"]');
+  const syncRegenerateMode = () => {
+    const autoMode = configurationModeField?.value === "AUTO";
+    for (const field of autoHiddenFields) field.hidden = autoMode;
+    if (autoNotice instanceof HTMLElement) autoNotice.hidden = !autoMode;
+    if (advancedPanel instanceof HTMLElement) {
+      advancedPanel.hidden = autoMode || !(advancedToggle instanceof HTMLInputElement && advancedToggle.checked);
+      if (autoMode) advancedPanel.open = false;
+    }
+    if (advancedToggle instanceof HTMLInputElement) advancedToggle.disabled = autoMode;
+  };
   const syncStandardHeadlineControls = () => {
     const visible = layoutField?.value === "STANDARD" && aspectRatioField?.value === "9:16";
     for (const panel of panels) panel.hidden = !visible;
@@ -1398,7 +1473,10 @@ for (const form of document.querySelectorAll('form[action^="/api/v1/auto-clippin
   };
   layoutField?.addEventListener("change", syncStandardHeadlineControls);
   aspectRatioField?.addEventListener("change", syncStandardHeadlineControls);
+  configurationModeField?.addEventListener("change", syncRegenerateMode);
+  advancedToggle?.addEventListener("change", syncRegenerateMode);
   syncStandardHeadlineControls();
+  syncRegenerateMode();
 }
 
 const jobStreamRoot = document.querySelector("[data-job-stream]");
@@ -1824,8 +1902,8 @@ function validateAutoClipPayload(payload) {
   if (!Array.isArray(strategy.tones) || strategy.tones.length < 1 || strategy.tones.length > 5) {
     errors.push("strategy.tones must contain 1 to 5 values");
   }
-  if (!Number.isInteger(strategy.desired_clip_count) || strategy.desired_clip_count < 1 || strategy.desired_clip_count > 30) {
-    errors.push("strategy.desired_clip_count must be an integer between 1 and 30");
+  if (!Number.isInteger(strategy.desired_clip_count) || strategy.desired_clip_count < 1 || strategy.desired_clip_count > 10) {
+    errors.push("strategy.desired_clip_count must be an integer between 1 and 10");
   }
   if (!Number.isInteger(strategy.candidate_pool_count) || strategy.candidate_pool_count < 1 || strategy.candidate_pool_count > 30) {
     errors.push("strategy.candidate_pool_count must be an integer between 1 and 30");
@@ -2058,3 +2136,18 @@ function initClipPreviewPlayers() {
     });
   }
 }
+
+function initJobFilterToggle() {
+  for (const toggle of document.querySelectorAll("[data-toggle-job-filters]")) {
+    const panel = toggle.closest(".panel")?.querySelector("[data-job-filters]");
+    if (!panel) continue;
+    toggle.addEventListener("click", () => {
+      const isHidden = panel.hidden;
+      panel.hidden = !isHidden;
+      toggle.setAttribute("aria-expanded", String(isHidden));
+      toggle.textContent = isHidden ? "Hide filters" : "Show filters";
+    });
+  }
+}
+
+initJobFilterToggle();
