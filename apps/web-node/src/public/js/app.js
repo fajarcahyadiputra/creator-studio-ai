@@ -696,6 +696,12 @@ if (autoClipForm) {
   const humanizeAutoClipValue = (kind, value) => {
     const normalized = String(value || "").trim();
     if (!normalized) return "-";
+    if (kind === "objective") {
+      const objectiveField = autoClipForm.querySelector('[name="objective"]');
+      const matchingOption = Array.from(objectiveField?.options || [])
+        .find((option) => option.value === normalized);
+      if (matchingOption?.textContent) return matchingOption.textContent.trim();
+    }
     const maps = {
       platform: {
         YOUTUBE_SHORTS: "YouTube Shorts",
@@ -1494,6 +1500,7 @@ function initJobStream(root) {
   const jobId = root.getAttribute("data-job-stream");
   if (!jobId || typeof EventSource === "undefined") return;
   const jobType = String(root.getAttribute("data-job-type") || "").trim();
+  const eventSequence = String(root.getAttribute("data-job-event-sequence") || "0").trim();
 
   const progressBar = root.querySelector("[data-job-progress-bar]");
   const progressValues = root.querySelectorAll("[data-job-progress-value], [data-job-progress-value-inline]");
@@ -1505,9 +1512,7 @@ function initJobStream(root) {
   const stageRows = new Map(
     [...root.querySelectorAll("[data-stage-row]")].map((row) => [row.getAttribute("data-stage-row"), row])
   );
-  const clipOutputsSection = [...root.querySelectorAll(".empty-cell")].find((node) =>
-    String(node.textContent || "").includes("No rendered clip outputs have been stored yet.")
-  );
+  const clipOutputsSection = root.querySelector("[data-empty-clip-outputs]");
   const featuredOutputCard = root.querySelector("[data-featured-clip-output]");
   const featuredOutputSummary = root.querySelector("[data-featured-output-summary]");
   let completionRefreshTriggered = false;
@@ -1515,7 +1520,9 @@ function initJobStream(root) {
   normalizeJobProgressView({ progressBar, progressValues, statusNode, stageNode });
   focusFeaturedOutputIfReady(statusNode?.textContent, featuredOutputCard, featuredOutputSummary);
 
-  const stream = new EventSource(`/api/v1/jobs/${jobId}/events/stream`);
+  const stream = new EventSource(
+    `/api/v1/jobs/${jobId}/events/stream?after=${encodeURIComponent(eventSequence)}`
+  );
 
   stream.addEventListener("error", () => {
     // Let the browser retry automatically for transient disconnects.

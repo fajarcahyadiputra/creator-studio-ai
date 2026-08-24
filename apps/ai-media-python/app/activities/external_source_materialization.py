@@ -25,7 +25,8 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_SOURCE_VIDEO_HEIGHTS = {360, 480, 720, 1080}
 YOUTUBE_DOWNLOAD_STRATEGIES: tuple[tuple[str, str | None], ...] = (
-    ("android-creator", "android_creator"),
+    ("mweb-po", "mweb"),
+    ("web-embedded", "web_embedded"),
     ("android-vr", "android_vr"),
     ("default", None),
 )
@@ -35,6 +36,11 @@ YOUTUBE_AUTHENTICATION_MARKERS = (
     "sign in to confirm you're not a bot",
     "use --cookies-from-browser or --cookies",
     "login required",
+)
+YOUTUBE_ACCESS_DENIED_MARKERS = (
+    "http error 403: forbidden",
+    "http error 429: too many requests",
+    "unable to download video data: http error 403",
 )
 
 
@@ -71,6 +77,7 @@ def _build_ytdlp_options(
     target_video_height: int = 1080,
     player_client: str | None = None,
     cookie_file: Path | None = None,
+    po_token_provider_url: str | None = None,
 ) -> dict[str, Any]:
     options: dict[str, Any] = {
         "quiet": True,
@@ -95,12 +102,19 @@ def _build_ytdlp_options(
     if cookie_file is not None:
         options["cookiefile"] = str(cookie_file)
 
+    extractor_args: dict[str, dict[str, list[str]]] = {}
+    if player_client:
+        extractor_args["youtube"] = {"player_client": [player_client]}
+    if po_token_provider_url:
+        extractor_args["youtubepot-bgutilhttp"] = {
+            "base_url": [po_token_provider_url.rstrip("/")],
+        }
+    if extractor_args:
+        options["extractor_args"] = extractor_args
+
     if skip_download:
         options["skip_download"] = True
         return options
-
-    if player_client:
-        options["extractor_args"] = {"youtube": {"player_client": [player_client]}}
 
     options.update(
         {
@@ -126,6 +140,7 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
 
     settings = get_settings()
     cookie_file_source = _resolve_ytdlp_cookie_file(settings.YT_DLP_COOKIES_FILE)
+    po_token_provider_url = _normalize_optional_url(settings.YT_DLP_PO_TOKEN_PROVIDER_URL)
     workdir = Path(settings.TEMP_WORKDIR) / user_id / job_id / "external-source" / _build_activity_workdir_name()
     workdir.mkdir(parents=True, exist_ok=True)
     cookie_file = _prepare_ytdlp_cookie_file(cookie_file_source, workdir)
@@ -143,7 +158,7 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
     downloaded_path: Path | None = None
     try:
         info = await _await_with_heartbeat(
-            asyncio.to_thread(_extract_source_info, source_url, cookie_file),
+            asyncio.to_thread(_extract_source_info, source_url, cookie_file, po_token_provider_url),
             {
                 "job_id": job_id,
                 "stage": "PROBING_MEDIA",
@@ -163,6 +178,7 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
                 download_template,
                 target_video_height,
                 cookie_file,
+                po_token_provider_url,
             ),
             {
                 "job_id": job_id,
@@ -344,8 +360,18 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
         shutil.rmtree(workdir, ignore_errors=True)
 
 
-def _extract_source_info(source_url: str, cookie_file: Path | None = None) -> dict[str, Any]:
-    with YoutubeDL(_build_ytdlp_options(skip_download=True, cookie_file=cookie_file)) as ydl:
+def _extract_source_info(
+    source_url: str,
+    cookie_file: Path | None = None,
+    po_token_provider_url: str | None = None,
+) -> dict[str, Any]:
+    with YoutubeDL(
+        _build_ytdlp_options(
+            skip_download=True,
+            cookie_file=cookie_file,
+            po_token_provider_url=po_token_provider_url,
+        )
+    ) as ydl:
         info = ydl.extract_info(source_url, download=False)
     if not isinstance(info, dict):
         raise RuntimeError("yt-dlp did not return a source info document")
@@ -357,6 +383,7 @@ def _download_source_media(
     output_template: str,
     target_video_height: int = 1080,
     cookie_file: Path | None = None,
+    po_token_provider_url: str | None = None,
 ) -> Path:
     base_dir = Path(output_template).parent
     file_template = Path(output_template).name
@@ -376,6 +403,7 @@ def _download_source_media(
                     target_video_height=target_video_height,
                     player_client=player_client,
                     cookie_file=cookie_file,
+                    po_token_provider_url=po_token_provider_url,
                 )
             ) as ydl:
                 ydl.download([source_url])
@@ -426,6 +454,19 @@ def _resolve_ytdlp_cookie_file(configured_path: str | None) -> Path | None:
     return cookie_file
 
 
+def _normalize_optional_url(value: str | None) -> str | None:
+    normalized = value.strip().rstrip("/") if isinstance(value, str) else ""
+    if not normalized:
+        return None
+    if not normalized.startswith(("http://", "https://")):
+        raise ApplicationError(
+            "YT_DLP_PO_TOKEN_PROVIDER_URL must be an HTTP or HTTPS URL.",
+            non_retryable=True,
+            type="YoutubeAuthenticationConfigurationError",
+        )
+    return normalized
+
+
 def _prepare_ytdlp_cookie_file(source: Path | None, workdir: Path) -> Path | None:
     if source is None:
         return None
@@ -437,6 +478,17 @@ def _prepare_ytdlp_cookie_file(source: Path | None, workdir: Path) -> Path | Non
 def _is_youtube_authentication_error(error: Exception) -> bool:
     message = str(error).lower()
     return any(marker in message for marker in YOUTUBE_AUTHENTICATION_MARKERS)
+
+
+def _is_youtube_access_denied_error(error: Exception) -> bool:
+    """Classify YouTube media denials that need a fresh authenticated session.
+
+    A video metadata request can succeed while the signed media URL is denied.
+    Retrying the same unauthenticated worker only repeats the rejection, so this
+    must be surfaced separately from a transient download failure.
+    """
+    message = str(error).lower()
+    return any(marker in message for marker in YOUTUBE_ACCESS_DENIED_MARKERS)
 
 
 def _build_activity_workdir_name() -> str:
@@ -520,6 +572,12 @@ def _summarize_materialization_error(*, stage: str, error: Exception) -> str:
             f"{stage}: YoutubeAuthenticationRequired: YouTube blocked unauthenticated server access. "
             "Upload the video directly, or ask an administrator to mount a fresh cookies.txt file "
             "for the worker."
+        )
+    if _is_youtube_access_denied_error(error):
+        return (
+            f"{stage}: YoutubeAccessDenied: YouTube rejected the media download request. "
+            "Upload the video directly, or ask an administrator to mount a fresh authenticated "
+            "cookies.txt file for the worker."
         )
     if isinstance(error, DownloadError):
         return f"{stage}: yt-dlp download failed: {message}"

@@ -80,7 +80,10 @@ Opening the video in a desktop browser first does not authorize the Python worke
 different sessions, cookies, IP context, and YouTube player clients.
 
 The worker uses a current `yt-dlp` release, fresh extractor responses, bounded quality selection, and multiple
-YouTube client strategies. It prioritizes H.264 video plus M4A audio before less compatible adaptive formats.
+YouTube client strategies. The Compose stack also runs the open-source BgUtils PO-token provider and the worker
+image includes Deno plus `yt-dlp-ejs` for YouTube's JavaScript challenges. The preferred path is `mweb` with a
+per-video PO token, followed by conservative embedded and Android fallbacks. It prioritizes H.264 video plus M4A
+audio before less compatible adaptive formats.
 
 If a public video is rejected once, retry the job because YouTube signed media access can be temporary. If it is
 rejected repeatedly:
@@ -108,6 +111,18 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-rec
 
 Never commit or log this file. It contains an authenticated browser session. Use a dedicated account, refresh the
 export when YouTube invalidates it, and only import media you own or are authorized to process.
+
+Verify the current runtime before retrying repeatedly:
+
+```bash
+docker compose exec -T ai-media-python deno --version
+docker compose exec -T ai-media-python yt-dlp -v --simulate "https://www.youtube.com/watch?v=VIDEO_ID"
+```
+
+The verbose output should list a Deno JavaScript challenge provider and an external BgUtils PO-token provider.
+If it still reports `JS runtimes: none` or `PO Token Providers: none`, rebuild the Python image and recreate both
+the provider and worker. A cookie is still required for videos that YouTube restricts to an authenticated session;
+PO tokens do not replace account authorization.
 
 After changing the `yt-dlp` dependency, rebuild the `ai-media-python` image. Source watch mode reloads Python code
 but does not install updated packages.

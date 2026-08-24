@@ -60,78 +60,18 @@
             <div class="col-md-3"><label class="form-label">Bahasa video &amp; transkrip</label><select class="form-select" name="source_language" required><option value="id" <%= String(formDefaults.sourceLanguage).toLowerCase().startsWith('id') ? 'selected' : '' %>>Indonesia</option><option value="en" <%= String(formDefaults.sourceLanguage).toLowerCase().startsWith('en') ? 'selected' : '' %>>English</option></select><div class="form-text">Pilih sesuai bahasa yang diucapkan di video.</div></div>
             <div class="col-md-3"><label class="form-label">Bahasa subtitle &amp; hasil</label><select class="form-select" name="subtitle_language" required><option value="id" <%= String(formDefaults.subtitleLanguage).toLowerCase().startsWith('id') ? 'selected' : '' %>>Indonesia</option><option value="en" <%= String(formDefaults.subtitleLanguage).toLowerCase().startsWith('en') ? 'selected' : '' %>>English</option></select><div class="form-text">Untuk video English, pilih English agar subtitle dan title natural.</div></div>
             <div class="col-md-3"><label class="form-label">Objective</label><select class="form-select" name="objective">
-              <% [
-                ['EDUCATION', 'Edukasi / insight jelas'],
-                ['ENGAGEMENT', 'Komentar dan diskusi'],
-                ['STORYTELLING', 'Cerita dan emosi'],
-                ['CONTROVERSY', 'Opini tajam / debat'],
-                ['PRODUCT_AWARENESS', 'Awareness produk'],
-                ['LEAD_GENERATION', 'Lead / prospek'],
-                ['RETENTION', 'Tahan penonton sampai akhir'],
-                ['VIRALITY', 'Potensi viral tertinggi'],
-                ['BRAND_AWARENESS', 'Bangun brand'],
-                ['COMMUNITY_DISCUSSION', 'Pancing komunitas diskusi'],
-                ['THOUGHT_LEADERSHIP', 'Bangun otoritas'],
-                ['SALES_CONVERSION', 'Dorong konversi'],
-                ['NEWS_COMMENTARY', 'Komentar isu/news'],
-                ['AUTHORITY_BUILDING', 'Bangun kredibilitas']
-              ].forEach(([value, label]) => { %>
+              <% objectiveOptions.forEach(({ value, label }) => { %>
                 <option value="<%= value %>" <%= formDefaults.objective === value ? 'selected' : '' %>><%= label %></option>
               <% }) %>
             </select></div>
             <div class="col-md-3"><label class="form-label">Primary tone</label><select class="form-select" name="primary_tone">
-              <% [
-                ['EDUCATIONAL', 'Educational'],
-                ['SERIOUS', 'Serious'],
-                ['DIRECT', 'Direct'],
-                ['CASUAL', 'Casual'],
-                ['CONTROVERSIAL', 'Controversial'],
-                ['EMOTIONAL', 'Emotional'],
-                ['CONFIDENT', 'Confident'],
-                ['HUMOROUS', 'Humorous'],
-                ['CURIOUS', 'Curious'],
-                ['DRAMATIC', 'Dramatic'],
-                ['CRITICAL', 'Critical'],
-                ['INSPIRATIONAL', 'Inspirational'],
-                ['EMPATHETIC', 'Empathetic'],
-                ['URGENT', 'Urgent'],
-                ['ANALYTICAL', 'Analytical'],
-                ['AUTHORITATIVE', 'Authoritative'],
-                ['FRIENDLY', 'Friendly'],
-                ['CHALLENGING', 'Challenging'],
-                ['REFLECTIVE', 'Reflective'],
-                ['PRACTICAL', 'Practical'],
-                ['SHARP', 'Sharp'],
-                ['WARM', 'Warm'],
-                ['SUSPENSEFUL', 'Suspenseful']
-              ].forEach(([value, label]) => { %>
+              <% primaryToneOptions.forEach(({ value, label }) => { %>
                 <option value="<%= value %>" <%= formDefaults.primaryTone === value ? 'selected' : '' %>><%= label %></option>
               <% }) %>
             </select></div>
             <div class="col-md-3"><label class="form-label">Secondary tone</label><select class="form-select" name="secondary_tone">
               <option value="" <%= !formDefaults.secondaryTone ? 'selected' : '' %>>None</option>
-              <% [
-                ['SERIOUS', 'Serious'],
-                ['CASUAL', 'Casual'],
-                ['EMOTIONAL', 'Emotional'],
-                ['CONFIDENT', 'Confident'],
-                ['HUMOROUS', 'Humorous'],
-                ['CURIOUS', 'Curious'],
-                ['DRAMATIC', 'Dramatic'],
-                ['CRITICAL', 'Critical'],
-                ['INSPIRATIONAL', 'Inspirational'],
-                ['EMPATHETIC', 'Empathetic'],
-                ['URGENT', 'Urgent'],
-                ['ANALYTICAL', 'Analytical'],
-                ['AUTHORITATIVE', 'Authoritative'],
-                ['FRIENDLY', 'Friendly'],
-                ['CHALLENGING', 'Challenging'],
-                ['REFLECTIVE', 'Reflective'],
-                ['PRACTICAL', 'Practical'],
-                ['SHARP', 'Sharp'],
-                ['WARM', 'Warm'],
-                ['SUSPENSEFUL', 'Suspenseful']
-              ].forEach(([value, label]) => { %>
+              <% secondaryToneOptions.forEach(({ value, label }) => { %>
                 <option value="<%= value %>" <%= formDefaults.secondaryTone === value ? 'selected' : '' %>><%= label %></option>
               <% }) %>
             </select></div>

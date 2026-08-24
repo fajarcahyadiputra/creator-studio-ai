@@ -44,6 +44,24 @@ export function resolveOutputSummary(metadata: Record<string, unknown> | undefin
   return undefined;
 }
 
+export function resolveProjectedJobStatus(params: {
+  jobType: string;
+  requestedStatus: JobStatus;
+  outputSummary: unknown;
+}): JobStatus {
+  if (
+    params.jobType === "AUTO_CLIPPING"
+    && params.requestedStatus === "COMPLETED"
+    && params.outputSummary
+    && typeof params.outputSummary === "object"
+    && !Array.isArray(params.outputSummary)
+    && (params.outputSummary as Record<string, unknown>).candidate_count === 0
+  ) {
+    return "FAILED";
+  }
+  return params.requestedStatus;
+}
+
 const candidateOutputSchema = z.object({
   candidate_id: z.string().trim().min(1).max(100),
   start_seconds: z.number().min(0),
@@ -303,8 +321,28 @@ export class JobProjectionService {
       }
 
       const nextSequence = current.eventSequence + 1n;
-      const nextStatus = input.status ?? (current.status === "QUEUED" ? "RUNNING" : current.status);
       const outputSummary = resolveOutputSummary(input.metadata);
+      const requestedStatus = input.status ?? (current.status === "QUEUED" ? "RUNNING" : current.status);
+      const nextStatus = resolveProjectedJobStatus({
+        jobType: current.type,
+        requestedStatus,
+        outputSummary
+      });
+      const rejectedEmptyCompletion = requestedStatus === "COMPLETED" && nextStatus === "FAILED";
+      const effectiveInput: ProgressInput = rejectedEmptyCompletion
+        ? {
+            ...input,
+            status: "FAILED",
+            event_type: "job.failed",
+            message: "Auto-clipping completed without any viable clip candidates.",
+            user_message: "Tidak ada momen clip utuh yang berhasil dipilih. Coba retry dengan rentang durasi lebih lebar.",
+            metadata: {
+              ...(input.metadata ?? {}),
+              error_type: "NoViableClipCandidates",
+              projection_guard: "rejected_empty_auto_clipping_completion"
+            }
+          }
+        : input;
       const inputSnapshot =
         current.inputSnapshot && typeof current.inputSnapshot === "object" && !Array.isArray(current.inputSnapshot)
           ? (current.inputSnapshot as Record<string, unknown>)
@@ -327,14 +365,14 @@ export class JobProjectionService {
       );
       const serverOverallProgress = computeServerOverallProgress({
         existingStages,
-        input
+        input: effectiveInput
       });
       const recordedProgressPercent = resolveRecordedJobProgress({
         currentProgressPercent: current.progressPercent,
         computedProgressPercent: serverOverallProgress,
         nextStatus
       });
-      const recordedStage = resolveRecordedJobStage(input.stage, nextStatus);
+      const recordedStage = resolveRecordedJobStage(effectiveInput.stage, nextStatus);
       const updated = await tx.job.update({
         where: { id: jobId },
         data: {
@@ -353,23 +391,23 @@ export class JobProjectionService {
       });
 
       await tx.jobStage.upsert({
-        where: { jobId_name_stageVersion: { jobId, name: input.stage, stageVersion: 1 } },
+        where: { jobId_name_stageVersion: { jobId, name: effectiveInput.stage, stageVersion: 1 } },
         update: {
-          progressPercent: input.stage_progress,
-          status: input.stage_progress >= 100 ? "COMPLETED" : "RUNNING",
-          progressWeight: resolveStageWeight(input.metadata),
+          progressPercent: effectiveInput.stage_progress,
+          status: nextStatus === "FAILED" ? "FAILED" : effectiveInput.stage_progress >= 100 ? "COMPLETED" : "RUNNING",
+          progressWeight: resolveStageWeight(effectiveInput.metadata),
           startedAt: new Date(),
-          completedAt: input.stage_progress >= 100 ? new Date() : null
+          completedAt: nextStatus === "FAILED" || effectiveInput.stage_progress >= 100 ? new Date() : null
         },
         create: {
           jobId,
-          name: input.stage,
+          name: effectiveInput.stage,
           stageVersion: 1,
-          status: input.stage_progress >= 100 ? "COMPLETED" : "RUNNING",
-          progressPercent: input.stage_progress,
-          progressWeight: resolveStageWeight(input.metadata),
+          status: nextStatus === "FAILED" ? "FAILED" : effectiveInput.stage_progress >= 100 ? "COMPLETED" : "RUNNING",
+          progressPercent: effectiveInput.stage_progress,
+          progressWeight: resolveStageWeight(effectiveInput.metadata),
           startedAt: new Date(),
-          completedAt: input.stage_progress >= 100 ? new Date() : null
+          completedAt: nextStatus === "FAILED" || effectiveInput.stage_progress >= 100 ? new Date() : null
         }
       });
 
@@ -484,14 +522,14 @@ export class JobProjectionService {
         data: {
           jobId,
           sequence: nextSequence,
-          stage: input.stage,
-          stageProgress: input.stage_progress,
+          stage: effectiveInput.stage,
+          stageProgress: effectiveInput.stage_progress,
           overallProgress: serverOverallProgress,
-          eventType: input.event_type,
-          message: input.message,
-          userMessage: input.user_message,
-          metadata: (input.metadata ?? {}) as Prisma.InputJsonValue,
-          occurredAt: input.occurred_at ? new Date(input.occurred_at) : new Date()
+          eventType: effectiveInput.event_type,
+          message: effectiveInput.message,
+          userMessage: effectiveInput.user_message,
+          metadata: (effectiveInput.metadata ?? {}) as Prisma.InputJsonValue,
+          occurredAt: effectiveInput.occurred_at ? new Date(effectiveInput.occurred_at) : new Date()
         }
       });
 

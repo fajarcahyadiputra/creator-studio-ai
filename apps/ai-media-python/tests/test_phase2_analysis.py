@@ -1,6 +1,7 @@
 import pytest
 
 from app.activities.phase2_analysis import (
+    MAX_TRANSCRIPT_SEGMENTS,
     enrich_analysis_inputs,
     prepare_analysis_inputs,
     prepare_analysis_inputs_from_transcript,
@@ -66,6 +67,47 @@ async def test_prepare_analysis_inputs_from_transcript_creates_minimal_inputs() 
     assert result["transcript"]["segments"][0]["segment_id"] == "segment-0001"
     assert result["scenes"] == []
     assert result["silences"] == []
+
+
+@pytest.mark.asyncio
+async def test_prepare_analysis_inputs_preserves_continuous_long_timeline() -> None:
+    source_segments = [
+        {
+            "segment_id": f"source-{index:04d}",
+            "start_seconds": float(index * 2),
+            "end_seconds": float((index + 1) * 2),
+            "text": (
+                "Pembicara menjelaskan satu bagian penting dari topik tanpa tanda baca akhir "
+                f"pada urutan {index}"
+            ),
+            "speaker_label": "SPEAKER_01",
+            "confidence": 0.9,
+            "words": [],
+        }
+        for index in range(500)
+    ]
+
+    result = await prepare_analysis_inputs_from_transcript(
+        {
+            "media_asset_id": "asset-long",
+            "output_transcript_path": "/tmp/transcript-long.json",
+            "transcript": {
+                "language": "id",
+                "duration_seconds": 1000.0,
+                "segments": source_segments,
+            },
+        }
+    )
+
+    segments = result["transcript"]["segments"]
+    assert len(segments) == MAX_TRANSCRIPT_SEGMENTS
+    assert segments[0]["start_seconds"] == 0.0
+    assert segments[-1]["end_seconds"] == 1000.0
+    assert max(
+        current["start_seconds"] - previous["end_seconds"]
+        for previous, current in zip(segments, segments[1:])
+    ) <= 0.01
+    assert not segments[-1]["text"].endswith("...")
 
 
 @pytest.mark.asyncio

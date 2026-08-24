@@ -296,9 +296,60 @@ def _condense_transcript_segments(segments: list[TranscriptSegment]) -> list[Tra
     if len(condensed) <= MAX_TRANSCRIPT_SEGMENTS:
         return condensed
 
-    stride = max(1, len(condensed) // MAX_TRANSCRIPT_SEGMENTS)
-    sampled = [condensed[index] for index in range(0, len(condensed), stride)]
-    return sampled[:MAX_TRANSCRIPT_SEGMENTS]
+    return _merge_contiguous_segment_buckets(condensed, MAX_TRANSCRIPT_SEGMENTS)
+
+
+def _merge_contiguous_segment_buckets(
+    segments: list[TranscriptSegment],
+    limit: int,
+) -> list[TranscriptSegment]:
+    """Reduce payload size without creating artificial gaps in the timeline."""
+    if len(segments) <= limit:
+        return segments
+
+    merged: list[TranscriptSegment] = []
+    segment_count = len(segments)
+    for bucket_index in range(limit):
+        start_index = (bucket_index * segment_count) // limit
+        end_index = ((bucket_index + 1) * segment_count) // limit
+        bucket = segments[start_index:end_index]
+        if not bucket:
+            continue
+        merged.append(_merge_dense_segment_bucket(bucket, len(merged) + 1))
+    return merged
+
+
+def _merge_dense_segment_bucket(
+    bucket: list[TranscriptSegment],
+    position: int,
+) -> TranscriptSegment:
+    combined_text = " ".join(segment.text.strip() for segment in bucket if segment.text.strip())
+    confidences = [segment.confidence for segment in bucket if segment.confidence is not None]
+    speaker_labels = {segment.speaker_label for segment in bucket if segment.speaker_label}
+    return TranscriptSegment(
+        segment_id=f"segment-{position:04d}",
+        start_seconds=bucket[0].start_seconds,
+        end_seconds=bucket[-1].end_seconds,
+        text=_fit_bucket_text(combined_text, MAX_SEGMENT_TEXT_CHARS),
+        speaker_label=(next(iter(speaker_labels)) if len(speaker_labels) == 1 else None),
+        confidence=(round(sum(confidences) / len(confidences), 4) if confidences else None),
+        words=[],
+    )
+
+
+def _fit_bucket_text(text: str, limit: int) -> str:
+    """Keep both the opening and real ending when a dense bucket is shortened."""
+    normalized = " ".join(text.split())
+    if len(normalized) <= limit:
+        return normalized
+
+    separator = " ... "
+    tail_budget = min(110, max(40, limit // 3))
+    head_budget = limit - len(separator) - tail_budget
+    head = normalized[:head_budget].rsplit(" ", 1)[0].rstrip(" ,;:-")
+    tail_slice = normalized[-tail_budget:]
+    tail = tail_slice.split(" ", 1)[1] if " " in tail_slice else tail_slice
+    return f"{head}{separator}{tail.strip()}"[:limit].rstrip()
 
 
 def _merge_segment_group(group: list[TranscriptSegment], position: int) -> TranscriptSegment:

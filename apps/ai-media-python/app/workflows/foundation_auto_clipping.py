@@ -79,6 +79,12 @@ def _summarize_activity_failure(error: Exception) -> str:
 
 def _external_source_user_message(failure_summary: str) -> str:
     normalized = failure_summary.lower()
+    if "youtubeaccessdenied" in normalized:
+        return (
+            "YouTube menolak akses download video dari worker. Membuka video di browser tidak membagikan "
+            "sesi browser tersebut ke server. Upload file video secara langsung, atau minta administrator "
+            "memasang cookies.txt YouTube yang masih aktif pada worker sebelum mencoba regenerate lagi."
+        )
     if "http error 403" in normalized or "403: forbidden" in normalized:
         return (
             "YouTube menolak permintaan download dari server. Video tidak perlu dibuka di browser terlebih dahulu. "
@@ -432,6 +438,20 @@ class FoundationAutoClippingWorkflow:
                 retry_policy=ACTIVITY_RETRY,
             )
             candidate_count = int(output_summary["candidate_count"])
+            if candidate_count <= 0:
+                return await self._fail_and_finish(
+                    job_id=job_id,
+                    stage="ANALYZING_CLIP_CANDIDATES",
+                    message="Candidate analysis completed without any viable clip candidates.",
+                    user_message=(
+                        "No complete clip moments were found for the selected duration and strategy. "
+                        "Retry with a wider duration range or review the source transcript."
+                    ),
+                    metadata={
+                        "error_type": "NoViableClipCandidates",
+                        "output_summary": output_summary,
+                    },
+                )
 
             await self._emit(
                 job_id,

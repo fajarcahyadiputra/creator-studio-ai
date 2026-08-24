@@ -3,7 +3,7 @@
   <%- include('../partials/user-topbar') %>
   <main
     class="workspace-main content-area page-job-detail"
-    <% if (job) { %>data-job-stream="<%= job.id %>" data-job-type="<%= job.type %>"<% } %>>
+    <% if (job) { %>data-job-stream="<%= job.id %>" data-job-type="<%= job.type %>" data-job-event-sequence="<%= job.eventSequence != null ? job.eventSequence.toString() : '0' %>"<% } %>>
     <% if (!job) { %>
       <header class="page-header user-page-hero">
         <div><span class="eyebrow">Jobs</span><h1>Job not found</h1><p>The requested job is unavailable in this workspace.</p></div>
@@ -363,22 +363,7 @@
                         <div class="col-md-3">
                           <label class="form-label">Objective</label>
                           <select class="form-select" name="objective">
-                            <% [
-                              ['EDUCATION', 'Edukasi / insight jelas'],
-                              ['ENGAGEMENT', 'Komentar dan diskusi'],
-                              ['STORYTELLING', 'Cerita dan emosi'],
-                              ['CONTROVERSY', 'Opini tajam / debat'],
-                              ['PRODUCT_AWARENESS', 'Awareness produk'],
-                              ['LEAD_GENERATION', 'Lead / prospek'],
-                              ['RETENTION', 'Tahan penonton sampai akhir'],
-                              ['VIRALITY', 'Potensi viral tertinggi'],
-                              ['BRAND_AWARENESS', 'Bangun brand'],
-                              ['COMMUNITY_DISCUSSION', 'Pancing komunitas diskusi'],
-                              ['THOUGHT_LEADERSHIP', 'Bangun otoritas'],
-                              ['SALES_CONVERSION', 'Dorong konversi'],
-                              ['NEWS_COMMENTARY', 'Komentar isu/news'],
-                              ['AUTHORITY_BUILDING', 'Bangun kredibilitas']
-                            ].forEach(([value, label]) => { %>
+                            <% objectiveOptions.forEach(({ value, label }) => { %>
                               <option value="<%= value %>" <%= outputSummary.requestSnapshot.strategy.objective === value ? 'selected' : '' %>><%= label %></option>
                             <% }) %>
                           </select>
@@ -387,8 +372,8 @@
                           <label class="form-label">Primary tone</label>
                           <select class="form-select" name="tones_text">
                             <% const regenerateTones = outputSummary.requestSnapshot.strategy.tones; %>
-                            <% ['EDUCATIONAL','SERIOUS','DIRECT','CASUAL','CONTROVERSIAL','EMOTIONAL','CONFIDENT','HUMOROUS','CURIOUS','DRAMATIC','CRITICAL','INSPIRATIONAL','EMPATHETIC','URGENT','ANALYTICAL','AUTHORITATIVE','FRIENDLY','CHALLENGING','REFLECTIVE','PRACTICAL','SHARP','WARM','SUSPENSEFUL'].forEach((value) => { %>
-                              <option value="<%= value %>" <%= String(regenerateTones[0] ?? 'EDUCATIONAL').toUpperCase() === value ? 'selected' : '' %>><%= value %></option>
+                            <% primaryToneOptions.forEach(({ value, label }) => { %>
+                              <option value="<%= value %>" <%= String(regenerateTones[0] ?? 'EDUCATIONAL').toUpperCase() === value ? 'selected' : '' %>><%= label %></option>
                             <% }) %>
                           </select>
                         </div>
@@ -396,8 +381,8 @@
                           <label class="form-label">Secondary tone</label>
                           <select class="form-select" name="secondary_tone">
                             <option value="">None</option>
-                            <% ['SERIOUS','DIRECT','CASUAL','CONTROVERSIAL','EMOTIONAL','CONFIDENT','HUMOROUS','CURIOUS','DRAMATIC','CRITICAL','INSPIRATIONAL','EMPATHETIC','URGENT','ANALYTICAL','AUTHORITATIVE','FRIENDLY','CHALLENGING','REFLECTIVE','PRACTICAL','SHARP','WARM','SUSPENSEFUL'].forEach((value) => { %>
-                              <option value="<%= value %>" <%= String(regenerateTones[1] ?? '').toUpperCase() === value ? 'selected' : '' %>><%= value %></option>
+                            <% secondaryToneOptions.forEach(({ value, label }) => { %>
+                              <option value="<%= value %>" <%= String(regenerateTones[1] ?? '').toUpperCase() === value ? 'selected' : '' %>><%= label %></option>
                             <% }) %>
                           </select>
                         </div>
@@ -1202,7 +1187,13 @@
             <% } %>
           <% } %>
           <% if (!clipOutputs.length) { %>
-            <div class="empty-cell">No rendered clip outputs have been stored yet.</div>
+            <div class="empty-cell" data-empty-clip-outputs>
+              <% if (job.status === 'COMPLETED') { %>
+                Job selesai tanpa kandidat clip yang dapat dirender. Retry job dengan rentang durasi lebih lebar.
+              <% } else { %>
+                Belum ada hasil clip final yang tersimpan.
+              <% } %>
+            </div>
           <% } %>
           <% clipOutputs.forEach((output, index) => { %>
             <article class="clip-output-card">

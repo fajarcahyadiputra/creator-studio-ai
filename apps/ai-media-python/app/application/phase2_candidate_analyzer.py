@@ -201,6 +201,7 @@ async def analyze_phase2_candidates_with_fallback(
             fallback_reason=fallback_reason,
             fallback_trigger=fallback_trigger,
             candidate_source_counts={"openai": 0, "heuristic": int(summary["candidate_count"])},
+            provider_candidate_audit=provider_candidate_audit,
         )
 
     summary = _run_heuristic_analysis(analysis_inputs, config)

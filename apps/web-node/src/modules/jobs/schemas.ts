@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AUTO_CLIP_OBJECTIVES } from "./auto-clipping-options.js";
 
 function booleanField(defaultValue = false) {
   return z.preprocess((value) => {
@@ -47,23 +48,6 @@ const optionalClipLanguageField = z.preprocess(
   (value) => value === null || value === "" ? undefined : value,
   clipLanguageField.optional()
 );
-
-const autoClipObjectives = [
-  "ENGAGEMENT",
-  "EDUCATION",
-  "CONTROVERSY",
-  "STORYTELLING",
-  "PRODUCT_AWARENESS",
-  "LEAD_GENERATION",
-  "RETENTION",
-  "VIRALITY",
-  "BRAND_AWARENESS",
-  "COMMUNITY_DISCUSSION",
-  "THOUGHT_LEADERSHIP",
-  "SALES_CONVERSION",
-  "NEWS_COMMENTARY",
-  "AUTHORITY_BUILDING"
-] as const;
 
 function optionalInteger(min: number, max: number) {
   return z.preprocess((value) => {
@@ -159,7 +143,7 @@ export const autoClipJobSchema = z.object({
   strategy: z.object({
     configuration_mode: z.enum(["AUTO", "MANUAL"]).default("MANUAL"),
     target_platform: z.enum(["TIKTOK", "INSTAGRAM_REELS", "FACEBOOK_REELS", "YOUTUBE_SHORTS", "CUSTOM"]),
-    objective: z.enum(autoClipObjectives),
+    objective: z.enum(AUTO_CLIP_OBJECTIVES),
     tones: z.array(z.string().min(1).max(50)).min(1).max(5),
     desired_clip_count: z.number().int().min(1).max(10),
     candidate_pool_count: z.number().int().min(1).max(30).default(10),
@@ -279,7 +263,7 @@ export const regenerateAutoClipJobSchema = z
     speaker_count: optionalInteger(1, 20),
     custom_vocabulary_text: optionalTextList(200, 100),
     target_platform: z.enum(["TIKTOK", "INSTAGRAM_REELS", "FACEBOOK_REELS", "YOUTUBE_SHORTS", "CUSTOM"]),
-    objective: z.enum(autoClipObjectives),
+    objective: z.enum(AUTO_CLIP_OBJECTIVES),
     tones_text: optionalTextList(5, 50),
     desired_clip_count: optionalInteger(1, 10),
     candidate_pool_count: optionalInteger(1, 30),

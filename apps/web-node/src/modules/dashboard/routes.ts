@@ -8,6 +8,12 @@ import { asyncHandler } from "../../shared/http/async-handler.js";
 import { validateBody } from "../../shared/http/validate.js";
 import { logger } from "../../shared/logging/logger.js";
 import { requireAuth, requirePermission } from "../auth/identity-middleware.js";
+import {
+  AUTO_CLIP_OBJECTIVE_LABELS,
+  AUTO_CLIP_OBJECTIVE_OPTIONS,
+  AUTO_CLIP_PRIMARY_TONE_OPTIONS,
+  AUTO_CLIP_SECONDARY_TONE_OPTIONS
+} from "../jobs/auto-clipping-options.js";
 import { listLocalTtsModels } from "../tts/local-tts-model-registry.js";
 
 export const dashboardRouter = Router();
@@ -105,15 +111,6 @@ const AUTO_CLIP_PLATFORM_LABELS: Record<string, string> = {
   INSTAGRAM_REELS: "Instagram Reels",
   FACEBOOK_REELS: "Facebook Reels",
   CUSTOM: "Custom"
-};
-
-const AUTO_CLIP_OBJECTIVE_LABELS: Record<string, string> = {
-  EDUCATION: "Edukasi",
-  ENGAGEMENT: "Engagement",
-  STORYTELLING: "Storytelling",
-  CONTROVERSY: "Kontroversi",
-  PRODUCT_AWARENESS: "Product awareness",
-  LEAD_GENERATION: "Lead generation"
 };
 
 const AUTO_CLIP_CROP_STRATEGY_LABELS: Record<string, string> = {
@@ -384,6 +381,9 @@ dashboardRouter.get(
     if (!job) {
       response.status(404).render("app/job-detail", {
         title: "Job not found",
+        objectiveOptions: AUTO_CLIP_OBJECTIVE_OPTIONS,
+        primaryToneOptions: AUTO_CLIP_PRIMARY_TONE_OPTIONS,
+        secondaryToneOptions: AUTO_CLIP_SECONDARY_TONE_OPTIONS,
         job: null,
         events: [],
         candidates: [],
@@ -814,6 +814,9 @@ dashboardRouter.get(
       displayAutoClipLabel,
       platformLabels: AUTO_CLIP_PLATFORM_LABELS,
       objectiveLabels: AUTO_CLIP_OBJECTIVE_LABELS,
+      objectiveOptions: AUTO_CLIP_OBJECTIVE_OPTIONS,
+      primaryToneOptions: AUTO_CLIP_PRIMARY_TONE_OPTIONS,
+      secondaryToneOptions: AUTO_CLIP_SECONDARY_TONE_OPTIONS,
       cropStrategyLabels: AUTO_CLIP_CROP_STRATEGY_LABELS,
       layoutTemplateLabels: AUTO_CLIP_LAYOUT_TEMPLATE_LABELS,
       subtitleStyleLabels: AUTO_CLIP_SUBTITLE_STYLE_LABELS,
@@ -1344,6 +1347,9 @@ dashboardRouter.get(
       title: "Auto Clipping",
       assets,
       formDefaults,
+      objectiveOptions: AUTO_CLIP_OBJECTIVE_OPTIONS,
+      primaryToneOptions: AUTO_CLIP_PRIMARY_TONE_OPTIONS,
+      secondaryToneOptions: AUTO_CLIP_SECONDARY_TONE_OPTIONS,
       csrfToken: request.session.csrfToken
     });
   })

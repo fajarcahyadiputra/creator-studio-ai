@@ -220,6 +220,158 @@ def test_pipeline_builds_ranked_candidates() -> None:
     assert candidates[0].duration_seconds >= 15
 
 
+def test_pipeline_builds_language_neutral_candidates_without_indonesian_markers() -> None:
+    inputs = AnalysisInputs.model_validate(
+        {
+            "transcript": {
+                "language": "en",
+                "duration_seconds": 32.0,
+                "segments": [
+                    {
+                        "segment_id": "en-1",
+                        "start_seconds": 0.0,
+                        "end_seconds": 8.0,
+                        "text": "Most people assume the smallest screen will become the next computer.",
+                    },
+                    {
+                        "segment_id": "en-2",
+                        "start_seconds": 8.0,
+                        "end_seconds": 17.0,
+                        "text": "The more useful shift is computing that stays connected to the physical world.",
+                    },
+                    {
+                        "segment_id": "en-3",
+                        "start_seconds": 17.0,
+                        "end_seconds": 25.0,
+                        "text": "Smart glasses can make that interaction feel social instead of isolating.",
+                    },
+                    {
+                        "segment_id": "en-4",
+                        "start_seconds": 25.0,
+                        "end_seconds": 32.0,
+                        "text": "That is why wearable computing may become the next practical platform.",
+                    },
+                ],
+            },
+            "scenes": [],
+            "silences": [],
+        }
+    )
+    config = build_pipeline_config(
+        {
+            "strategy": {
+                "configuration_mode": "AUTO",
+                "desired_clip_count": 3,
+                "minimum_duration_seconds": 15,
+                "maximum_duration_seconds": 45,
+                "minimum_viral_score": 6.5,
+            }
+        }
+    )
+
+    candidates, audit = build_candidate_analyses_with_audit(inputs, config)
+
+    assert candidates
+    assert audit["semantic_boundary_fallback_used"] is True
+
+
+def test_heuristic_candidate_bounds_long_unpunctuated_transcript_fields() -> None:
+    long_text = " ".join(
+        [
+            "periksa liver tapi tidak semua keluhan harus langsung dianggap sebagai gangguan serius",
+            "dokter tetap perlu melihat riwayat pasien hasil pemeriksaan dan konteks kesehatan secara lengkap",
+        ]
+        * 12
+    ) + "."
+    inputs = AnalysisInputs.model_validate(
+        {
+            "transcript": {
+                "language": "id",
+                "duration_seconds": 30.0,
+                "segments": [
+                    {
+                        "segment_id": "long-segment",
+                        "start_seconds": 0.0,
+                        "end_seconds": 30.0,
+                        "text": long_text,
+                        "speaker_label": "SPEAKER_01",
+                    }
+                ],
+            },
+            "scenes": [],
+            "silences": [],
+        }
+    )
+    config = build_pipeline_config(
+        {
+            "strategy": {
+                "desired_clip_count": 1,
+                "minimum_duration_seconds": 15,
+                "maximum_duration_seconds": 45,
+                "minimum_viral_score": 0,
+            }
+        }
+    )
+
+    candidates = build_candidate_analyses(inputs, config)
+
+    assert candidates
+    assert len(candidates[0].title) <= 120
+    assert len(candidates[0].hook_text) <= 500
+    assert len(candidates[0].ending_text) <= 500
+    assert candidates[0].title.lower().split()[-1] not in {"dari", "karena", "yang", "dan"}
+    assert all(candidate.duration_seconds >= 15 for candidate in candidates)
+
+
+def test_heuristic_builds_complete_candidates_from_punctuationless_asr() -> None:
+    segment_texts = [
+        "Banyak orang mengira kemampuan baru harus langsung terasa mudah sejak percobaan pertama",
+        "Padahal rasa frustrasi muncul karena otak sedang bekerja keras membentuk pola yang baru",
+        "Proses itu memang tidak nyaman tetapi justru menjadi tanda bahwa pembelajaran sedang berjalan",
+        "Kalau kita berhenti terlalu cepat kemampuan tersebut tidak pernah mendapat waktu untuk berkembang",
+        "Karena itu kemajuan lebih sering datang dari latihan konsisten daripada bakat yang terlihat instan",
+        "Semua orang yang sekarang terlihat mahir juga pernah memulai proses belajarnya dari nol",
+    ]
+    inputs = AnalysisInputs.model_validate(
+        {
+            "transcript": {
+                "language": "id",
+                "duration_seconds": 54.0,
+                "segments": [
+                    {
+                        "segment_id": f"asr-{index}",
+                        "start_seconds": float((index - 1) * 9),
+                        "end_seconds": float(index * 9),
+                        "text": text,
+                        "speaker_label": "SPEAKER_01",
+                    }
+                    for index, text in enumerate(segment_texts, start=1)
+                ],
+            },
+            "scenes": [],
+            "silences": [],
+        }
+    )
+    config = build_pipeline_config(
+        {
+            "strategy": {
+                "desired_clip_count": 2,
+                "candidate_pool_count": 6,
+                "minimum_duration_seconds": 30,
+                "maximum_duration_seconds": 120,
+                "minimum_viral_score": 7.5,
+            }
+        }
+    )
+
+    candidates, audit = build_candidate_analyses_with_audit(inputs, config)
+
+    assert candidates
+    assert all(30 <= candidate.duration_seconds <= 120 for candidate in candidates)
+    assert audit["semantic_valid_candidate_count"] >= 1
+    assert audit["selected_final_clip_count"] >= 1
+
+
 def test_auto_strategy_does_not_inherit_five_clip_default_and_preserves_max_duration() -> None:
     resolved = resolve_auto_strategy(
         {

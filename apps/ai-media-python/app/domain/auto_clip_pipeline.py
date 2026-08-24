@@ -19,6 +19,8 @@ from app.domain.contracts import (
 AUTO_MAX_CLIP_COUNT = 10
 MAX_CANDIDATE_POOL_COUNT = 30
 DEFAULT_MAXIMUM_DURATION_SECONDS = 60
+HEURISTIC_TITLE_MAX_CHARS = 120
+HEURISTIC_TITLE_MAX_WORDS = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,21 +134,29 @@ def build_candidate_analyses_with_audit(
     transcript = analysis_inputs.transcript
     windows = _build_segment_windows(transcript, config)
     candidates: list[CandidateAnalysis] = []
+    rejected_contract_candidate_count = 0
     for index, segments in enumerate(windows, start=1):
         if _window_should_be_rejected(segments):
             continue
-        candidate = _candidate_from_segments(
-            index=index,
-            transcript=transcript,
-            segments=segments,
-            scenes=analysis_inputs.scenes,
-            silences=analysis_inputs.silences,
-            config=config,
-        )
+        try:
+            candidate = _candidate_from_segments(
+                index=index,
+                transcript=transcript,
+                segments=segments,
+                scenes=analysis_inputs.scenes,
+                silences=analysis_inputs.silences,
+                config=config,
+            )
+        except ValueError:
+            # A malformed window must not discard every otherwise valid candidate.
+            rejected_contract_candidate_count += 1
+            continue
         if _candidate_duration_is_valid(candidate, config):
             candidates.append(candidate)
 
-    return limit_and_score_candidates_with_quality_backfill(candidates, analysis_inputs, config)
+    selected, audit = limit_and_score_candidates_with_quality_backfill(candidates, analysis_inputs, config)
+    audit["rejected_contract_candidate_count"] = rejected_contract_candidate_count
+    return selected, audit
 
 
 def limit_and_score_candidates_with_quality_backfill(
@@ -160,6 +170,14 @@ def limit_and_score_candidates_with_quality_backfill(
         for candidate in duration_valid_candidates
         if _candidate_has_complete_semantic_boundaries(candidate, analysis_inputs.transcript.segments)
     ]
+    semantic_boundary_fallback_used = False
+    if not semantic_candidates:
+        semantic_candidates = [
+            candidate
+            for candidate in duration_valid_candidates
+            if _candidate_has_safe_language_neutral_boundaries(candidate, analysis_inputs.transcript.segments)
+        ]
+        semantic_boundary_fallback_used = bool(semantic_candidates)
     strict_candidates = [
         candidate
         for candidate in semantic_candidates
@@ -216,6 +234,10 @@ def limit_and_score_candidates_with_quality_backfill(
         "raw_candidate_count": len(candidates),
         "duration_valid_candidate_count": len(duration_valid_candidates),
         "semantic_valid_candidate_count": len(semantic_candidates),
+        "semantic_boundary_fallback_used": semantic_boundary_fallback_used,
+        "transcript_terminal_punctuation_reliable": _transcript_has_reliable_terminal_punctuation(
+            analysis_inputs.transcript.segments
+        ),
         "rejected_incomplete_semantic_boundary": len(duration_valid_candidates) - len(semantic_candidates),
         "accepted_before_normalization": len(strict_candidates),
         "normalized_candidate_count": len(normalized),
@@ -248,6 +270,31 @@ def limit_and_score_candidates_with_quality_backfill(
         "required_final_clip_count": config.desired_clip_count,
     }
     return final_candidates, audit
+
+
+def _candidate_has_safe_language_neutral_boundaries(
+    candidate: CandidateAnalysis,
+    transcript_segments: list[TranscriptSegment],
+) -> bool:
+    """Accept complete sentence boundaries without Indonesian discourse markers."""
+    intersecting = [
+        segment
+        for segment in transcript_segments
+        if segment.end_seconds > candidate.start_seconds and segment.start_seconds < candidate.end_seconds
+    ]
+    if not intersecting:
+        return False
+    opening = intersecting[0].text.strip()
+    ending = intersecting[-1].text.strip()
+    return (
+        candidate.start_seconds <= intersecting[0].start_seconds + 0.35
+        and candidate.end_seconds >= intersecting[-1].end_seconds - 0.35
+        and not _looks_like_filler_opening(opening)
+        and not _looks_like_promotional_opening(opening)
+        and not _segment_starts_topic_reset(opening)
+        and _ending_is_complete_for_transcript(ending, transcript_segments)
+        and _candidate_questions_are_resolved(intersecting)
+    )
 
 
 def _candidate_duration_is_valid(candidate: CandidateAnalysis, config: PipelineConfig) -> bool:
@@ -314,11 +361,17 @@ def normalize_candidates(
                     "punchline_second": punchline_second,
                 }
         )
-        if transcript_segments and not _candidate_has_complete_semantic_boundaries(
-            normalized_candidate,
-            transcript_segments,
-        ):
-            continue
+        if transcript_segments:
+            has_strict_boundaries = _candidate_has_complete_semantic_boundaries(
+                normalized_candidate,
+                transcript_segments,
+            )
+            has_safe_language_neutral_boundaries = _candidate_has_safe_language_neutral_boundaries(
+                normalized_candidate,
+                transcript_segments,
+            )
+            if not has_strict_boundaries and not has_safe_language_neutral_boundaries:
+                continue
         normalized.append(_with_editorial_quality_scores(normalized_candidate, transcript_segments or []))
     return normalized
 
@@ -393,7 +446,7 @@ def _candidate_has_complete_semantic_boundaries(
         return False
     if _starts_with_continuation_connector(opening) and candidate.requires_context:
         return False
-    if not _ending_is_semantically_complete(ending):
+    if not _ending_is_complete_for_transcript(ending, transcript_segments):
         return False
     if not _candidate_questions_are_resolved(intersecting):
         return False
@@ -415,7 +468,11 @@ def _with_editorial_quality_scores(
     subtitle_confidence = 7.0 if not confidences else round(5.0 + (sum(confidences) / len(confidences) * 5.0), 2)
     clarity = 9.0 if candidate.context_complete and not candidate.requires_context else 6.0
     standalone = 9.2 if candidate.can_standalone else 5.5
-    payoff = 9.0 if not _ending_needs_extension(candidate.ending_text) else 4.5
+    payoff = (
+        9.0
+        if _ending_is_complete_for_transcript(candidate.ending_text, transcript_segments)
+        else 4.5
+    )
     visual_framing = 8.2 if len(candidate.scene_ids) <= 4 else 7.2
     scores = dict(candidate.scores)
     scores.update(
@@ -564,6 +621,63 @@ def _build_segment_windows(
         if len(windows) >= config.candidate_pool_count * 6:
             break
 
+    return windows or _build_duration_fallback_windows(transcript, config)
+
+
+def _build_duration_fallback_windows(
+    transcript: TranscriptDocument,
+    config: PipelineConfig,
+) -> list[list[TranscriptSegment]]:
+    """Build language-neutral windows when semantic keyword matching finds none."""
+    windows: list[list[TranscriptSegment]] = []
+    minimum_duration = max(1.0, float(config.minimum_duration_seconds))
+    maximum_duration = float(config.maximum_duration_seconds)
+    punctuation_is_reliable = _transcript_has_reliable_terminal_punctuation(transcript.segments)
+    # ASR transcripts frequently omit punctuation entirely. In that case,
+    # waiting until 80% of the maximum creates unnecessarily long clips and
+    # still fails the punctuation-only boundary validator.
+    target_duration = min(
+        maximum_duration,
+        max(minimum_duration, min(60.0, minimum_duration * 1.5)),
+    )
+
+    for start_index in range(len(transcript.segments)):
+        current: list[TranscriptSegment] = []
+        for segment in transcript.segments[start_index:]:
+            if current and (
+                _segments_have_large_gap(current[-1], segment)
+                or _segment_starts_topic_reset(segment.text)
+            ):
+                break
+
+            proposed_duration = segment.end_seconds - transcript.segments[start_index].start_seconds
+            if proposed_duration > maximum_duration:
+                break
+
+            current.append(segment)
+            if proposed_duration < minimum_duration:
+                continue
+
+            has_complete_ending = _ending_is_complete_for_transcript(
+                segment.text,
+                transcript.segments,
+            )
+            reached_unpunctuated_target = (
+                not punctuation_is_reliable
+                and proposed_duration >= target_duration
+                and has_complete_ending
+            )
+            if (
+                _is_natural_ending_segment(segment.text)
+                or reached_unpunctuated_target
+                or proposed_duration >= maximum_duration * 0.8
+            ):
+                windows.append(list(current))
+                break
+
+        if len(windows) >= config.candidate_pool_count * 3:
+            break
+
     return windows or [[transcript.segments[0]]]
 
 
@@ -576,8 +690,8 @@ def _candidate_from_segments(
     config: PipelineConfig,
 ) -> CandidateAnalysis:
     combined_text = " ".join(segment.text.strip() for segment in segments)
-    hook_text = segments[0].text.strip()
-    ending_text = segments[-1].text.strip()
+    hook_text = _truncate_text_at_word_boundary(segments[0].text, max_chars=500)
+    ending_text = _truncate_text_at_word_boundary(segments[-1].text, max_chars=500)
     hook_second = _resolve_hook_second(segments)
     main_point_second = _resolve_main_point_second(segments)
     punchline_second = _resolve_punchline_second(segments)
@@ -589,7 +703,11 @@ def _candidate_from_segments(
     components = _score_text(hook_text, combined_text, hook_second=hook_second, duration_seconds=segments[-1].end_seconds - segments[0].start_seconds)
     penalties = ClipPenalties(
         context=0.8 if requires_context else (0 if len(segments) >= 2 else 0.35),
-        weak_ending=0 if _is_natural_ending_segment(ending_text) else 0.35,
+        weak_ending=(
+            0
+            if _ending_is_complete_for_transcript(ending_text, transcript.segments)
+            else 0.35
+        ),
         slow_start=0 if hook_second <= 1.5 else 0.45,
         duplicate=0,
         unsafe_or_misleading=0,
@@ -606,8 +724,12 @@ def _candidate_from_segments(
             requires_context=requires_context,
         ),
     )
-    scene_ids = [scene.scene_id for scene in scenes if _intersects(scene.start_seconds, scene.end_seconds, segments)]
-    speaker_ids = sorted({segment.speaker_label for segment in segments if segment.speaker_label})
+    scene_ids = [
+        scene.scene_id
+        for scene in scenes
+        if _intersects(scene.start_seconds, scene.end_seconds, segments)
+    ][:20]
+    speaker_ids = sorted({segment.speaker_label for segment in segments if segment.speaker_label})[:10]
     summary = combined_text[:300]
     title = _build_title(combined_text, hook_text=hook_text, ending_text=ending_text)
     duration_seconds = round(segments[-1].end_seconds - segments[0].start_seconds, 2)
@@ -1039,7 +1161,7 @@ def _extend_candidate_end_to_complete_thought(
         return end_seconds, ending_text
 
     normalized_ending = ending_text.strip()
-    if not _ending_needs_extension(normalized_ending):
+    if _ending_is_complete_for_transcript(normalized_ending, transcript_segments):
         return end_seconds, normalized_ending
 
     duration_ceiling = start_seconds + maximum_duration_seconds if maximum_duration_seconds and maximum_duration_seconds > 0 else None
@@ -1076,7 +1198,7 @@ def _extend_candidate_end_to_complete_thought(
         resolved_ending = candidate_text
         previous_segment = segment
 
-        if not _ending_needs_extension(candidate_text) and _is_natural_ending_segment(candidate_text):
+        if _ending_is_complete_for_transcript(candidate_text, transcript_segments):
             return round(resolved_end, 2), resolved_ending
 
         if _is_natural_ending_segment(candidate_text) and (
@@ -1119,6 +1241,66 @@ def _ending_is_semantically_complete(text: str) -> bool:
     return True
 
 
+def _ending_is_complete_for_transcript(
+    text: str,
+    transcript_segments: list[TranscriptSegment],
+) -> bool:
+    """Accept lexical ASR boundaries only when punctuation is globally absent."""
+    if _ending_is_semantically_complete(text):
+        return True
+    if _transcript_has_reliable_terminal_punctuation(transcript_segments):
+        return False
+    return _ending_is_lexically_complete(text)
+
+
+def _transcript_has_reliable_terminal_punctuation(
+    transcript_segments: list[TranscriptSegment],
+) -> bool:
+    populated = [segment.text.strip() for segment in transcript_segments if segment.text.strip()]
+    if not populated:
+        return False
+    terminal_count = sum(1 for text in populated if _has_terminal_punctuation(text))
+    required_count = max(1, (len(populated) + 9) // 10)
+    return terminal_count >= required_count
+
+
+def _has_terminal_punctuation(text: str) -> bool:
+    stripped = text.strip().rstrip("\"')]} ")
+    return stripped.endswith((".", "!", "?"))
+
+
+def _ending_is_lexically_complete(text: str) -> bool:
+    """Conservative completeness check for punctuation-free ASR segments."""
+    stripped = " ".join(text.strip().split())
+    if len(stripped) < 20 or len(stripped.split()) < 4:
+        return False
+    lowered = stripped.lower()
+    if lowered.endswith("...") or _ends_with_dangling_connector(lowered):
+        return False
+    tail = lowered.rstrip(" -,:;.!?\"'()[]{}").split()[-1]
+    return tail not in {
+        "yang",
+        "dengan",
+        "untuk",
+        "dari",
+        "di",
+        "ke",
+        "pada",
+        "sebagai",
+        "seperti",
+        "tentang",
+        "bahwa",
+        "adalah",
+        "yaitu",
+        "namun",
+        "tapi",
+        "ketika",
+        "saat",
+        "agar",
+        "jika",
+    }
+
+
 def _is_audience_cta_question(text: str) -> bool:
     return any(
         phrase in text
@@ -1143,7 +1325,7 @@ def _apply_natural_tail_padding(
     maximum_duration_seconds: float | None,
 ) -> float:
     """Keep a short breath after a complete payoff without leaking a new topic."""
-    if not _is_natural_ending_segment(ending_text) or _ending_needs_extension(ending_text):
+    if not _ending_is_complete_for_transcript(ending_text, transcript_segments):
         return round(end_seconds, 2)
 
     duration_ceiling = (
@@ -1407,7 +1589,67 @@ def _normalize_title_candidate(text: str) -> str:
     words = normalized.split()
     if len(words) == 1 and words[0].lower() in {"oke", "ok", "nah", "jadi", "masa", "gitu"}:
         return ""
-    return normalized
+    return _fit_title_to_contract(normalized)
+
+
+def _fit_title_to_contract(text: str) -> str:
+    fitted = _truncate_text_at_word_boundary(
+        text,
+        max_chars=HEURISTIC_TITLE_MAX_CHARS,
+        max_words=HEURISTIC_TITLE_MAX_WORDS,
+    )
+    words = fitted.split()
+    dangling_words = {
+        "dari",
+        "untuk",
+        "karena",
+        "dengan",
+        "tanpa",
+        "terhadap",
+        "sebagai",
+        "yang",
+        "dan",
+        "atau",
+        "di",
+        "ke",
+        "pada",
+        "oleh",
+        "kalau",
+        "tapi",
+        "agar",
+        "supaya",
+    }
+    while len(words) > 2 and words[-1].lower().strip(".,!?;:") in dangling_words:
+        words.pop()
+    return " ".join(words).rstrip(" -,:;")
+
+
+def _truncate_text_at_word_boundary(
+    text: str,
+    *,
+    max_chars: int,
+    max_words: int | None = None,
+) -> str:
+    normalized = " ".join(text.strip().split())
+    if not normalized:
+        return ""
+
+    words = normalized.split()
+    if max_words is not None:
+        words = words[:max_words]
+
+    fitted: list[str] = []
+    current_length = 0
+    for word in words:
+        separator_length = 1 if fitted else 0
+        if current_length + separator_length + len(word) > max_chars:
+            break
+        fitted.append(word)
+        current_length += separator_length + len(word)
+
+    if fitted:
+        return " ".join(fitted).rstrip()
+    return normalized[:max_chars].rstrip()
 
 
 def _strip_leading_fillers(text: str) -> str:

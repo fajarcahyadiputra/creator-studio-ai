@@ -208,12 +208,30 @@ services:
       - 8.8.8.8
     networks: [public, internal]
 
+  yt-dlp-pot-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:1.3.1-deno
+    init: true
+    restart: unless-stopped
+    networks: [public, internal]
+    healthcheck:
+      test:
+        - CMD
+        - deno
+        - eval
+        - "const connection = await Deno.connect({ hostname: '127.0.0.1', port: 4416 }); connection.close();"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   ai-media-python:
     image: creator-studio-ai-ai-media-python:dev
     build:
       context: .
       dockerfile: apps/ai-media-python/Dockerfile
     env_file: ${APP_ENV_FILE:-.env}
+    environment:
+      YT_DLP_PO_TOKEN_PROVIDER_URL: http://yt-dlp-pot-provider:4416
     volumes:
       - ./model_tts:/models/tts:ro
       - ./model_face:/models/face:ro
@@ -222,6 +240,8 @@ services:
       temporal:
         condition: service_healthy
       web-node:
+        condition: service_healthy
+      yt-dlp-pot-provider:
         condition: service_healthy
     command: ["python", "-m", "app.worker"]
     healthcheck:

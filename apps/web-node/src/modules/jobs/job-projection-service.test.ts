@@ -10,6 +10,7 @@ import {
   resolveRecordedJobStage,
   resolvePersistableCandidates,
   resolveOutputSummary,
+  resolveProjectedJobStatus,
   resolveStageWeight,
   resolveTotalStageWeight
 } from "./job-projection-service.js";
@@ -138,6 +139,23 @@ describe("job projection helpers", () => {
         }
       })
     ).toBeUndefined();
+  });
+
+  it("rejects successful auto-clipping completion when no candidates exist", () => {
+    expect(
+      resolveProjectedJobStatus({
+        jobType: "AUTO_CLIPPING",
+        requestedStatus: "COMPLETED",
+        outputSummary: { candidate_count: 0, candidates: [] }
+      })
+    ).toBe("FAILED");
+    expect(
+      resolveProjectedJobStatus({
+        jobType: "AUTO_CLIPPING",
+        requestedStatus: "COMPLETED",
+        outputSummary: { candidate_count: 2 }
+      })
+    ).toBe("COMPLETED");
   });
 
   it("links persisted candidates to the source media transcript when available", () => {
