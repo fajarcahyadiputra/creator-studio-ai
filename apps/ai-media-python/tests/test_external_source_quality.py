@@ -1,11 +1,16 @@
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+from yt_dlp.utils import DownloadError
 
 from app.activities.external_source_materialization import (
     YOUTUBE_DOWNLOAD_STRATEGIES,
     _build_source_format_selector,
     _build_ytdlp_options,
+    _extract_source_info,
     _is_youtube_access_denied_error,
     _is_youtube_authentication_error,
+    _iter_youtube_attempts,
     _normalize_optional_url,
     _normalize_target_video_height,
     _prepare_ytdlp_cookie_file,
@@ -75,7 +80,8 @@ def test_po_token_provider_is_applied_to_metadata_options() -> None:
 
 def test_youtube_bot_challenge_is_classified_as_authentication_error() -> None:
     error = RuntimeError(
-        "Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for authentication."
+        "Sign in to confirm you\u2019re not a bot. "
+        "Use --cookies-from-browser or --cookies for authentication."
     )
 
     assert _is_youtube_authentication_error(error) is True
@@ -107,6 +113,45 @@ def test_youtube_download_strategies_prefer_mweb_with_po_token() -> None:
         ("android-vr", "android_vr"),
         ("default", None),
     )
+
+
+def test_youtube_attempts_are_anonymous_without_cookie() -> None:
+    attempts = _iter_youtube_attempts(None)
+
+    assert attempts[0] == ("anonymous-mweb-po", "mweb", None)
+    assert attempts[-1] == ("anonymous-default", None, None)
+    assert len(attempts) == len(YOUTUBE_DOWNLOAD_STRATEGIES)
+
+
+def test_youtube_attempts_prefer_anonymous_before_cookie_fallback() -> None:
+    cookie_file = Path("/run/secrets/yt-dlp/cookies.txt")
+    attempts = _iter_youtube_attempts(cookie_file)
+
+    assert attempts[0] == ("anonymous-mweb-po", "mweb", None)
+    assert attempts[4] == ("authenticated-mweb-po", "mweb", cookie_file)
+    assert len(attempts) == len(YOUTUBE_DOWNLOAD_STRATEGIES) * 2
+
+
+@patch("app.activities.external_source_materialization.YoutubeDL")
+def test_metadata_extraction_uses_player_strategy_fallback(youtube_dl: MagicMock) -> None:
+    rejected = MagicMock()
+    rejected.__enter__.return_value.extract_info.side_effect = DownloadError("mweb rejected")
+    accepted = MagicMock()
+    accepted.__enter__.return_value.extract_info.return_value = {"id": "video-id"}
+    youtube_dl.side_effect = [rejected, accepted]
+
+    info = _extract_source_info(
+        "https://www.youtube.com/watch?v=video-id",
+        po_token_provider_url="http://yt-dlp-pot-provider:4416",
+    )
+
+    assert info == {"id": "video-id"}
+    first_options = youtube_dl.call_args_list[0].args[0]
+    second_options = youtube_dl.call_args_list[1].args[0]
+    assert first_options["extractor_args"]["youtube"] == {"player_client": ["mweb"]}
+    assert second_options["extractor_args"]["youtube"] == {"player_client": ["web_embedded"]}
+    assert "cookiefile" not in first_options
+    assert "cookiefile" not in second_options
 
 
 def test_optional_po_token_provider_url_is_normalized() -> None:

@@ -15,8 +15,8 @@ from temporalio.exceptions import ApplicationError
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
-from app.config import get_settings
 from app.activities.media_validation import build_media_asset_validation_result, run_ffprobe_json
+from app.config import get_settings
 from app.domain.contracts import MediaAssetValidationResult
 from app.infrastructure.media_asset_client import MediaAssetClient
 from app.media.ffmpeg import summarize_ffprobe_payload
@@ -32,7 +32,7 @@ YOUTUBE_DOWNLOAD_STRATEGIES: tuple[tuple[str, str | None], ...] = (
 )
 DEFAULT_YT_DLP_COOKIES_FILE = Path("/run/secrets/yt-dlp/cookies.txt")
 YOUTUBE_AUTHENTICATION_MARKERS = (
-    "sign in to confirm you’re not a bot",
+    "sign in to confirm you\u2019re not a bot",
     "sign in to confirm you're not a bot",
     "use --cookies-from-browser or --cookies",
     "login required",
@@ -136,12 +136,22 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
     target_video_height = _normalize_target_video_height(payload.get("target_video_height", 1080))
     project_id = payload.get("project_id")
     if project_id is not None and not isinstance(project_id, str):
-        raise ApplicationError("project_id must be a string when provided", non_retryable=True, type="InvalidInput")
+        raise ApplicationError(
+            "project_id must be a string when provided",
+            non_retryable=True,
+            type="InvalidInput",
+        )
 
     settings = get_settings()
     cookie_file_source = _resolve_ytdlp_cookie_file(settings.YT_DLP_COOKIES_FILE)
     po_token_provider_url = _normalize_optional_url(settings.YT_DLP_PO_TOKEN_PROVIDER_URL)
-    workdir = Path(settings.TEMP_WORKDIR) / user_id / job_id / "external-source" / _build_activity_workdir_name()
+    workdir = (
+        Path(settings.TEMP_WORKDIR)
+        / user_id
+        / job_id
+        / "external-source"
+        / _build_activity_workdir_name()
+    )
     workdir.mkdir(parents=True, exist_ok=True)
     cookie_file = _prepare_ytdlp_cookie_file(cookie_file_source, workdir)
     stage = "extract-info"
@@ -243,7 +253,10 @@ async def materialize_external_source(payload: dict[str, Any]) -> dict[str, Any]
             interval_seconds=10,
         )
         stage = "probe"
-        probe_payload = await run_ffprobe_json(str(downloaded_path), timeout_seconds=settings.MEDIA_PROBE_TIMEOUT_SECONDS)
+        probe_payload = await run_ffprobe_json(
+            str(downloaded_path),
+            timeout_seconds=settings.MEDIA_PROBE_TIMEOUT_SECONDS,
+        )
         summary = summarize_ffprobe_payload(probe_payload)
         result = build_media_asset_validation_result(
             summary,
@@ -365,17 +378,48 @@ def _extract_source_info(
     cookie_file: Path | None = None,
     po_token_provider_url: str | None = None,
 ) -> dict[str, Any]:
-    with YoutubeDL(
-        _build_ytdlp_options(
-            skip_download=True,
-            cookie_file=cookie_file,
-            po_token_provider_url=po_token_provider_url,
-        )
-    ) as ydl:
-        info = ydl.extract_info(source_url, download=False)
-    if not isinstance(info, dict):
-        raise RuntimeError("yt-dlp did not return a source info document")
-    return info
+    failures: list[str] = []
+    for attempt_name, player_client, attempt_cookie_file in _iter_youtube_attempts(cookie_file):
+        try:
+            with YoutubeDL(
+                _build_ytdlp_options(
+                    skip_download=True,
+                    player_client=player_client,
+                    cookie_file=attempt_cookie_file,
+                    po_token_provider_url=po_token_provider_url,
+                )
+            ) as ydl:
+                info = ydl.extract_info(source_url, download=False)
+            if isinstance(info, dict):
+                logger.info(
+                    "external source metadata strategy succeeded",
+                    extra={
+                        "metadata_strategy": attempt_name,
+                        "youtube_cookie_authentication": attempt_cookie_file is not None,
+                    },
+                )
+                return info
+            failures.append(f"{attempt_name}: yt-dlp did not return a source info document")
+        except DownloadError as error:
+            failures.append(f"{attempt_name}: {str(error).strip()}")
+
+    raise DownloadError("; ".join(failures))
+
+
+def _iter_youtube_attempts(
+    cookie_file: Path | None,
+) -> tuple[tuple[str, str | None, Path | None], ...]:
+    """Prefer public anonymous access; use configured credentials only as fallback."""
+    modes: tuple[tuple[str, Path | None], ...]
+    if cookie_file is None:
+        modes = (("anonymous", None),)
+    else:
+        modes = (("anonymous", None), ("authenticated", cookie_file))
+    return tuple(
+        (f"{mode_name}-{strategy_name}", player_client, mode_cookie_file)
+        for mode_name, mode_cookie_file in modes
+        for strategy_name, player_client in YOUTUBE_DOWNLOAD_STRATEGIES
+    )
 
 
 def _download_source_media(
@@ -391,7 +435,7 @@ def _download_source_media(
 
     # YouTube periodically restricts adaptive streams by player client. Keep each
     # attempt isolated so a stale .part file can never corrupt the next fallback.
-    for attempt_name, player_client in YOUTUBE_DOWNLOAD_STRATEGIES:
+    for attempt_name, player_client, attempt_cookie_file in _iter_youtube_attempts(cookie_file):
         attempt_dir = base_dir / attempt_name
         attempt_dir.mkdir(parents=True, exist_ok=True)
         attempt_template = str(attempt_dir / file_template)
@@ -402,7 +446,7 @@ def _download_source_media(
                     output_template=attempt_template,
                     target_video_height=target_video_height,
                     player_client=player_client,
-                    cookie_file=cookie_file,
+                    cookie_file=attempt_cookie_file,
                     po_token_provider_url=po_token_provider_url,
                 )
             ) as ydl:
@@ -446,7 +490,8 @@ def _resolve_ytdlp_cookie_file(configured_path: str | None) -> Path | None:
         return None
     if not cookie_file.is_file() or cookie_file.stat().st_size == 0:
         raise ApplicationError(
-            "YouTube cookie file is empty or is not a regular file. Export fresh cookies.txt in Netscape format.",
+            "YouTube cookie file is empty or is not a regular file. "
+            "Export fresh cookies.txt in Netscape format.",
             non_retryable=True,
             type="YoutubeAuthenticationConfigurationError",
         )
