@@ -21,6 +21,31 @@ const stageDisplayMap = {
   UPLOADING_OUTPUTS: { key: "DELIVERY", label: "Saving outputs" }
 };
 
+function generateUUID() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0"));
+
+    return [
+      hex.slice(0, 4).join(""),
+      hex.slice(4, 6).join(""),
+      hex.slice(6, 8).join(""),
+      hex.slice(8, 10).join(""),
+      hex.slice(10, 16).join("")
+    ].join("-");
+  }
+
+  throw new Error("Secure random UUID generation is unavailable.");
+}
+
 function objectFromForm(form, formData) {
   const data = formData instanceof FormData ? formData : new FormData(form);
   const multiSelectFields = new Set(["objectives_text", "primary_tones_text", "secondary_tones_text"]);
@@ -373,7 +398,7 @@ for (const form of document.querySelectorAll("[data-api-form]")) {
         headers: {
           "content-type": "application/json",
           "x-csrf-token": csrf,
-          ...(form.dataset.idempotencyKey === "true" ? { "idempotency-key": crypto.randomUUID() } : {})
+          ...(form.dataset.idempotencyKey === "true" ? { "idempotency-key": generateUUID() } : {})
         },
         body: JSON.stringify(normalizeRegenerateAutoClipPayload(form, objectFromForm(form, formData)))
       });
@@ -1146,7 +1171,7 @@ if (autoClipForm) {
         applyAutoClipFieldErrors(["Isi external source URL sebelum submit."]);
         throw new Error("Enter an external source URL before creating the job.");
       }
-      const idempotencyKey = crypto.randomUUID();
+      const idempotencyKey = generateUUID();
       const response = await fetch("/api/v1/auto-clipping/jobs", {
         method: "POST",
         headers: { "content-type": "application/json", "x-csrf-token": csrf, "idempotency-key": idempotencyKey },
@@ -1441,7 +1466,7 @@ if (ttsForm) {
         headers: {
           "content-type": "application/json",
           "x-csrf-token": csrf,
-          "idempotency-key": crypto.randomUUID()
+          "idempotency-key": generateUUID()
         },
         body: JSON.stringify(payload)
       });
