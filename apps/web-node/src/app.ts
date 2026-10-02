@@ -52,6 +52,7 @@ import { requestContext } from "./shared/http/request-context.js";
 import { logger } from "./shared/logging/logger.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
+const isProduction = env.NODE_ENV === "production";
 
 type PublicHomeLanguage = "id" | "en";
 
@@ -464,22 +465,34 @@ export async function createApplication(): Promise<ApplicationRuntime> {
       }
     })
   );
-  app.use(
-    helmet({
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
-          styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
-          imgSrc: ["'self'", "data:", "blob:", ...cspOrigins],
-          mediaSrc: ["'self'", "blob:", ...cspOrigins],
-          connectSrc: ["'self'"],
-          fontSrc: ["'self'", "https://cdn.jsdelivr.net"]
+
+
+app.use(
+  helmet(
+    isProduction
+      ? {
+          contentSecurityPolicy: {
+            directives: {
+              defaultSrc: ["'self'"],
+              scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
+              styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
+              imgSrc: ["'self'", "data:", "blob:", ...cspOrigins],
+              mediaSrc: ["'self'", "blob:", ...cspOrigins],
+              connectSrc: ["'self'", "https://cdn.jsdelivr.net"],
+              fontSrc: ["'self'", "https://cdn.jsdelivr.net"]
+            }
+          },
+          crossOriginResourcePolicy: { policy: "cross-origin" }
         }
-      },
-      crossOriginResourcePolicy: { policy: "cross-origin" }
-    })
-  );
+      : {
+          contentSecurityPolicy: false,
+          strictTransportSecurity: false,
+          crossOriginOpenerPolicy: false,
+          originAgentCluster: false,
+          crossOriginResourcePolicy: { policy: "cross-origin" }
+        }
+  )
+);
   app.use(express.json({ limit: jsonBodyLimit }));
   app.use(express.urlencoded({ extended: false, limit: jsonBodyLimit }));
   app.use(createSessionMiddleware(redis));
