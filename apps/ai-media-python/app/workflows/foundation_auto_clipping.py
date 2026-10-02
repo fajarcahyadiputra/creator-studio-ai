@@ -5,8 +5,6 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
-    from app.config import get_settings
-    from app.domain.auto_clip_stages import STAGE_WEIGHTS, TOTAL_STAGE_WEIGHT, compute_overall_progress
     from app.activities.audio_pipeline import execute_audio_extraction, prepare_audio_extraction
     from app.activities.external_source_materialization import materialize_external_source
     from app.activities.media_validation import prepare_media_asset_validation
@@ -22,6 +20,8 @@ with workflow.unsafe.imports_passed_through():
         prepare_transcription,
         submit_transcription_result,
     )
+    from app.config import get_settings
+    from app.domain.auto_clip_stages import STAGE_WEIGHTS, TOTAL_STAGE_WEIGHT, compute_overall_progress
 
 
 ACTIVITY_RETRY = RetryPolicy(
@@ -57,6 +57,16 @@ AUDIO_EXTRACTION_ACTIVITY_TIMEOUT = timedelta(
     seconds=max(60, int(get_settings().AUDIO_EXTRACTION_TIMEOUT_SECONDS) + 60)
 )
 
+MAX_PROGRESS_TEXT_LENGTH = 2000
+MAX_FAILURE_SUMMARY_LENGTH = 1600
+
+
+def _truncate_progress_text(value: str, limit: int = MAX_PROGRESS_TEXT_LENGTH) -> str:
+    if len(value) <= limit:
+        return value
+    suffix = "... [truncated]"
+    return value[: limit - len(suffix)].rstrip() + suffix
+
 
 def _summarize_activity_failure(error: Exception) -> str:
     seen: set[int] = set()
@@ -72,13 +82,22 @@ def _summarize_activity_failure(error: Exception) -> str:
         cursor = next_cursor if isinstance(next_cursor, Exception) else None
 
     if messages:
-        return messages[-1]
+        # Temporal's first non-generic cause is the application-owned summary.
+        # Deeper provider exceptions can repeat every attempted strategy and
+        # exceed the progress-event contract without adding user-facing value.
+        return _truncate_progress_text(messages[0], MAX_FAILURE_SUMMARY_LENGTH)
     fallback = str(error).strip()
-    return fallback or type(error).__name__
+    return _truncate_progress_text(fallback or type(error).__name__, MAX_FAILURE_SUMMARY_LENGTH)
 
 
 def _external_source_user_message(failure_summary: str) -> str:
     normalized = failure_summary.lower()
+    if "youtubeauthenticationrequired" in normalized:
+        return (
+            "YouTube menolak akses dari IP worker untuk video ini. Percobaan ulang dari server yang sama "
+            "tidak akan membantu. Upload file video secara langsung; autentikasi browser hanya dapat "
+            "membantu jika YouTube menerima sesi tersebut dari IP server."
+        )
     if "youtubeaccessdenied" in normalized:
         return (
             "YouTube menolak akses download video dari worker. Membuka video di browser tidak membagikan "
@@ -87,16 +106,17 @@ def _external_source_user_message(failure_summary: str) -> str:
         )
     if "http error 403" in normalized or "403: forbidden" in normalized:
         return (
-            "YouTube menolak permintaan download dari server. Video tidak perlu dibuka di browser terlebih dahulu. "
-            "Coba ulangi job karena akses media bertanda tangan dapat bersifat sementara. Jika tetap ditolak, upload "
-            "file videonya secara langsung. Video privat, terbatas usia, khusus member, atau yang membutuhkan login "
+            "YouTube menolak permintaan download dari server. Video tidak perlu dibuka di browser "
+            "terlebih dahulu. Coba ulangi job karena akses media bertanda tangan dapat bersifat "
+            "sementara. Jika tetap ditolak, upload file videonya secara langsung. Video privat, "
+            "terbatas usia, khusus member, atau yang membutuhkan login "
             "memerlukan autentikasi YouTube yang dikonfigurasi administrator."
         )
     if "sign in" in normalized or "cookies" in normalized:
         return (
-            "YouTube meminta sesi login untuk video ini. Membukanya di browser tidak membagikan sesi tersebut ke "
-            "worker. Upload file video secara langsung atau minta administrator mengonfigurasi autentikasi YouTube "
-            "untuk proses import."
+            "YouTube meminta sesi login untuk video ini. Membukanya di browser tidak membagikan "
+            "sesi tersebut ke worker. Upload file video secara langsung atau minta administrator "
+            "mengonfigurasi autentikasi YouTube untuk proses import."
         )
     return (
         "The source URL could not be imported into the workspace media library. "
@@ -146,7 +166,10 @@ class FoundationAutoClippingWorkflow:
                     job_id=job_id,
                     stage="PROBING_MEDIA",
                     message="Media extraction adapters are not available for this source yet.",
-                    user_message="This job cannot continue because the source payload is incomplete for auto-clipping.",
+                    user_message=(
+                        "This job cannot continue because the source payload is incomplete "
+                        "for auto-clipping."
+                    ),
                     metadata={
                         "phase": "FOUNDATION_PLUS",
                         "next_phase": "AUTO_CLIPPING_MVP",
@@ -265,7 +288,10 @@ class FoundationAutoClippingWorkflow:
                         job_id=job_id,
                         stage="PROBING_MEDIA",
                         message="A source media asset is required when analysis inputs are not provided.",
-                        user_message="This job needs a ready source media asset before auto clipping can continue.",
+                        user_message=(
+                            "This job needs a ready source media asset before auto clipping "
+                            "can continue."
+                        ),
                         metadata={
                             "phase": "AUTO_CLIPPING_MVP",
                             "missing": "source.media_asset_id",
@@ -421,7 +447,9 @@ class FoundationAutoClippingWorkflow:
                 "Candidate analysis has started.",
                 "RUNNING",
                 {
-                    "transcript_segment_count": len(transcript_segments) if isinstance(transcript_segments, list) else 0,
+                    "transcript_segment_count": (
+                        len(transcript_segments) if isinstance(transcript_segments, list) else 0
+                    ),
                     "scene_count": len(analysis_inputs.get("scenes", [])),
                     "silence_count": len(analysis_inputs.get("silences", [])),
                 },
@@ -480,7 +508,8 @@ class FoundationAutoClippingWorkflow:
                 "GENERATING_PREVIEWS",
                 100,
                 "job.progress",
-                "Prepared review-ready candidate data, titles, captions, CTAs, hashtags, and score breakdowns.",
+                "Prepared review-ready candidate data, titles, captions, CTAs, hashtags, "
+                "and score breakdowns.",
                 "Candidate review data is ready.",
                 "RUNNING",
                 {"candidate_count": candidate_count},
@@ -545,8 +574,8 @@ class FoundationAutoClippingWorkflow:
             "stage_progress": stage_progress,
             "overall_progress": compute_overall_progress(stage, stage_progress),
             "event_type": event_type,
-            "message": message,
-            "user_message": user_message,
+            "message": _truncate_progress_text(message),
+            "user_message": _truncate_progress_text(user_message),
             "status": status,
             "metadata": {
                 "stage_weight": STAGE_WEIGHTS[stage],
