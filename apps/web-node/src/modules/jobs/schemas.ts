@@ -33,6 +33,11 @@ function optionalText(maxLength: number) {
     .transform((value) => value || undefined);
 }
 
+const optionalUuidField = z.preprocess(
+  (value) => value === null || value === "" ? undefined : value,
+  z.uuid().optional()
+);
+
 const clipLanguageField = z
   .string()
   .trim()
@@ -256,6 +261,7 @@ export const clipCandidateSelectionSchema = z.object({
 
 export const regenerateAutoClipJobSchema = z
   .object({
+    source_media_asset_id: optionalUuidField,
     configuration_mode: z.enum(["AUTO", "MANUAL"]).default("MANUAL"),
     content_title: optionalText(255),
     content_context: optionalText(20000),

@@ -41,6 +41,7 @@
     version: null,
     updatedAt: null
   };
+  const cookieStatus = youtubeCookieStatus ?? { configured: false, sizeBytes: 0, updatedAt: null, error: null };
   const featureFlagCategorySummary = Array.isArray(featureFlagCategories) ? featureFlagCategories.slice(0, 4) : [];
   const systemSettingCategorySummary = Array.isArray(systemSettingCategories) ? systemSettingCategories.slice(0, 4) : [];
 %>
@@ -59,6 +60,50 @@
     <article class="stat-card"><span>Enabled flags</span><strong><%= summary.enabledFeatureFlagCount %></strong></article>
     <article class="stat-card"><span>System settings</span><strong><%= summary.systemSettingCount %></strong></article>
     <article class="stat-card"><span>Secret settings</span><strong><%= summary.secretSettingCount %></strong></article>
+  </section>
+
+  <section class="panel mt-4">
+    <div class="panel-heading">
+      <div>
+        <h2>YouTube authentication fallback</h2>
+        <p>Upload Netscape <code>cookies.txt</code> dari browser yang sudah login. Anonymous + PO Token tetap dicoba lebih dulu.</p>
+      </div>
+    </div>
+    <div class="p-4">
+      <div class="form-message"></div>
+      <div class="clip-output-review-grid mb-4">
+        <article class="clip-output-review-card">
+          <span>Status</span>
+          <strong><%= cookieStatus.configured ? 'Configured' : 'Not configured' %></strong>
+          <p>Isi cookie tidak pernah ditampilkan kembali atau dicatat ke log.</p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Last update</span>
+          <strong><%= cookieStatus.updatedAt ? cookieStatus.updatedAt.toLocaleString() : '-' %></strong>
+          <p><%= cookieStatus.configured ? `${cookieStatus.sizeBytes} bytes tersimpan.` : 'Upload cookie hanya saat YouTube meminta login.' %></p>
+        </article>
+        <article class="clip-output-review-card">
+          <span>Limitasi</span>
+          <strong>Tidak permanen</strong>
+          <p>YouTube dapat mencabut sesi. Ganti file jika fallback autentikasi kembali ditolak.</p>
+        </article>
+      </div>
+      <% if (cookieStatus.error) { %>
+        <div class="alert alert-warning">Storage cookie belum dapat diakses: <%= cookieStatus.error %></div>
+      <% } %>
+      <form class="row g-3" data-api-form data-youtube-cookie-form action="/api/v1/admin/system-settings/youtube-cookies" method="post">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <textarea name="cookie_content" data-youtube-cookie-content hidden></textarea>
+        <div class="col-md-9">
+          <label class="form-label">Netscape cookies.txt</label>
+          <input class="form-control" type="file" accept=".txt,text/plain" data-youtube-cookie-file required>
+          <div class="form-text" data-youtube-cookie-file-status>Export dari profile browser khusus operasional. Maksimal 2 MB.</div>
+        </div>
+        <div class="col-md-3 d-flex align-items-end">
+          <button class="btn btn-primary w-100" type="submit">Upload cookie fallback</button>
+        </div>
+      </form>
+    </div>
   </section>
 
   <section class="panel mt-4">

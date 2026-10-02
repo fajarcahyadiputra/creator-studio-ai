@@ -30,6 +30,7 @@ services:
         mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
         mc mb --ignore-existing "local/$$S3_BUCKET_MEDIA" &&
         mc anonymous set none "local/$$S3_BUCKET_MEDIA" &&
+        mc cors set "local/$$S3_BUCKET_MEDIA" /config/cors.xml &&
         mc ilm rule add --expire-days "$$MINIO_USERS_EXPIRE_DAYS" --prefix 'users/' "local/$$S3_BUCKET_MEDIA" || true
 
   temporal:

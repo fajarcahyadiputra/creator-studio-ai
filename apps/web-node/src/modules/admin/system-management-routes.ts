@@ -7,6 +7,7 @@ import type { AdminSystemService } from "./admin-system-service.js";
 import {
   adminAutoClipAnalyzerRuntimeSchema,
   adminAutoClipSourceQualitySchema,
+  adminYoutubeCookiesSchema,
   adminCreateFeatureFlagSchema,
   adminCreateSystemSettingSchema,
   adminUpdateFeatureFlagSchema,
@@ -98,6 +99,31 @@ export function adminSystemRouter(adminSystemService: AdminSystemService): Route
         request
       });
       response.json({ data: { message: "Auto-clipping analyzer runtime updated successfully." } });
+    })
+  );
+
+  router.post(
+    "/api/v1/admin/system-settings/youtube-cookies",
+    requireAuth,
+    requirePermission("admin.system.manage"),
+    validateBody(adminYoutubeCookiesSchema),
+    asyncHandler(async (request, response) => {
+      const status = await adminSystemService.updateYoutubeCookies(
+        (request.validatedBody as { cookie_content: string }).cookie_content
+      );
+      await writeAudit({
+        actorUserId: request.identity!.actorUserId,
+        action: "ADMIN_YOUTUBE_COOKIES_UPDATED",
+        resourceType: "RuntimeSecret",
+        resourceId: "youtube-cookies",
+        afterData: {
+          configured: status.configured,
+          size_bytes: status.sizeBytes,
+          updated_at: status.updatedAt,
+        },
+        request
+      });
+      response.json({ data: { message: "Cookie YouTube tersimpan dan siap dipakai worker sebagai fallback." } });
     })
   );
 

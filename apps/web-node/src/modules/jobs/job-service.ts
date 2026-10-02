@@ -71,6 +71,7 @@ interface CreateTtsInput {
 }
 
 interface RegenerateAutoClipInput {
+  source_media_asset_id?: string;
   configuration_mode: "AUTO" | "MANUAL";
   content_title?: string;
   content_context?: string;
@@ -825,11 +826,11 @@ export class JobService {
       autoClipRequest: job.autoClipRequest,
       sourceMediaAsset: job.sourceMediaAsset,
     }) as unknown as CreateAutoClipInput;
-    assertRunnableAutoClipSource(runnableSnapshot as unknown as Record<string, unknown>);
     const nextInput = await prepareAutoClippingInput(
       params.userId,
       buildRegeneratedAutoClippingInput(runnableSnapshot, params.input)
     );
+    assertRunnableAutoClipSource(nextInput as unknown as Record<string, unknown>);
     if (nextInput.source.media_asset_id) {
       const asset = await prisma.mediaAsset.findFirst({
         where: {
@@ -1848,7 +1849,7 @@ function prepareTtsInput(input: CreateTtsInput): CreateTtsInput {
   };
 }
 
-function buildRegeneratedAutoClippingInput(
+export function buildRegeneratedAutoClippingInput(
   currentSnapshot: CreateAutoClipInput,
   input: RegenerateAutoClipInput
 ): CreateAutoClipInput {
@@ -1880,13 +1881,7 @@ function buildRegeneratedAutoClippingInput(
 
   return {
     project_id: currentSnapshot.project_id,
-    source:
-      currentSnapshot.source.type === "EXTERNAL_URL"
-        ? {
-            type: "EXTERNAL_URL",
-            url: currentSnapshot.source.url
-          }
-        : currentSnapshot.source,
+    source: resolveRegeneratedAutoClipSource(currentSnapshot.source, input.source_media_asset_id),
     content: {
       title: input.content_title,
       context: input.content_context,
@@ -1984,6 +1979,25 @@ function buildRegeneratedAutoClippingInput(
         ? currentSnapshot.ai
         : { credential_mode: "PLATFORM" }
   };
+}
+
+export function resolveRegeneratedAutoClipSource(
+  currentSource: CreateAutoClipInput["source"],
+  replacementMediaAssetId?: string
+): CreateAutoClipInput["source"] {
+  if (replacementMediaAssetId) {
+    return {
+      type: "MEDIA_ASSET",
+      media_asset_id: replacementMediaAssetId,
+    };
+  }
+  if (currentSource.type === "EXTERNAL_URL") {
+    return {
+      type: "EXTERNAL_URL",
+      url: currentSource.url,
+    };
+  }
+  return currentSource;
 }
 
 function buildRegeneratedTtsInput(currentSnapshot: CreateTtsInput, input: RegenerateTtsInput): CreateTtsInput {
@@ -2200,7 +2214,7 @@ function canDeleteJob(status: string) {
 }
 
 function canRegenerateJob(status: string) {
-  return ["COMPLETED", "PARTIALLY_COMPLETED"].includes(status);
+  return ["FAILED", "NEEDS_REVIEW", "CANCELED", "COMPLETED", "PARTIALLY_COMPLETED"].includes(status);
 }
 
 function shouldDeleteJobSourceMediaAsset(job: {

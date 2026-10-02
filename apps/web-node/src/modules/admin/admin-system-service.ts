@@ -1,5 +1,8 @@
+import { chmod, mkdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import path from "node:path";
 import type { Prisma } from "../../generated/prisma/client.js";
 import { AiCapability } from "../../generated/prisma/enums.js";
+import { env } from "../../config/env.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
 import { NotFoundError } from "../../shared/errors/app-error.js";
 import {
@@ -12,6 +15,7 @@ import {
   normalizeAutoClipSourceQualityConfig,
   type AutoClipAnalyzerMode
 } from "./system-runtime-config.js";
+import { validateYoutubeCookieContent } from "./youtube-cookie-file.js";
 
 interface AdminSystemServiceDeps {
   prisma: typeof prisma;
@@ -64,7 +68,7 @@ export class AdminSystemService {
   public constructor(private readonly deps: AdminSystemServiceDeps = { prisma }) {}
 
   public async getSystemManagementPageData() {
-    const [featureFlags, systemSettings, analyzerProviders, providerHealthSummary] = await Promise.all([
+    const [featureFlags, systemSettings, analyzerProviders, providerHealthSummary, youtubeCookieStatus] = await Promise.all([
       this.deps.prisma.featureFlag.findMany({ orderBy: { key: "asc" } }),
       this.deps.prisma.systemSetting.findMany({ orderBy: { key: "asc" } }),
       this.deps.prisma.aiProvider.findMany({
@@ -98,7 +102,8 @@ export class AdminSystemService {
         },
         orderBy: { displayName: "asc" }
       }),
-      this.getProviderHealthSummary()
+      this.getProviderHealthSummary(),
+      this.getYoutubeCookieStatus()
     ]);
     const analyzerRuntimeSetting = systemSettings.find((setting) => setting.key === AUTO_CLIP_ANALYZER_RUNTIME_KEY) ?? null;
     const sourceQualitySetting = systemSettings.find((setting) => setting.key === AUTO_CLIP_SOURCE_QUALITY_KEY) ?? null;
@@ -174,9 +179,50 @@ export class AdminSystemService {
         isPersisted: Boolean(sourceQualitySetting)
       },
       providerHealthSummary,
+      youtubeCookieStatus,
       analyzerRuntimeProviderOptions,
       analyzerRuntimeModelOptions
     };
+  }
+
+  public async getYoutubeCookieStatus() {
+    try {
+      const file = await stat(env.YT_DLP_COOKIES_FILE);
+      return {
+        configured: file.isFile() && file.size > 0,
+        sizeBytes: file.size,
+        updatedAt: file.mtime,
+      };
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return { configured: false, sizeBytes: 0, updatedAt: null };
+      }
+      return {
+        configured: false,
+        sizeBytes: 0,
+        updatedAt: null,
+        error: error instanceof Error ? error.message : "Cookie storage is unavailable.",
+      };
+    }
+  }
+
+  public async updateYoutubeCookies(cookieContent: string) {
+    const normalized = validateYoutubeCookieContent(cookieContent);
+    const targetPath = env.YT_DLP_COOKIES_FILE;
+    const targetDirectory = path.dirname(targetPath);
+    const temporaryPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
+
+    await mkdir(targetDirectory, { recursive: true });
+    try {
+      await writeFile(temporaryPath, normalized, { encoding: "utf8", mode: 0o644, flag: "wx" });
+      await rename(temporaryPath, targetPath);
+      await chmod(targetPath, 0o644);
+    } catch (error) {
+      await unlink(temporaryPath).catch(() => undefined);
+      throw error;
+    }
+
+    return this.getYoutubeCookieStatus();
   }
 
   private async getProviderHealthSummary(): Promise<ProviderHealthSummary> {
@@ -326,6 +372,10 @@ export class AdminSystemService {
     if (!systemSetting) throw new NotFoundError("System setting");
     return systemSetting;
   }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
 
 function formatJson(value: unknown): string {

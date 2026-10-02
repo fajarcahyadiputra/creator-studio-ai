@@ -134,7 +134,7 @@
         </div>
       </section>
 
-      <% if (['COMPLETED', 'PARTIALLY_COMPLETED'].includes(job.status)) { %>
+      <% if (['FAILED', 'NEEDS_REVIEW', 'CANCELED', 'COMPLETED', 'PARTIALLY_COMPLETED'].includes(job.status)) { %>
         <section class="panel mt-4">
           <div class="panel-heading">
             <div>
@@ -271,12 +271,21 @@
                   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                   <div class="col-12">
                     <div class="candidate-caption-box">
-                      <strong>Regenerate output dengan source yang sama</strong>
-                      <p class="mb-0">
-                        Source asli job ini akan dipakai lagi.
+                        <strong>Regenerate output</strong>
+                        <p class="mb-0">
+                          Source asli dipakai lagi kecuali kamu mengupload file pengganti.
                         <%= outputSummary.requestSnapshot.sourceType === 'EXTERNAL_URL' ? 'Tipe source: External URL.' : 'Tipe source: Uploaded media asset.' %>
                         <% if (job.sourceMediaAsset?.displayName) { %> Asset: <%= job.sourceMediaAsset.displayName %>.<% } %>
                       </p>
+                    </div>
+                  </div>
+                  <div class="col-12">
+                    <div class="border rounded-4 p-3 bg-light-subtle">
+                      <label class="form-label">File source pengganti <span class="text-muted">(opsional)</span></label>
+                      <input class="form-control" type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.webm,.mkv" data-regenerate-source-file>
+                      <input type="hidden" name="source_media_asset_id" data-regenerate-source-media-asset-id>
+                      <div class="form-text" data-regenerate-source-upload-status>Gunakan ini jika import URL YouTube diblokir. Setting clipping lama tetap dipertahankan.</div>
+                      <div class="progress mt-2" hidden data-regenerate-source-upload-progress-wrap><div class="progress-bar" data-regenerate-source-upload-progress style="width:0%">0%</div></div>
                     </div>
                   </div>
 

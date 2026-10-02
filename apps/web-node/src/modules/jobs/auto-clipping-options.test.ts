@@ -76,6 +76,7 @@ describe("auto-clipping option registry", () => {
       }
     });
     const regenerateResult = regenerateAutoClipJobSchema.safeParse({
+      source_media_asset_id: "",
       configuration_mode: "MANUAL",
       target_platform: "TIKTOK",
       objective: "HIGHLIGHT_SURPRISING_FACT",
@@ -102,11 +103,33 @@ describe("auto-clipping option registry", () => {
       ]);
     }
     if (regenerateResult.success) {
+      expect(regenerateResult.data.source_media_asset_id).toBeUndefined();
       expect(regenerateResult.data.objectives_text).toEqual([
         "HIGHLIGHT_SURPRISING_FACT",
         "SPARK_DISCUSSION"
       ]);
       expect(regenerateResult.data.tones_text).toEqual(["SURPRISING", "THOUGHT_PROVOKING"]);
+    }
+  });
+
+  it("accepts an uploaded replacement source for regenerate", () => {
+    const parsed = regenerateAutoClipJobSchema.safeParse({
+      configuration_mode: "AUTO",
+      source_media_asset_id: "d4012a17-32d9-4d34-9f7c-f41920017bfa",
+      maximum_duration_seconds: "60",
+      target_platform: "TIKTOK",
+      objective: "VIRAL_POTENTIAL",
+      primary_tones_text: "INSIGHTFUL",
+      tones_text: "INSIGHTFUL",
+      aspect_ratio: "9:16",
+      crop_strategy: "SMART_SPEAKER",
+      subtitle_enabled: "on",
+      subtitle_language: "id",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.source_media_asset_id).toBe("d4012a17-32d9-4d34-9f7c-f41920017bfa");
     }
   });
 });

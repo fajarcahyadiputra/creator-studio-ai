@@ -5,10 +5,36 @@ import { routeParam } from "../../shared/http/route-param.js";
 import { requireAuth } from "../auth/identity-middleware.js";
 import { assertIdempotencyKey } from "../jobs/job-service.js";
 import { completeUploadSchema, createUploadSchema } from "./schemas.js";
-import { UploadService } from "./upload-service.js";
+import type { UploadService } from "./upload-service.js";
 
 export function uploadsRouter(service: UploadService): Router {
   const router = Router();
+
+  router.get(
+    "/api/v1/uploads/:uploadId",
+    requireAuth,
+    asyncHandler(async (request, response) => {
+      const status = await service.getStatus(
+        request.identity!.effectiveUserId,
+        routeParam(request.params.uploadId, "uploadId")
+      );
+      response.json({
+        data: {
+          upload_id: status.uploadId,
+          upload_status: status.uploadStatus,
+          expires_at: status.expiresAt.toISOString(),
+          media_asset: {
+            id: status.mediaAsset.id,
+            status: status.mediaAsset.status,
+            display_name: status.mediaAsset.displayName,
+            size_bytes: status.mediaAsset.sizeBytes?.toString() ?? null,
+            duration_ms: status.mediaAsset.durationMs?.toString() ?? null,
+            metadata: status.mediaAsset.metadata,
+          },
+        },
+      });
+    })
+  );
 
   router.post(
     "/api/v1/uploads",

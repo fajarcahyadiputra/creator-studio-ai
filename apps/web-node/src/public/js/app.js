@@ -67,6 +67,109 @@ function showMessage(container, message, type = "danger") {
   container.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
 }
 
+function resolveMediaContentType(file) {
+  const allowed = new Set(["video/mp4", "video/quicktime", "video/webm", "video/x-matroska"]);
+  if (allowed.has(file.type)) return file.type;
+  const extension = String(file.name || "").split(".").pop()?.toLowerCase();
+  return {
+    mp4: "video/mp4",
+    mov: "video/quicktime",
+    webm: "video/webm",
+    mkv: "video/x-matroska"
+  }[extension] || null;
+}
+
+async function uploadMediaFile(file, onProgress = () => undefined) {
+  const contentType = resolveMediaContentType(file);
+  if (!contentType) throw new Error("Format video tidak didukung. Gunakan MP4, MOV, WebM, atau MKV.");
+
+  const createResponse = await fetch("/api/v1/uploads", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-csrf-token": csrf,
+      "idempotency-key": generateUUID()
+    },
+    body: JSON.stringify({ file_name: file.name, content_type: contentType, size_bytes: file.size })
+  });
+  const created = await createResponse.json();
+  if (!createResponse.ok) throw new Error(created?.error?.message ?? "Gagal menyiapkan upload video.");
+
+  const upload = created.data;
+  const parts = Array.isArray(upload?.parts) ? upload.parts : [];
+  const partSize = Number(upload?.part_size_bytes || 0);
+  if (!upload?.upload_id || !upload?.media_asset_id || !partSize || parts.length === 0) {
+    throw new Error("Server mengembalikan upload plan yang tidak valid.");
+  }
+
+  const completedParts = [];
+  let uploadedBytes = 0;
+  let nextPartIndex = 0;
+  try {
+    const workers = Array.from({ length: Math.min(4, parts.length) }, async () => {
+      while (nextPartIndex < parts.length) {
+        const partIndex = nextPartIndex++;
+        const part = parts[partIndex];
+        const start = partIndex * partSize;
+        const end = Math.min(file.size, start + partSize);
+        const response = await fetch(part.url, {
+          method: "PUT",
+          body: file.slice(start, end)
+        });
+        if (!response.ok) throw new Error(`Upload part ${part.part_number} gagal (${response.status}).`);
+        const etag = response.headers.get("etag");
+        if (!etag) throw new Error("Object storage tidak mengirim ETag. Periksa konfigurasi CORS MinIO.");
+        completedParts.push({ part_number: part.part_number, etag });
+        uploadedBytes += end - start;
+        onProgress(Math.min(90, Math.round((uploadedBytes / file.size) * 90)), "Mengupload video");
+      }
+    });
+    await Promise.all(workers);
+
+    const completeResponse = await fetch(`/api/v1/uploads/${upload.upload_id}/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-csrf-token": csrf },
+      body: JSON.stringify({ parts: completedParts.sort((a, b) => a.part_number - b.part_number) })
+    });
+    const completed = await completeResponse.json();
+    if (!completeResponse.ok) {
+      throw new Error(completed?.error?.message ?? "Gagal menyelesaikan upload video.");
+    }
+
+    onProgress(92, "Memvalidasi video");
+    const deadline = Date.now() + 15 * 60 * 1000;
+    while (Date.now() < deadline) {
+      const statusResponse = await fetch(`/api/v1/uploads/${upload.upload_id}`, {
+        headers: { "x-csrf-token": csrf }
+      });
+      const statusPayload = await statusResponse.json();
+      if (!statusResponse.ok) {
+        throw new Error(statusPayload?.error?.message ?? "Gagal membaca status validasi video.");
+      }
+      const asset = statusPayload?.data?.media_asset;
+      if (asset?.status === "READY") {
+        onProgress(100, "Video siap diproses");
+        return { mediaAssetId: asset.id, uploadId: upload.upload_id };
+      }
+      if (asset?.status === "FAILED") {
+        const reason = asset?.metadata?.validation?.failure_reason;
+        throw new Error(reason || "Video gagal melewati validasi media.");
+      }
+      if (asset?.metadata?.validation?.status === "TRIGGER_FAILED") {
+        throw new Error("Worker validasi media tidak dapat dimulai. Coba lagi setelah Temporal tersedia.");
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    }
+    throw new Error("Validasi video belum selesai setelah 15 menit. Periksa worker media lalu coba lagi.");
+  } catch (error) {
+    await fetch(`/api/v1/uploads/${upload.upload_id}/abort`, {
+      method: "POST",
+      headers: { "x-csrf-token": csrf }
+    }).catch(() => undefined);
+    throw error;
+  }
+}
+
 function normalizeRegenerateAutoClipPayload(form, payload) {
   if (!form.matches('form[action^="/api/v1/auto-clipping/jobs/"][action$="/regenerate"]')) {
     return payload;
@@ -381,6 +484,25 @@ for (const form of document.querySelectorAll('form[action="/api/v1/admin/system-
   syncAnalyzerModelOptions();
 }
 
+for (const form of document.querySelectorAll("[data-youtube-cookie-form]")) {
+  const fileField = form.querySelector("[data-youtube-cookie-file]");
+  const contentField = form.querySelector("[data-youtube-cookie-content]");
+  const statusNode = form.querySelector("[data-youtube-cookie-file-status]");
+  fileField?.addEventListener("change", async () => {
+    const file = fileField instanceof HTMLInputElement ? fileField.files?.[0] : null;
+    if (!(contentField instanceof HTMLTextAreaElement)) return;
+    contentField.value = "";
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      if (statusNode) statusNode.textContent = "File terlalu besar. Maksimal 2 MB.";
+      fileField.value = "";
+      return;
+    }
+    contentField.value = await file.text();
+    if (statusNode) statusNode.textContent = `${file.name} siap diupload (${file.size} bytes).`;
+  });
+}
+
 for (const form of document.querySelectorAll("[data-api-form]")) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -534,6 +656,10 @@ if (autoClipForm) {
   const sourceModeField = autoClipForm.querySelector('[name="source_mode"]');
   const sourceUrlField = autoClipForm.querySelector('[name="source_url"]');
   const mediaAssetField = autoClipForm.querySelector('[name="media_asset_id"]');
+  const sourceFileField = autoClipForm.querySelector('[name="source_file"]');
+  const sourceUploadStatus = autoClipForm.querySelector("[data-source-upload-status]");
+  const sourceUploadProgressWrap = autoClipForm.querySelector("[data-source-upload-progress-wrap]");
+  const sourceUploadProgress = autoClipForm.querySelector("[data-source-upload-progress]");
   const presetSelector = autoClipForm.querySelector("[data-auto-clip-preset-selector]");
   const brandKitSelector = autoClipForm.querySelector("[data-auto-clip-brand-kit-selector]");
   const presetNameNode = autoClipForm.querySelector("[data-auto-clip-preset-name]");
@@ -657,13 +783,12 @@ if (autoClipForm) {
   };
 
   const syncSourceMode = () => {
-    const mode = "EXTERNAL_URL";
-    if (sourceModeField) sourceModeField.value = mode;
+    const mode = sourceModeField?.value === "MEDIA_ASSET" ? "MEDIA_ASSET" : "EXTERNAL_URL";
     for (const panel of sourcePanels) {
       panel.hidden = panel.getAttribute("data-source-panel") !== mode;
     }
-    if (sourceUrlField) sourceUrlField.required = true;
-    if (mediaAssetField) mediaAssetField.required = false;
+    if (sourceUrlField) sourceUrlField.required = mode === "EXTERNAL_URL";
+    if (sourceFileField) sourceFileField.required = mode === "MEDIA_ASSET" && !mediaAssetField?.value;
     syncSubmitSummary();
   };
 
@@ -801,7 +926,10 @@ if (autoClipForm) {
   };
 
   const syncSubmitSummary = () => {
+    const sourceMode = sourceModeField?.value === "MEDIA_ASSET" ? "MEDIA_ASSET" : "EXTERNAL_URL";
     const sourceUrlValue = String(sourceUrlField?.value || "").trim();
+    const mediaAssetValue = String(mediaAssetField?.value || "").trim();
+    const sourceFileName = sourceFileField instanceof HTMLInputElement ? sourceFileField.files?.[0]?.name : "";
     const platform = String(autoClipForm.querySelector('[name="platform"]')?.value || "YOUTUBE_SHORTS").trim();
     const objectiveField = autoClipForm.querySelector('[name="objective"]');
     const objectives = objectiveField instanceof HTMLInputElement
@@ -826,10 +954,12 @@ if (autoClipForm) {
     const issues = [];
 
     if (submitSummarySource) {
-      submitSummarySource.textContent = "External URL";
+      submitSummarySource.textContent = sourceMode === "MEDIA_ASSET" ? "Uploaded video" : "External URL";
     }
     if (submitSummarySourceDetail) {
-      submitSummarySourceDetail.textContent = sourceUrlValue || "Belum ada external URL diisi.";
+      submitSummarySourceDetail.textContent = sourceMode === "MEDIA_ASSET"
+        ? (mediaAssetValue ? `${sourceFileName || "Video"} sudah siap.` : "Belum ada file video yang selesai diupload.")
+        : (sourceUrlValue || "Belum ada external URL diisi.");
     }
     if (submitSummaryStrategy) {
       submitSummaryStrategy.textContent = `${humanizeAutoClipValue("platform", platform)} | ${objectives.map((value) => humanizeAutoClipValue("objective", value)).join(", ") || "-"}`;
@@ -872,11 +1002,14 @@ if (autoClipForm) {
     renderListHelper("preferred_topics", preferredTopics, 20, 120);
     renderListHelper("topics_to_avoid", topicsToAvoid, 20, 120);
 
-    if (!sourceUrlValue) {
+    if (sourceMode === "EXTERNAL_URL" && !sourceUrlValue) {
       issues.push("Isi external source URL sebelum submit.");
     }
-    if (sourceUrlValue.includes("youtu.be/")) {
+    if (sourceMode === "EXTERNAL_URL" && sourceUrlValue.includes("youtu.be/")) {
       issues.push("Pertimbangkan pakai URL penuh youtube.com/watch agar ingestion lebih stabil.");
+    }
+    if (sourceMode === "MEDIA_ASSET" && !mediaAssetValue) {
+      issues.push("Pilih file video dan tunggu upload selesai sebelum submit.");
     }
     if (!rightsConfirmed) {
       issues.push("Centang rights confirmation.");
@@ -1013,6 +1146,37 @@ if (autoClipForm) {
     setFieldValue("subtitle_safe_margin_percent", subtitlePreset.safe_margin_percent ?? safeMarginConfig.bottom_percent);
   };
 
+  sourceFileField?.addEventListener("change", async () => {
+    const file = sourceFileField instanceof HTMLInputElement ? sourceFileField.files?.[0] : null;
+    if (!file || !(mediaAssetField instanceof HTMLInputElement)) return;
+    const submitButton = autoClipForm.querySelector('button[type="submit"]');
+    mediaAssetField.value = "";
+    sourceFileField.disabled = true;
+    if (submitButton) submitButton.disabled = true;
+    if (sourceUploadProgressWrap instanceof HTMLElement) sourceUploadProgressWrap.hidden = false;
+    try {
+      const uploaded = await uploadMediaFile(file, (percent, label) => {
+        if (sourceUploadProgress instanceof HTMLElement) {
+          sourceUploadProgress.style.width = `${percent}%`;
+          sourceUploadProgress.textContent = `${percent}%`;
+        }
+        if (sourceUploadStatus) sourceUploadStatus.textContent = `${label}: ${percent}%`;
+      });
+      mediaAssetField.value = uploaded.mediaAssetId;
+      sourceFileField.required = false;
+      if (sourceUploadStatus) sourceUploadStatus.textContent = `${file.name} siap dipakai untuk clipping.`;
+    } catch (error) {
+      sourceFileField.value = "";
+      if (sourceUploadStatus) {
+        sourceUploadStatus.textContent = error instanceof Error ? error.message : String(error);
+      }
+    } finally {
+      sourceFileField.disabled = false;
+      if (submitButton) submitButton.disabled = false;
+      syncSubmitSummary();
+    }
+  });
+
   syncAdvancedMode();
   syncSourceMode();
   syncLayoutMode();
@@ -1045,10 +1209,16 @@ if (autoClipForm) {
     event.preventDefault();
     clearFieldErrors();
     const data = new FormData(autoClipForm);
-    const source = compactObject({
-      type: "EXTERNAL_URL",
-      url: String(data.get("source_url") || "").trim() || undefined
-    });
+    const sourceMode = String(data.get("source_mode") || "EXTERNAL_URL");
+    const source = sourceMode === "MEDIA_ASSET"
+      ? compactObject({
+          type: "MEDIA_ASSET",
+          media_asset_id: String(data.get("media_asset_id") || "").trim() || undefined
+        })
+      : compactObject({
+          type: "EXTERNAL_URL",
+          url: String(data.get("source_url") || "").trim() || undefined
+        });
     const objectives = [...new Set(splitCsv(data.get("objective")))].slice(0, 5);
     const primaryTones = [...new Set(splitCsv(data.get("primary_tone")))].slice(0, 5);
     const secondaryTones = [...new Set(splitCsv(data.get("secondary_tone")))]
@@ -1167,9 +1337,13 @@ if (autoClipForm) {
         applyAutoClipFieldErrors(["Centang rights confirmation."]);
         throw new Error("Please confirm you have the rights to process this content.");
       }
-      if (!payload.source.url) {
+      if (payload.source.type === "EXTERNAL_URL" && !payload.source.url) {
         applyAutoClipFieldErrors(["Isi external source URL sebelum submit."]);
         throw new Error("Enter an external source URL before creating the job.");
+      }
+      if (payload.source.type === "MEDIA_ASSET" && !payload.source.media_asset_id) {
+        applyAutoClipFieldErrors(["Upload file video dan tunggu validasi selesai sebelum submit."]);
+        throw new Error("Upload file video dan tunggu sampai statusnya siap sebelum membuat job.");
       }
       const idempotencyKey = generateUUID();
       const response = await fetch("/api/v1/auto-clipping/jobs", {
@@ -1502,6 +1676,11 @@ for (const form of document.querySelectorAll('form[action^="/api/v1/auto-clippin
   const podcastPanels = form.querySelectorAll("[data-regenerate-podcast-spotlight]");
   const cropStrategyPanel = form.querySelector("[data-regenerate-crop-strategy]");
   const cropStrategyField = form.querySelector('[name="crop_strategy"]');
+  const sourceFileField = form.querySelector("[data-regenerate-source-file]");
+  const sourceMediaAssetField = form.querySelector("[data-regenerate-source-media-asset-id]");
+  const sourceUploadStatus = form.querySelector("[data-regenerate-source-upload-status]");
+  const sourceUploadProgressWrap = form.querySelector("[data-regenerate-source-upload-progress-wrap]");
+  const sourceUploadProgress = form.querySelector("[data-regenerate-source-upload-progress]");
   const syncRegenerateMode = () => {
     const autoMode = configurationModeField?.value === "AUTO";
     for (const field of autoHiddenFields) field.hidden = autoMode;
@@ -1528,6 +1707,32 @@ for (const form of document.querySelectorAll('form[action^="/api/v1/auto-clippin
       delete cropStrategyField.dataset.standardValue;
     }
   };
+  sourceFileField?.addEventListener("change", async () => {
+    const file = sourceFileField instanceof HTMLInputElement ? sourceFileField.files?.[0] : null;
+    if (!file || !(sourceMediaAssetField instanceof HTMLInputElement)) return;
+    const submitButton = form.querySelector('button[type="submit"]');
+    sourceMediaAssetField.value = "";
+    sourceFileField.disabled = true;
+    if (submitButton) submitButton.disabled = true;
+    if (sourceUploadProgressWrap instanceof HTMLElement) sourceUploadProgressWrap.hidden = false;
+    try {
+      const uploaded = await uploadMediaFile(file, (percent, label) => {
+        if (sourceUploadProgress instanceof HTMLElement) {
+          sourceUploadProgress.style.width = `${percent}%`;
+          sourceUploadProgress.textContent = `${percent}%`;
+        }
+        if (sourceUploadStatus) sourceUploadStatus.textContent = `${label}: ${percent}%`;
+      });
+      sourceMediaAssetField.value = uploaded.mediaAssetId;
+      if (sourceUploadStatus) sourceUploadStatus.textContent = `${file.name} siap menjadi source pengganti.`;
+    } catch (error) {
+      sourceFileField.value = "";
+      if (sourceUploadStatus) sourceUploadStatus.textContent = error instanceof Error ? error.message : String(error);
+    } finally {
+      sourceFileField.disabled = false;
+      if (submitButton) submitButton.disabled = false;
+    }
+  });
   layoutField?.addEventListener("change", syncStandardHeadlineControls);
   aspectRatioField?.addEventListener("change", syncStandardHeadlineControls);
   configurationModeField?.addEventListener("change", syncRegenerateMode);

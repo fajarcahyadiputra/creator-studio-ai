@@ -480,7 +480,9 @@ def _resolve_ytdlp_cookie_file(configured_path: str | None) -> Path | None:
     raw_path = configured_path.strip() if isinstance(configured_path, str) else ""
     cookie_file = Path(raw_path) if raw_path else DEFAULT_YT_DLP_COOKIES_FILE
     if not cookie_file.exists():
-        if raw_path:
+        # The shared default volume exists even before an admin uploads cookies.
+        # Missing default file means anonymous mode, not broken configuration.
+        if raw_path and cookie_file != DEFAULT_YT_DLP_COOKIES_FILE:
             raise ApplicationError(
                 "YouTube cookie file is configured but was not found inside the worker container. "
                 "Mount the file and verify YT_DLP_COOKIES_FILE.",

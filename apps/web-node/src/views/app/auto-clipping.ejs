@@ -4,9 +4,9 @@
   <section class="user-page-summary-grid user-page-summary-grid--compact">
     <article class="user-page-summary-card user-page-summary-card--soft"><span>Quick mode</span><strong>Fokus ke input penting</strong><p>Cocok kalau kamu mau submit cepat tanpa membuka semua kontrol editor.</p></article>
     <article class="user-page-summary-card"><span>Advanced mode</span><strong>Brief lebih detail</strong><p>Buka field teknis hanya saat kamu memang perlu arahan yang lebih spesifik.</p></article>
-    <article class="user-page-summary-card"><span>Source workflow</span><strong>External URL saja</strong><p>Source diproses dari URL publik, lalu sistem hanya menyimpan hasil clip akhir untuk review.</p></article>
+    <article class="user-page-summary-card"><span>Source workflow</span><strong>URL atau upload langsung</strong><p>Coba URL lebih dulu, atau upload file jika YouTube memblokir akses worker.</p></article>
   </section>
-  <div class="alert alert-info user-inline-banner">Phase 2 analysis mengambil URL publik yang didukung secara otomatis sebelum analisis kandidat dimulai, lalu hanya menyimpan artifact hasil clip.</div>
+  <div class="alert alert-info user-inline-banner">Import URL memakai anonymous + PO Token dan cookie admin sebagai fallback. Upload langsung tersedia untuk sumber yang tetap diblokir YouTube.</div>
   <div class="form-message"></div>
   <form id="auto-clip-form" class="wizard-panel">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -33,18 +33,25 @@
         </div>
       </div>
     </div></div></section>
-    <section class="wizard-step"><div class="step-number">1</div><div class="step-body"><h2>Source</h2><p class="user-step-lead">Masukkan URL video publik yang akan diproses. Untuk flow sekarang, auto-clipping hanya menerima external source agar alurnya lebih jelas dan tidak bercampur dengan import asset manual.</p>
-      <input type="hidden" name="source_mode" value="EXTERNAL_URL">
-      <div class="border rounded-4 p-3 bg-light-subtle">
-        <span class="eyebrow">Source mode</span>
-        <strong>External source URL</strong>
-        <p>Sistem akan mengambil source dari URL, memprosesnya, lalu hanya menyimpan hasil clip akhirnya.</p>
-      </div>
+    <section class="wizard-step"><div class="step-number">1</div><div class="step-body"><h2>Source</h2><p class="user-step-lead">Pakai URL publik atau upload file video langsung. Upload langsung paling stabil saat YouTube menolak IP server.</p>
+      <label class="form-label">Source mode</label>
+      <select class="form-select" name="source_mode">
+        <option value="EXTERNAL_URL" selected>External URL</option>
+        <option value="MEDIA_ASSET">Upload video langsung</option>
+      </select>
 
       <div class="mt-3" data-source-panel="EXTERNAL_URL">
         <label class="form-label">External source URL</label><input class="form-control" type="url" name="source_url" placeholder="https://www.youtube.com/watch?v=..." required>
         <div class="form-text">Gunakan URL publik yang didukung, misalnya YouTube watch URL. Jika short URL seperti <code>youtu.be</code> bermasalah, pakai URL penuh <code>youtube.com/watch?v=...</code>.</div>
         <div class="form-text mt-1" data-source-url-helper>Gunakan URL publik yang benar-benar bisa diakses worker ingestion.</div>
+      </div>
+
+      <div class="mt-3" data-source-panel="MEDIA_ASSET" hidden>
+        <label class="form-label">File video</label>
+        <input class="form-control" type="file" name="source_file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.webm,.mkv">
+        <input type="hidden" name="media_asset_id">
+        <div class="form-text" data-source-upload-status>Pilih file. Browser akan upload langsung ke media storage dan menunggu validasi sebelum job dibuat.</div>
+        <div class="progress mt-2" hidden data-source-upload-progress-wrap><div class="progress-bar" data-source-upload-progress style="width:0%">0%</div></div>
       </div>
 
       <label class="form-check mt-3"><input class="form-check-input" type="checkbox" name="rights_confirmed" required><span class="form-check-label">I own or have permission to process this content.</span></label>

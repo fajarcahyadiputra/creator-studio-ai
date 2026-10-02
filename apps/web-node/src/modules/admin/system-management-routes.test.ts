@@ -138,6 +138,30 @@ describe("admin system management routes", () => {
     expect(adminSystemService.upsertAutoClipSourceQuality).not.toHaveBeenCalled();
   });
 
+  it("stores YouTube cookies without writing cookie contents to audit metadata", async () => {
+    const adminSystemService = {
+      updateYoutubeCookies: vi.fn().mockResolvedValue({
+        configured: true,
+        sizeBytes: 512,
+        updatedAt: new Date("2026-10-03T04:00:00.000Z")
+      })
+    };
+    const cookieContent = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsecret";
+
+    const response = await request(buildApp(adminSystemService))
+      .post("/api/v1/admin/system-settings/youtube-cookies")
+      .send({ cookie_content: cookieContent });
+
+    expect(response.status).toBe(200);
+    expect(adminSystemService.updateYoutubeCookies).toHaveBeenCalledWith(cookieContent);
+    expect(writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ADMIN_YOUTUBE_COOKIES_UPDATED",
+        afterData: expect.not.objectContaining({ cookie_content: expect.anything() })
+      })
+    );
+  });
+
   it("blocks access without admin.system.manage permission", async () => {
     const adminSystemService = {
       getSystemManagementPageData: vi.fn()

@@ -37,6 +37,7 @@ const schema = z.object({
   UPLOAD_MAX_SIZE_BYTES: z.coerce.number().int().positive().default(10 * 1024 ** 3),
   UPLOAD_PART_SIZE_BYTES: z.coerce.number().int().min(5 * 1024 ** 2).default(16 * 1024 ** 2),
   HTTP_JSON_BODY_LIMIT_MB: z.coerce.number().positive().max(64).default(8),
+  YT_DLP_COOKIES_FILE: z.string().min(1).default("/run/secrets/yt-dlp/cookies.txt"),
 
   TEMPORAL_ADDRESS: z.string().min(1),
   TEMPORAL_NAMESPACE: z.string().min(1).default("default"),

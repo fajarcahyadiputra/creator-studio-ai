@@ -1,6 +1,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+from temporalio.exceptions import ApplicationError
 from yt_dlp.utils import DownloadError
 
 from app.activities.external_source_materialization import (
@@ -14,6 +16,7 @@ from app.activities.external_source_materialization import (
     _normalize_optional_url,
     _normalize_target_video_height,
     _prepare_ytdlp_cookie_file,
+    _resolve_ytdlp_cookie_file,
 )
 
 
@@ -104,6 +107,26 @@ def test_cookie_secret_is_copied_to_writable_activity_directory(tmp_path: Path) 
 
     assert runtime_cookie == workdir / "youtube-cookies.txt"
     assert runtime_cookie.read_text(encoding="utf-8") == source.read_text(encoding="utf-8")
+
+
+def test_missing_default_cookie_file_keeps_anonymous_mode(tmp_path: Path) -> None:
+    default_path = tmp_path / "cookies.txt"
+    with patch(
+        "app.activities.external_source_materialization.DEFAULT_YT_DLP_COOKIES_FILE",
+        default_path,
+    ):
+        assert _resolve_ytdlp_cookie_file(str(default_path)) is None
+
+
+def test_missing_custom_cookie_file_is_configuration_error(tmp_path: Path) -> None:
+    default_path = tmp_path / "default" / "cookies.txt"
+    custom_path = tmp_path / "custom" / "cookies.txt"
+    with patch(
+        "app.activities.external_source_materialization.DEFAULT_YT_DLP_COOKIES_FILE",
+        default_path,
+    ):
+        with pytest.raises(ApplicationError, match="configured but was not found"):
+            _resolve_ytdlp_cookie_file(str(custom_path))
 
 
 def test_youtube_download_strategies_prefer_mweb_with_po_token() -> None:

@@ -61,8 +61,26 @@ services:
       - >-
         mc alias set local http://minio:9000 minioadmin minioadmin123 &&
         mc mb --ignore-existing local/creator-media &&
-        mc anonymous set none local/creator-media
+        mc anonymous set none local/creator-media &&
+        mc cors set local/creator-media /config/cors.xml
+    volumes:
+      - ./infra/minio/cors.xml:/config/cors.xml:ro
     networks: [internal]
+    restart: "no"
+
+  yt-dlp-secrets-init:
+    image: alpine:3.22
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        if [ ! -s /target/cookies.txt ] && [ -s /seed/cookies.txt ]; then cp /seed/cookies.txt /target/cookies.txt; fi;
+        chown -R 1000:1000 /target;
+        chmod 755 /target;
+        if [ -f /target/cookies.txt ]; then chmod 644 /target/cookies.txt; fi
+    volumes:
+      - yt-dlp-secrets:/target
+      - ./secrets/yt-dlp:/seed:ro
     restart: "no"
 
   temporal:
@@ -143,12 +161,15 @@ services:
     env_file: ${APP_ENV_FILE:-.env}
     volumes:
       - ./model_tts:/models/tts:ro
+      - yt-dlp-secrets:/run/secrets/yt-dlp
     depends_on:
       seed:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
       minio-init:
+        condition: service_completed_successfully
+      yt-dlp-secrets-init:
         condition: service_completed_successfully
       temporal:
         condition: service_healthy
@@ -235,7 +256,7 @@ services:
     volumes:
       - ./model_tts:/models/tts:ro
       - ./model_face:/models/face:ro
-      - ./secrets/yt-dlp:/run/secrets/yt-dlp:ro
+      - yt-dlp-secrets:/run/secrets/yt-dlp:ro
     depends_on:
       temporal:
         condition: service_healthy
@@ -243,6 +264,8 @@ services:
         condition: service_healthy
       yt-dlp-pot-provider:
         condition: service_healthy
+      yt-dlp-secrets-init:
+        condition: service_completed_successfully
     command: ["python", "-m", "app.worker"]
     healthcheck:
       test:
@@ -343,6 +366,7 @@ volumes:
   postgres-data:
   redis-data:
   minio-data:
+  yt-dlp-secrets:
   prometheus-data:
   grafana-data:
   loki-data:

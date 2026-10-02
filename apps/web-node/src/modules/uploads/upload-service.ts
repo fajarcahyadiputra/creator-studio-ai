@@ -61,6 +61,32 @@ interface ValidationTriggerFailureMetadataInput {
 }
 
 export class UploadService {
+  public async getStatus(userId: string, uploadId: string) {
+    const session = await prisma.uploadSession.findFirst({
+      where: { id: uploadId, userId },
+      include: {
+        mediaAsset: {
+          select: {
+            id: true,
+            status: true,
+            displayName: true,
+            sizeBytes: true,
+            durationMs: true,
+            metadata: true,
+          },
+        },
+      },
+    });
+    if (!session) throw new NotFoundError("Upload session");
+
+    return {
+      uploadId: session.id,
+      uploadStatus: session.status,
+      expiresAt: session.expiresAt,
+      mediaAsset: session.mediaAsset,
+    };
+  }
+
   public async create(params: {
     userId: string;
     fileName: string;

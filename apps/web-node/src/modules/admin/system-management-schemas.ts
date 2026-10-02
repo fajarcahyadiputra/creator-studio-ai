@@ -61,3 +61,7 @@ export const adminAutoClipSourceQualitySchema = z.object({
     message: "Source quality must be 360, 480, 720, or 1080."
   })
 });
+
+export const adminYoutubeCookiesSchema = z.object({
+  cookie_content: z.string().min(1).max(2 * 1024 * 1024)
+});
