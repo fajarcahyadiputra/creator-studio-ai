@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     YT_DLP_PO_TOKEN_PROVIDER_URL: str | None = None
     AUDIO_EXTRACTION_TIMEOUT_SECONDS: float = Field(default=900.0, gt=0, le=900)
     TRANSCRIPTION_TIMEOUT_SECONDS: float = Field(default=600.0, gt=0, le=14400)
-    ANALYZER_TIMEOUT_SECONDS: float = Field(default=180.0, gt=10, le=1800)
+    ANALYZER_TIMEOUT_SECONDS: float = Field(default=600.0, gt=10, le=1800)
     RENDER_OUTPUT_TIMEOUT_SECONDS: float = Field(default=900.0, gt=0, le=14400)
     TTS_TRANSCODE_TIMEOUT_SECONDS: float = Field(default=180.0, gt=0, le=1800)
     FASTER_WHISPER_MODEL_SIZE: str = "small"
@@ -36,7 +36,8 @@ class Settings(BaseSettings):
     AUTO_CLIP_ANALYZER_MODEL: str | None = "gpt-5.5"
     OPENAI_API_KEY: str | None = None
     OPENAI_BASE_URL: HttpUrl = HttpUrl("https://api.openai.com/v1")
-    OPENAI_TIMEOUT_SECONDS: float = Field(default=90.0, gt=0, le=300)
+    OPENAI_BACKGROUND_MODE: bool = True
+    OPENAI_TIMEOUT_SECONDS: float = Field(default=540.0, gt=0, le=900)
     TTS_MODEL_DIR: str = "/models/tts"
     PIPER_COMMAND: str = "piper"
     TTS_SAMPLE_TEXT: str = "Halo, ini adalah sample suara untuk preview model TTS."

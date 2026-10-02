@@ -107,8 +107,12 @@ AUTO_CLIP_ANALYZER_PROVIDER=openai
 AUTO_CLIP_ANALYZER_MODEL=gpt-5.5
 OPENAI_API_KEY=sk-...
 OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_TIMEOUT_SECONDS=45
+OPENAI_BACKGROUND_MODE=true
+OPENAI_TIMEOUT_SECONDS=540
+ANALYZER_TIMEOUT_SECONDS=600
 ```
+
+Set `OPENAI_BACKGROUND_MODE=false` only when the OpenAI project requires Zero Data Retention.
 
 `docker compose` already passes `.env` into `ai-media-python` and `ai-media-python-api`, so no extra Compose wiring is required after the key is present.
 

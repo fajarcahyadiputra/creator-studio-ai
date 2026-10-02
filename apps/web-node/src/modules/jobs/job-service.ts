@@ -81,21 +81,10 @@ interface RegenerateAutoClipInput {
   speaker_count?: number;
   custom_vocabulary_text: string[];
   target_platform: "TIKTOK" | "INSTAGRAM_REELS" | "FACEBOOK_REELS" | "YOUTUBE_SHORTS" | "CUSTOM";
-  objective:
-    | "ENGAGEMENT"
-    | "EDUCATION"
-    | "CONTROVERSY"
-    | "STORYTELLING"
-    | "PRODUCT_AWARENESS"
-    | "LEAD_GENERATION"
-    | "RETENTION"
-    | "VIRALITY"
-    | "BRAND_AWARENESS"
-    | "COMMUNITY_DISCUSSION"
-    | "THOUGHT_LEADERSHIP"
-    | "SALES_CONVERSION"
-    | "NEWS_COMMENTARY"
-    | "AUTHORITY_BUILDING";
+  objective: string;
+  objectives_text: string[];
+  primary_tones_text: string[];
+  secondary_tones_text: string[];
   tones_text: string[];
   desired_clip_count?: number;
   candidate_pool_count?: number;
@@ -1914,6 +1903,9 @@ function buildRegeneratedAutoClippingInput(
       configuration_mode: input.configuration_mode,
       target_platform: input.target_platform,
       objective: input.objective,
+      objectives: input.objectives_text.length > 0 ? input.objectives_text : [input.objective],
+      primary_tones: input.primary_tones_text,
+      secondary_tones: input.secondary_tones_text,
       tones: input.tones_text.length > 0
         ? input.tones_text
         : strategyValue(undefined, currentStrategy.tones, ["educational"]),

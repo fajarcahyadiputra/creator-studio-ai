@@ -144,6 +144,9 @@ export const autoClipJobSchema = z.object({
     configuration_mode: z.enum(["AUTO", "MANUAL"]).default("MANUAL"),
     target_platform: z.enum(["TIKTOK", "INSTAGRAM_REELS", "FACEBOOK_REELS", "YOUTUBE_SHORTS", "CUSTOM"]),
     objective: z.enum(AUTO_CLIP_OBJECTIVES),
+    objectives: z.array(z.enum(AUTO_CLIP_OBJECTIVES)).min(1).max(5).optional(),
+    primary_tones: z.array(z.string().min(1).max(50)).max(5).optional(),
+    secondary_tones: z.array(z.string().min(1).max(50)).max(5).optional(),
     tones: z.array(z.string().min(1).max(50)).min(1).max(5),
     desired_clip_count: z.number().int().min(1).max(10),
     candidate_pool_count: z.number().int().min(1).max(30).default(10),
@@ -264,6 +267,12 @@ export const regenerateAutoClipJobSchema = z
     custom_vocabulary_text: optionalTextList(200, 100),
     target_platform: z.enum(["TIKTOK", "INSTAGRAM_REELS", "FACEBOOK_REELS", "YOUTUBE_SHORTS", "CUSTOM"]),
     objective: z.enum(AUTO_CLIP_OBJECTIVES),
+    objectives_text: z.preprocess(
+      splitTextList,
+      z.array(z.enum(AUTO_CLIP_OBJECTIVES)).max(5).default([])
+    ),
+    primary_tones_text: optionalTextList(5, 50),
+    secondary_tones_text: optionalTextList(5, 50),
     tones_text: optionalTextList(5, 50),
     desired_clip_count: optionalInteger(1, 10),
     candidate_pool_count: optionalInteger(1, 30),

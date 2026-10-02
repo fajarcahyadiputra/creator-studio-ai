@@ -59,22 +59,27 @@
             <div class="col-md-3"><label class="form-label">Platform</label><select class="form-select" name="platform"><option <%= formDefaults.platform === 'YOUTUBE_SHORTS' ? 'selected' : '' %>>YOUTUBE_SHORTS</option><option <%= formDefaults.platform === 'TIKTOK' ? 'selected' : '' %>>TIKTOK</option><option <%= formDefaults.platform === 'INSTAGRAM_REELS' ? 'selected' : '' %>>INSTAGRAM_REELS</option><option <%= formDefaults.platform === 'FACEBOOK_REELS' ? 'selected' : '' %>>FACEBOOK_REELS</option></select></div>
             <div class="col-md-3"><label class="form-label">Bahasa video &amp; transkrip</label><select class="form-select" name="source_language" required><option value="id" <%= String(formDefaults.sourceLanguage).toLowerCase().startsWith('id') ? 'selected' : '' %>>Indonesia</option><option value="en" <%= String(formDefaults.sourceLanguage).toLowerCase().startsWith('en') ? 'selected' : '' %>>English</option></select><div class="form-text">Pilih sesuai bahasa yang diucapkan di video.</div></div>
             <div class="col-md-3"><label class="form-label">Bahasa subtitle &amp; hasil</label><select class="form-select" name="subtitle_language" required><option value="id" <%= String(formDefaults.subtitleLanguage).toLowerCase().startsWith('id') ? 'selected' : '' %>>Indonesia</option><option value="en" <%= String(formDefaults.subtitleLanguage).toLowerCase().startsWith('en') ? 'selected' : '' %>>English</option></select><div class="form-text">Untuk video English, pilih English agar subtitle dan title natural.</div></div>
-            <div class="col-md-3"><label class="form-label">Objective</label><select class="form-select" name="objective">
+            <div class="col-md-4"><label class="form-label">Objective</label><input class="form-control" name="objective" value="<%= formDefaults.objective %>" placeholder="EDUCATION, VIRAL_POTENTIAL" required>
+              <select class="form-select mt-2" data-append-to-field="objective" data-append-limit="5">
+                <option value="">Tambah objective...</option>
               <% objectiveOptions.forEach(({ value, label }) => { %>
-                <option value="<%= value %>" <%= formDefaults.objective === value ? 'selected' : '' %>><%= label %></option>
+                <option value="<%= value %>"><%= label %></option>
               <% }) %>
-            </select></div>
-            <div class="col-md-3"><label class="form-label">Primary tone</label><select class="form-select" name="primary_tone">
+              </select><div class="form-text">Pilih 1-5 objective. Hapus pilihan dengan mengedit field di atas.</div></div>
+            <div class="col-md-4"><label class="form-label">Primary tone</label><input class="form-control" name="primary_tone" value="<%= formDefaults.primaryTone %>" placeholder="EDUCATIONAL, INSIGHTFUL" required>
+              <select class="form-select mt-2" data-append-to-field="primary_tone" data-append-limit="5">
+                <option value="">Tambah primary tone...</option>
               <% primaryToneOptions.forEach(({ value, label }) => { %>
-                <option value="<%= value %>" <%= formDefaults.primaryTone === value ? 'selected' : '' %>><%= label %></option>
+                <option value="<%= value %>"><%= label %></option>
               <% }) %>
-            </select></div>
-            <div class="col-md-3"><label class="form-label">Secondary tone</label><select class="form-select" name="secondary_tone">
-              <option value="" <%= !formDefaults.secondaryTone ? 'selected' : '' %>>None</option>
+              </select><div class="form-text">Bisa pilih lebih dari satu.</div></div>
+            <div class="col-md-4"><label class="form-label">Secondary tone</label><input class="form-control" name="secondary_tone" value="<%= formDefaults.secondaryTone %>" placeholder="CONFIDENT, ENERGETIC">
+              <select class="form-select mt-2" data-append-to-field="secondary_tone" data-append-limit="5">
+                <option value="">Tambah secondary tone...</option>
               <% secondaryToneOptions.forEach(({ value, label }) => { %>
-                <option value="<%= value %>" <%= formDefaults.secondaryTone === value ? 'selected' : '' %>><%= label %></option>
+                <option value="<%= value %>"><%= label %></option>
               <% }) %>
-            </select></div>
+              </select><div class="form-text">Opsional. Maksimal 5 tone gabungan.</div></div>
             <div class="col-md-6" data-auto-mode-hide><label class="form-label">Target audience</label><input class="form-control" name="target_audience" maxlength="255" value="<%= formDefaults.targetAudience %>" placeholder="Founder, mahasiswa, creator pemula, tim marketing"></div>
             <div class="col-md-6" data-auto-mode-hide><label class="form-label">Brief editor utama</label><textarea class="form-control" name="content_context" rows="4" maxlength="20000" placeholder="Jelaskan momen seperti apa yang harus dipilih: hook cepat, konflik, insight, payoff, dan ending yang ingin didapat."><%= formDefaults.contentContext %></textarea><div class="form-text">Kalau hanya ingin isi satu arahan utama, cukup isi field ini.</div></div>
           </div>

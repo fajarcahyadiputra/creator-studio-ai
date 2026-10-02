@@ -95,6 +95,59 @@ def test_semantic_boundary_accepts_question_with_complete_answer() -> None:
     assert _candidate_has_complete_semantic_boundaries(candidate, segments)
 
 
+def test_provider_candidate_is_aligned_before_semantic_filtering() -> None:
+    segments = [
+        TranscriptSegment(
+            segment_id="opening",
+            start_seconds=0.0,
+            end_seconds=10.0,
+            text="Banyak orang mengira pertumbuhan ekonomi selalu dirasakan semua warga.",
+        ),
+        TranscriptSegment(
+            segment_id="payoff",
+            start_seconds=10.0,
+            end_seconds=20.0,
+            text="Padahal ketimpangan membuat angka yang naik tidak otomatis memperbaiki hidup mereka.",
+        ),
+    ]
+    inputs = AnalysisInputs.model_validate(
+        {
+            "transcript": {
+                "language": "id",
+                "duration_seconds": 20.0,
+                "segments": [segment.model_dump(mode="json") for segment in segments],
+            },
+            "scenes": [],
+            "silences": [],
+        }
+    )
+    candidate = candidate_analysis("provider-offset", start_seconds=0.6, score=8.2).model_copy(
+        update={
+            "end_seconds": 19.6,
+            "duration_seconds": 19.0,
+            "ending_text": segments[-1].text,
+            "punchline_second": 18.5,
+        }
+    )
+    config = build_pipeline_config(
+        {
+            "strategy": {
+                "desired_clip_count": 1,
+                "minimum_duration_seconds": 15,
+                "maximum_duration_seconds": 30,
+                "minimum_viral_score": 7.5,
+            }
+        }
+    )
+
+    selected, audit = limit_and_score_candidates_with_quality_backfill([candidate], inputs, config)
+
+    assert len(selected) == 1
+    assert selected[0].start_seconds == 0.0
+    assert selected[0].end_seconds == 20.45
+    assert audit["rejected_incomplete_semantic_boundary"] == 0
+
+
 def analysis_inputs() -> AnalysisInputs:
     return AnalysisInputs.model_validate(
         {

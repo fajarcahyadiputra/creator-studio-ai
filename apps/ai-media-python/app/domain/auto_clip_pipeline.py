@@ -165,19 +165,37 @@ def limit_and_score_candidates_with_quality_backfill(
     config: PipelineConfig,
 ) -> tuple[list[CandidateAnalysis], dict[str, object]]:
     duration_valid_candidates = [candidate for candidate in candidates if _candidate_duration_is_valid(candidate, config)]
-    semantic_candidates = [
-        candidate
+    # Provider timestamps can land inside an ASR segment even when the chosen
+    # thought is complete. Repair boundaries before semantic validation, but
+    # keep scoring and quality normalization in their original order.
+    boundary_repaired_candidates = [
+        _normalize_candidate_boundaries(
+            candidate,
+            analysis_inputs.scenes,
+            analysis_inputs.silences,
+            analysis_inputs.transcript.segments,
+            float(config.maximum_duration_seconds),
+            apply_tail_padding=False,
+        )
         for candidate in duration_valid_candidates
-        if _candidate_has_complete_semantic_boundaries(candidate, analysis_inputs.transcript.segments)
     ]
+    semantic_candidates: list[CandidateAnalysis] = []
     semantic_boundary_fallback_used = False
-    if not semantic_candidates:
-        semantic_candidates = [
-            candidate
-            for candidate in duration_valid_candidates
-            if _candidate_has_safe_language_neutral_boundaries(candidate, analysis_inputs.transcript.segments)
-        ]
-        semantic_boundary_fallback_used = bool(semantic_candidates)
+    for candidate in boundary_repaired_candidates:
+        has_strict_boundaries = _candidate_has_complete_semantic_boundaries(
+            candidate,
+            analysis_inputs.transcript.segments,
+        )
+        has_safe_language_neutral_boundaries = _candidate_has_safe_language_neutral_boundaries(
+            candidate,
+            analysis_inputs.transcript.segments,
+        )
+        if has_strict_boundaries or has_safe_language_neutral_boundaries:
+            semantic_candidates.append(candidate)
+            semantic_boundary_fallback_used = (
+                semantic_boundary_fallback_used
+                or (has_safe_language_neutral_boundaries and not has_strict_boundaries)
+            )
     strict_candidates = [
         candidate
         for candidate in semantic_candidates
@@ -240,6 +258,7 @@ def limit_and_score_candidates_with_quality_backfill(
         ),
         "rejected_incomplete_semantic_boundary": len(duration_valid_candidates) - len(semantic_candidates),
         "accepted_before_normalization": len(strict_candidates),
+        "accepted_after_boundary_normalization": len(semantic_candidates),
         "normalized_candidate_count": len(normalized),
         "accepted_after_deduplication": strict_ranked_count,
         "accepted_after_quality_backfill": after_quality_backfill_count,
@@ -321,45 +340,12 @@ def normalize_candidates(
 ) -> list[CandidateAnalysis]:
     normalized: list[CandidateAnalysis] = []
     for candidate in candidates:
-        start_seconds = _normalize_start(candidate.start_seconds, scenes, silences)
-        end_seconds = _normalize_end(candidate.end_seconds, scenes, silences)
-        ending_text = candidate.ending_text
-        if transcript_segments:
-            end_seconds, ending_text = _extend_candidate_end_to_complete_thought(
-                start_seconds=start_seconds,
-                end_seconds=end_seconds,
-                ending_text=ending_text,
-                transcript_segments=transcript_segments,
-                maximum_duration_seconds=maximum_duration_seconds,
-            )
-            end_seconds = _apply_natural_tail_padding(
-                start_seconds=start_seconds,
-                end_seconds=end_seconds,
-                ending_text=ending_text,
-                transcript_segments=transcript_segments,
-                maximum_duration_seconds=maximum_duration_seconds,
-            )
-        if end_seconds <= start_seconds:
-            end_seconds = candidate.end_seconds
-            start_seconds = candidate.start_seconds
-        duration_seconds = round(end_seconds - start_seconds, 2)
-        beat_offset = round(candidate.start_seconds - start_seconds, 2)
-        hook_second, main_point_second, punchline_second = _normalize_story_beats(
-            hook_second=candidate.hook_second + beat_offset,
-            main_point_second=candidate.main_point_second + beat_offset,
-            punchline_second=candidate.punchline_second + beat_offset,
-            duration_seconds=duration_seconds,
-        )
-        normalized_candidate = candidate.model_copy(
-                update={
-                    "start_seconds": round(start_seconds, 2),
-                    "end_seconds": round(end_seconds, 2),
-                    "duration_seconds": duration_seconds,
-                    "ending_text": ending_text,
-                    "hook_second": hook_second,
-                    "main_point_second": main_point_second,
-                    "punchline_second": punchline_second,
-                }
+        normalized_candidate = _normalize_candidate_boundaries(
+            candidate,
+            scenes,
+            silences,
+            transcript_segments or [],
+            maximum_duration_seconds,
         )
         if transcript_segments:
             has_strict_boundaries = _candidate_has_complete_semantic_boundaries(
@@ -374,6 +360,105 @@ def normalize_candidates(
                 continue
         normalized.append(_with_editorial_quality_scores(normalized_candidate, transcript_segments or []))
     return normalized
+
+
+def _normalize_candidate_boundaries(
+    candidate: CandidateAnalysis,
+    scenes: list[SceneBoundary],
+    silences: list[SilenceBoundary],
+    transcript_segments: list[TranscriptSegment],
+    maximum_duration_seconds: float | None,
+    *,
+    apply_tail_padding: bool = True,
+) -> CandidateAnalysis:
+    start_seconds = _normalize_start(candidate.start_seconds, scenes, silences)
+    end_seconds = _normalize_end(candidate.end_seconds, scenes, silences)
+    ending_text = candidate.ending_text
+    if transcript_segments:
+        start_seconds, end_seconds, ending_text = _align_candidate_to_transcript_segments(
+            start_seconds=start_seconds,
+            end_seconds=end_seconds,
+            ending_text=ending_text,
+            transcript_segments=transcript_segments,
+            maximum_duration_seconds=maximum_duration_seconds,
+        )
+        end_seconds, ending_text = _extend_candidate_end_to_complete_thought(
+            start_seconds=start_seconds,
+            end_seconds=end_seconds,
+            ending_text=ending_text,
+            transcript_segments=transcript_segments,
+            maximum_duration_seconds=maximum_duration_seconds,
+        )
+        if apply_tail_padding:
+            end_seconds = _apply_natural_tail_padding(
+                start_seconds=start_seconds,
+                end_seconds=end_seconds,
+                ending_text=ending_text,
+                transcript_segments=transcript_segments,
+                maximum_duration_seconds=maximum_duration_seconds,
+            )
+    if end_seconds <= start_seconds:
+        end_seconds = candidate.end_seconds
+        start_seconds = candidate.start_seconds
+    duration_seconds = round(end_seconds - start_seconds, 2)
+    beat_offset = round(candidate.start_seconds - start_seconds, 2)
+    hook_second, main_point_second, punchline_second = _normalize_story_beats(
+        hook_second=candidate.hook_second + beat_offset,
+        main_point_second=candidate.main_point_second + beat_offset,
+        punchline_second=candidate.punchline_second + beat_offset,
+        duration_seconds=duration_seconds,
+    )
+    return candidate.model_copy(
+        update={
+            "start_seconds": round(start_seconds, 2),
+            "end_seconds": round(end_seconds, 2),
+            "duration_seconds": duration_seconds,
+            "ending_text": ending_text,
+            "hook_second": hook_second,
+            "main_point_second": main_point_second,
+            "punchline_second": punchline_second,
+        }
+    )
+
+
+def _align_candidate_to_transcript_segments(
+    *,
+    start_seconds: float,
+    end_seconds: float,
+    ending_text: str,
+    transcript_segments: list[TranscriptSegment],
+    maximum_duration_seconds: float | None,
+) -> tuple[float, float, str]:
+    """Snap provider timestamps to complete ASR segments when the duration permits."""
+    intersecting = [
+        segment
+        for segment in transcript_segments
+        if segment.end_seconds > start_seconds and segment.start_seconds < end_seconds
+    ]
+    if not intersecting:
+        return start_seconds, end_seconds, ending_text
+
+    candidate_start = min(start_seconds, intersecting[0].start_seconds)
+    resolved_start = start_seconds
+    if (
+        not maximum_duration_seconds
+        or maximum_duration_seconds <= 0
+        or end_seconds - candidate_start <= maximum_duration_seconds + 0.05
+    ):
+        resolved_start = candidate_start
+    resolved_end = end_seconds
+    resolved_ending = ending_text.strip()
+    last_segment = intersecting[-1]
+    duration_ceiling = (
+        resolved_start + maximum_duration_seconds
+        if maximum_duration_seconds and maximum_duration_seconds > 0
+        else float("inf")
+    )
+    if end_seconds < last_segment.end_seconds - 0.35 and last_segment.end_seconds <= duration_ceiling + 0.05:
+        resolved_end = last_segment.end_seconds
+        resolved_ending = last_segment.text.strip() or resolved_ending
+
+    return round(resolved_start, 3), round(resolved_end, 3), resolved_ending
 
 
 def deduplicate_and_rank(candidates: list[CandidateAnalysis], desired_count: int) -> list[CandidateAnalysis]:

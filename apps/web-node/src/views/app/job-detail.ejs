@@ -312,7 +312,7 @@
                       </article>
                       <article class="job-summary-card">
                         <span>Strategy</span>
-                        <strong><%= outputSummary.requestSnapshot.strategy.targetPlatform %> | <%= outputSummary.requestSnapshot.strategy.objective %></strong>
+                        <strong><%= outputSummary.requestSnapshot.strategy.targetPlatform %> | <%= (outputSummary.requestSnapshot.strategy.objectives?.length ? outputSummary.requestSnapshot.strategy.objectives : [outputSummary.requestSnapshot.strategy.objective]).filter(Boolean).join(', ') %></strong>
                         <p class="mb-0 mt-1 text-secondary small"><%= outputSummary.requestSnapshot.strategy.minimumDurationSeconds ?? '-' %>-<%= outputSummary.requestSnapshot.strategy.maximumDurationSeconds ?? '-' %> detik | <%= outputSummary.requestSnapshot.strategy.desiredClipCount ?? '-' %> clip</p>
                       </article>
                       <article class="job-summary-card">
@@ -362,27 +362,35 @@
                         </div>
                         <div class="col-md-3">
                           <label class="form-label">Objective</label>
-                          <select class="form-select" name="objective">
+                          <% const regenerateObjectives = outputSummary.requestSnapshot.strategy.objectives?.length ? outputSummary.requestSnapshot.strategy.objectives : [outputSummary.requestSnapshot.strategy.objective]; %>
+                          <input class="form-control" name="objectives_text" value="<%= regenerateObjectives.filter(Boolean).join(', ') %>" required>
+                          <select class="form-select mt-2" data-append-to-field="objectives_text" data-append-limit="5">
+                            <option value="">Tambah objective...</option>
                             <% objectiveOptions.forEach(({ value, label }) => { %>
-                              <option value="<%= value %>" <%= outputSummary.requestSnapshot.strategy.objective === value ? 'selected' : '' %>><%= label %></option>
+                              <option value="<%= value %>"><%= label %></option>
                             <% }) %>
-                          </select>
+                          </select><div class="form-text">Pilih 1-5 objective.</div>
                         </div>
                         <div class="col-md-3">
                           <label class="form-label">Primary tone</label>
-                          <select class="form-select" name="tones_text">
-                            <% const regenerateTones = outputSummary.requestSnapshot.strategy.tones; %>
+                          <% const regenerateTones = outputSummary.requestSnapshot.strategy.tones; %>
+                          <% const regeneratePrimaryTones = outputSummary.requestSnapshot.strategy.primaryTones?.length ? outputSummary.requestSnapshot.strategy.primaryTones : [regenerateTones[0] ?? 'EDUCATIONAL']; %>
+                          <input class="form-control" name="primary_tones_text" value="<%= regeneratePrimaryTones.filter(Boolean).join(', ') %>" required>
+                          <select class="form-select mt-2" data-append-to-field="primary_tones_text" data-append-limit="5">
+                            <option value="">Tambah primary tone...</option>
                             <% primaryToneOptions.forEach(({ value, label }) => { %>
-                              <option value="<%= value %>" <%= String(regenerateTones[0] ?? 'EDUCATIONAL').toUpperCase() === value ? 'selected' : '' %>><%= label %></option>
+                              <option value="<%= value %>"><%= label %></option>
                             <% }) %>
                           </select>
                         </div>
                         <div class="col-md-3">
                           <label class="form-label">Secondary tone</label>
-                          <select class="form-select" name="secondary_tone">
-                            <option value="">None</option>
+                          <% const regenerateSecondaryTones = outputSummary.requestSnapshot.strategy.secondaryTones?.length ? outputSummary.requestSnapshot.strategy.secondaryTones : regenerateTones.slice(1); %>
+                          <input class="form-control" name="secondary_tones_text" value="<%= regenerateSecondaryTones.filter(Boolean).join(', ') %>">
+                          <select class="form-select mt-2" data-append-to-field="secondary_tones_text" data-append-limit="5">
+                            <option value="">Tambah secondary tone...</option>
                             <% secondaryToneOptions.forEach(({ value, label }) => { %>
-                              <option value="<%= value %>" <%= String(regenerateTones[1] ?? '').toUpperCase() === value ? 'selected' : '' %>><%= label %></option>
+                              <option value="<%= value %>"><%= label %></option>
                             <% }) %>
                           </select>
                         </div>
@@ -1073,6 +1081,9 @@
           const strategySensitiveTopics = Array.isArray(snapshotStrategy.sensitiveTopics) ? snapshotStrategy.sensitiveTopics : [];
           const strategyClipStyleTags = Array.isArray(snapshotStrategy.clipStyleTags) ? snapshotStrategy.clipStyleTags : [];
           const strategyViralityPriorities = Array.isArray(snapshotStrategy.viralityPriorities) ? snapshotStrategy.viralityPriorities : [];
+          const strategyObjectives = Array.isArray(snapshotStrategy.objectives) && snapshotStrategy.objectives.length
+            ? snapshotStrategy.objectives
+            : [snapshotStrategy.objective].filter(Boolean);
           const subtitleExportFormats = Array.isArray(snapshotSubtitle.exportFormats) ? snapshotSubtitle.exportFormats : [];
         %>
         <section class="panel mt-4">
@@ -1082,7 +1093,7 @@
           <div class="p-4">
             <div class="job-summary-grid mb-3">
               <article class="job-summary-card"><span>Platform</span><strong><%= displayAutoClipLabel(platformLabels, snapshotStrategy.targetPlatform) %></strong></article>
-              <article class="job-summary-card"><span>Objective</span><strong><%= displayAutoClipLabel(objectiveLabels, snapshotStrategy.objective) %></strong></article>
+              <article class="job-summary-card"><span>Objective</span><strong><%= strategyObjectives.map((value) => displayAutoClipLabel(objectiveLabels, value)).join(', ') || '-' %></strong></article>
               <article class="job-summary-card"><span>Duration</span><strong><%= snapshotStrategy.minimumDurationSeconds && snapshotStrategy.maximumDurationSeconds ? `${snapshotStrategy.minimumDurationSeconds}-${snapshotStrategy.maximumDurationSeconds}s` : '-' %></strong></article>
               <article class="job-summary-card"><span>Visual</span><strong><%= snapshotVisual.aspectRatio ?? '-' %> / <%= displayAutoClipLabel(cropStrategyLabels, snapshotVisual.cropStrategy) %></strong></article>
               <article class="job-summary-card"><span>Candidate pool</span><strong><%= snapshotStrategy.candidatePoolCount ?? '-' %></strong></article>

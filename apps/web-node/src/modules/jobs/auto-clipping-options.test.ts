@@ -54,6 +54,9 @@ describe("auto-clipping option registry", () => {
       strategy: {
         target_platform: "TIKTOK",
         objective: "HIGHLIGHT_SURPRISING_FACT",
+        objectives: ["HIGHLIGHT_SURPRISING_FACT", "SPARK_DISCUSSION"],
+        primary_tones: ["SURPRISING", "INSIGHTFUL"],
+        secondary_tones: ["THOUGHT_PROVOKING"],
         tones: ["SURPRISING", "THOUGHT_PROVOKING"],
         desired_clip_count: 3,
         candidate_pool_count: 10,
@@ -76,6 +79,9 @@ describe("auto-clipping option registry", () => {
       configuration_mode: "MANUAL",
       target_platform: "TIKTOK",
       objective: "HIGHLIGHT_SURPRISING_FACT",
+      objectives_text: "HIGHLIGHT_SURPRISING_FACT, SPARK_DISCUSSION",
+      primary_tones_text: "SURPRISING, INSIGHTFUL",
+      secondary_tones_text: "THOUGHT_PROVOKING",
       tones_text: "SURPRISING, THOUGHT_PROVOKING",
       desired_clip_count: "3",
       candidate_pool_count: "10",
@@ -89,5 +95,18 @@ describe("auto-clipping option registry", () => {
 
     expect(createResult.success).toBe(true);
     expect(regenerateResult.success).toBe(true);
+    if (createResult.success) {
+      expect(createResult.data.strategy.objectives).toEqual([
+        "HIGHLIGHT_SURPRISING_FACT",
+        "SPARK_DISCUSSION"
+      ]);
+    }
+    if (regenerateResult.success) {
+      expect(regenerateResult.data.objectives_text).toEqual([
+        "HIGHLIGHT_SURPRISING_FACT",
+        "SPARK_DISCUSSION"
+      ]);
+      expect(regenerateResult.data.tones_text).toEqual(["SURPRISING", "THOUGHT_PROVOKING"]);
+    }
   });
 });

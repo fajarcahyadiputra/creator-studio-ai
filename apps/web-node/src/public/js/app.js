@@ -23,15 +23,18 @@ const stageDisplayMap = {
 
 function objectFromForm(form, formData) {
   const data = formData instanceof FormData ? formData : new FormData(form);
-  return Object.fromEntries(
-    [...data.entries()]
-      .filter(([key]) => key !== "_csrf")
-      .map(([key, value]) => {
-        if (value === "true") return [key, true];
-        if (value === "false") return [key, false];
-        return [key, value];
-      })
-  );
+  const multiSelectFields = new Set(["objectives_text", "primary_tones_text", "secondary_tones_text"]);
+  const result = {};
+  for (const [key, rawValue] of data.entries()) {
+    if (key === "_csrf") continue;
+    const value = rawValue === "true" ? true : rawValue === "false" ? false : rawValue;
+    if (multiSelectFields.has(key) && key in result) {
+      result[key] = `${result[key]},${value}`;
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
 }
 
 function showMessage(container, message, type = "danger") {
@@ -45,11 +48,16 @@ function normalizeRegenerateAutoClipPayload(form, payload) {
   }
 
   delete payload.advanced_mode;
-  const secondaryTone = typeof payload.secondary_tone === "string" ? payload.secondary_tone.trim() : "";
-  if (secondaryTone) {
-    payload.tones_text = [payload.tones_text, secondaryTone].filter(Boolean).join(",");
-  }
-  delete payload.secondary_tone;
+  const objectives = splitCsv(payload.objectives_text);
+  const primaryTones = splitCsv(payload.primary_tones_text).slice(0, 5);
+  const secondaryTones = splitCsv(payload.secondary_tones_text)
+    .filter((tone) => !primaryTones.includes(tone))
+    .slice(0, Math.max(0, 5 - primaryTones.length));
+  payload.objective = objectives[0];
+  payload.objectives_text = objectives.join(",");
+  payload.primary_tones_text = primaryTones.join(",");
+  payload.secondary_tones_text = secondaryTones.join(",");
+  payload.tones_text = [...new Set([...primaryTones, ...secondaryTones])].slice(0, 5).join(",");
   if (payload.configuration_mode !== "AUTO") return payload;
 
   for (const key of [
@@ -218,6 +226,15 @@ for (const picker of document.querySelectorAll("[data-append-to-field]")) {
       .split(/[\n,;]+/)
       .map((item) => item.trim())
       .filter(Boolean);
+
+    const appendLimit = Number(picker.getAttribute("data-append-limit") || 0);
+    if (appendLimit > 0 && currentItems.length >= appendLimit && !currentItems.includes(selectedValue)) {
+      picker.value = "";
+      target.setCustomValidity(`Maksimal ${appendLimit} pilihan.`);
+      target.reportValidity();
+      target.setCustomValidity("");
+      return;
+    }
 
     if (!currentItems.includes(selectedValue)) {
       currentItems.push(selectedValue);
@@ -761,7 +778,10 @@ if (autoClipForm) {
   const syncSubmitSummary = () => {
     const sourceUrlValue = String(sourceUrlField?.value || "").trim();
     const platform = String(autoClipForm.querySelector('[name="platform"]')?.value || "YOUTUBE_SHORTS").trim();
-    const objective = String(autoClipForm.querySelector('[name="objective"]')?.value || "EDUCATION").trim();
+    const objectiveField = autoClipForm.querySelector('[name="objective"]');
+    const objectives = objectiveField instanceof HTMLInputElement
+      ? splitCsv(objectiveField.value).slice(0, 5)
+      : [];
     const minDuration = String(autoClipForm.querySelector('[name="min_duration"]')?.value || "").trim();
     const maxDuration = String(autoClipForm.querySelector('[name="max_duration"]')?.value || "").trim();
     const clipCount = String(autoClipForm.querySelector('[name="clip_count"]')?.value || "").trim();
@@ -787,7 +807,7 @@ if (autoClipForm) {
       submitSummarySourceDetail.textContent = sourceUrlValue || "Belum ada external URL diisi.";
     }
     if (submitSummaryStrategy) {
-      submitSummaryStrategy.textContent = `${humanizeAutoClipValue("platform", platform)} | ${humanizeAutoClipValue("objective", objective)}`;
+      submitSummaryStrategy.textContent = `${humanizeAutoClipValue("platform", platform)} | ${objectives.map((value) => humanizeAutoClipValue("objective", value)).join(", ") || "-"}`;
     }
     if (submitSummaryDuration) {
       submitSummaryDuration.textContent = `${minDuration || "-"}-${maxDuration || "-"} detik | ${clipCount || "-"} clip | pool ${candidatePoolCount || "-"}`;
@@ -1004,9 +1024,12 @@ if (autoClipForm) {
       type: "EXTERNAL_URL",
       url: String(data.get("source_url") || "").trim() || undefined
     });
-    const tones = [String(data.get("primary_tone") || "EDUCATIONAL"), String(data.get("secondary_tone") || "")]
-      .map((value) => value.trim())
-      .filter(Boolean);
+    const objectives = [...new Set(splitCsv(data.get("objective")))].slice(0, 5);
+    const primaryTones = [...new Set(splitCsv(data.get("primary_tone")))].slice(0, 5);
+    const secondaryTones = [...new Set(splitCsv(data.get("secondary_tone")))]
+      .filter((tone) => !primaryTones.includes(tone))
+      .slice(0, Math.max(0, 5 - primaryTones.length));
+    const tones = [...new Set([...primaryTones, ...secondaryTones])].slice(0, 5);
     const subtitlePosition = String(data.get("subtitle_position") || "").trim();
     const subtitleTextCase = String(data.get("subtitle_text_case") || "UPPERCASE").trim().toUpperCase();
     const subtitleStyle = normalizeSubtitleStyleValue(data.get("subtitle_style"));
@@ -1036,7 +1059,10 @@ if (autoClipForm) {
       strategy: compactObject({
         configuration_mode: String(data.get("configuration_mode") || "MANUAL").trim().toUpperCase(),
         target_platform: String(data.get("platform")),
-        objective: String(data.get("objective")),
+        objective: objectives[0],
+        objectives,
+        primary_tones: primaryTones,
+        secondary_tones: secondaryTones,
         tones,
         desired_clip_count: Number(data.get("clip_count")),
         candidate_pool_count: Number(data.get("candidate_pool_count")),

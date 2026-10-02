@@ -1064,6 +1064,11 @@ dashboardRouter.get(
                 configurationMode: toOptionalString(strategyConfig.configuration_mode) ?? "MANUAL",
                 targetPlatform: toOptionalString(strategyConfig.target_platform),
                 objective: toOptionalString(strategyConfig.objective),
+                objectives: toStringArray(strategyConfig.objectives).length > 0
+                  ? toStringArray(strategyConfig.objectives)
+                  : [toOptionalString(strategyConfig.objective)].filter((value): value is string => Boolean(value)),
+                primaryTones: toStringArray(strategyConfig.primary_tones),
+                secondaryTones: toStringArray(strategyConfig.secondary_tones),
                 tones: toStringArray(strategyConfig.tones),
                 desiredClipCount: toOptionalNumber(strategyConfig.desired_clip_count),
                 candidatePoolCount: toOptionalNumber(strategyConfig.candidate_pool_count),
